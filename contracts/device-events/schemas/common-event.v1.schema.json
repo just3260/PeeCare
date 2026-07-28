@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://peecare.dev/contracts/device-events/common-event.v1.schema.json",
+  "title": "PeeCare common device event envelope v1",
+  "description": "Shared fields carried by every version 1 device event payload. Event-specific schemas compose this base and close the object with unevaluatedProperties.",
+  "type": "object",
+  "$defs": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "eventId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "eventType": {
+      "type": "string",
+      "enum": ["urination", "battery"]
+    },
+    "deviceId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    },
+    "recordedAtMs": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "firmwareVersion": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\\+([0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*))?$"
+    },
+    "uint32": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295
+    }
+  },
+  "properties": {
+    "schemaVersion": { "$ref": "#/$defs/schemaVersion" },
+    "eventId": { "$ref": "#/$defs/eventId" },
+    "eventType": { "$ref": "#/$defs/eventType" },
+    "deviceId": { "$ref": "#/$defs/deviceId" },
+    "sequence": { "$ref": "#/$defs/sequence" },
+    "recordedAtMs": { "$ref": "#/$defs/recordedAtMs" },
+    "firmwareVersion": { "$ref": "#/$defs/firmwareVersion" }
+  },
+  "required": [
+    "schemaVersion",
+    "eventId",
+    "eventType",
+    "deviceId",
+    "sequence",
+    "recordedAtMs",
+    "firmwareVersion"
+  ]
+}

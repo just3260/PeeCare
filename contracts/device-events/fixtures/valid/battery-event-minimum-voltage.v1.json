@@ -1,0 +1,14 @@
+{
+  "topic": "products/pc-mini/devices/PC-000001/status/battery",
+  "payload": {
+    "schemaVersion": 1,
+    "eventId": "PC-000001:45",
+    "eventType": "battery",
+    "deviceId": "PC-000001",
+    "sequence": 45,
+    "recordedAtMs": 1785168000000,
+    "firmwareVersion": "1.2.0",
+    "batteryLevelPercent": 0,
+    "batteryVoltageMv": 0
+  }
+}

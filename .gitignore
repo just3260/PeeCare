@@ -1,0 +1,22 @@
+.spectra/
+openspec/.vector-search.db*
+node_modules/
+
+# Vue / Vite build output and caches
+dist/
+dist-ssr/
+*.local
+.DS_Store
+
+# Editor / TS build info
+.vite/
+*.tsbuildinfo
+
+# Firebase Emulator cache, exports, and debug logs (local-only, never committed)
+.firebase/
+firebase-debug.log
+firebase-debug.*.log
+firestore-debug.log
+ui-debug.log
+database-debug.log
+pubsub-debug.log

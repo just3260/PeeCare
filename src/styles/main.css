@@ -1,0 +1,55 @@
+:root {
+  --color-bg: #f7f5f0;
+  --color-surface: #ffffff;
+  --color-brand: #166554;
+  --color-brand-strong: #1a7b66;
+  --color-brand-soft: #e6f0ed;
+  --color-ink: #1e293b;
+  --color-muted: #64748b;
+  --color-disabled: #94a3b8;
+  --color-border: #cbd5e1;
+  --content-max-width: 480px;
+  --font-sans:
+    system-ui, -apple-system, "PingFang TC", "Noto Sans TC",
+    "Microsoft JhengHei", "Heiti TC", sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body {
+  /* Guard against horizontal page scrolling from 320px through 1024px. */
+  overflow-x: hidden;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+}
+
+img {
+  max-width: 100%;
+}
+
+/* Keep keyboard focus clearly visible on enabled controls. */
+:focus-visible {
+  outline: 3px solid var(--color-brand);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Ease horizontal padding on the narrowest supported viewports so the
+   two-column card grid never forces horizontal scrolling. */
+@media (max-width: 360px) {
+  .home-main {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+}

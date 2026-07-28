@@ -1,0 +1,14 @@
+{
+  "topic": "products/pc-mini/devices/PC-000001/events/urination",
+  "payload": {
+    "schemaVersion": 1,
+    "eventId": "PC-000001:duration-minima",
+    "eventType": "urination",
+    "deviceId": "PC-000001",
+    "sequence": 0,
+    "recordedAtMs": 1785168000000,
+    "firmwareVersion": "1.2.0",
+    "flushDurationMs": 0,
+    "pumpDurationMs": 0
+  }
+}

@@ -1,0 +1,110 @@
+[
+  {
+    "name": "empty event identifier is rejected",
+    "expectedError": "schema_validation",
+    "input": {
+      "topic": "products/pc-mini/devices/PC-000001/events/urination",
+      "payload": {
+        "schemaVersion": 1,
+        "eventId": "",
+        "eventType": "urination",
+        "deviceId": "PC-000001",
+        "sequence": 42,
+        "recordedAtMs": 1785168000000,
+        "firmwareVersion": "1.2.0",
+        "flushDurationMs": 3000,
+        "pumpDurationMs": 5000
+      }
+    }
+  },
+  {
+    "name": "event identifier over 128 characters is rejected",
+    "expectedError": "schema_validation",
+    "input": {
+      "topic": "products/pc-mini/devices/PC-000001/events/urination",
+      "payload": {
+        "schemaVersion": 1,
+        "eventId": "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE",
+        "eventType": "urination",
+        "deviceId": "PC-000001",
+        "sequence": 42,
+        "recordedAtMs": 1785168000000,
+        "firmwareVersion": "1.2.0",
+        "flushDurationMs": 3000,
+        "pumpDurationMs": 5000
+      }
+    }
+  },
+  {
+    "name": "payload device identifier over 64 characters is rejected",
+    "expectedError": "schema_validation",
+    "input": {
+      "topic": "products/pc-mini/devices/PC-000001/events/urination",
+      "payload": {
+        "schemaVersion": 1,
+        "eventId": "PC-000001:42",
+        "eventType": "urination",
+        "deviceId": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+        "sequence": 42,
+        "recordedAtMs": 1785168000000,
+        "firmwareVersion": "1.2.0",
+        "flushDurationMs": 3000,
+        "pumpDurationMs": 5000
+      }
+    }
+  },
+  {
+    "name": "negative sequence is rejected",
+    "expectedError": "schema_validation",
+    "input": {
+      "topic": "products/pc-mini/devices/PC-000001/events/urination",
+      "payload": {
+        "schemaVersion": 1,
+        "eventId": "PC-000001:42",
+        "eventType": "urination",
+        "deviceId": "PC-000001",
+        "sequence": -1,
+        "recordedAtMs": 1785168000000,
+        "firmwareVersion": "1.2.0",
+        "flushDurationMs": 3000,
+        "pumpDurationMs": 5000
+      }
+    }
+  },
+  {
+    "name": "sequence over uint32 is rejected",
+    "expectedError": "schema_validation",
+    "input": {
+      "topic": "products/pc-mini/devices/PC-000001/events/urination",
+      "payload": {
+        "schemaVersion": 1,
+        "eventId": "PC-000001:42",
+        "eventType": "urination",
+        "deviceId": "PC-000001",
+        "sequence": 4294967296,
+        "recordedAtMs": 1785168000000,
+        "firmwareVersion": "1.2.0",
+        "flushDurationMs": 3000,
+        "pumpDurationMs": 5000
+      }
+    }
+  },
+  {
+    "name": "semantic version with leading zero is rejected",
+    "expectedError": "schema_validation",
+    "input": {
+      "topic": "products/pc-mini/devices/PC-000001/events/urination",
+      "payload": {
+        "schemaVersion": 1,
+        "eventId": "PC-000001:42",
+        "eventType": "urination",
+        "deviceId": "PC-000001",
+        "sequence": 42,
+        "recordedAtMs": 1785168000000,
+        "firmwareVersion": "01.2.0",
+        "flushDurationMs": 3000,
+        "pumpDurationMs": 5000
+      }
+    }
+  }
+]

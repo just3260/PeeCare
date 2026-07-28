@@ -1,0 +1,74 @@
+[
+  {
+    "name": "negative flush duration is rejected",
+    "expectedError": "schema_validation",
+    "input": {
+      "topic": "products/pc-mini/devices/PC-000001/events/urination",
+      "payload": {
+        "schemaVersion": 1,
+        "eventId": "PC-000001:negative-flush",
+        "eventType": "urination",
+        "deviceId": "PC-000001",
+        "sequence": 42,
+        "recordedAtMs": 1785168000000,
+        "firmwareVersion": "1.2.0",
+        "flushDurationMs": -1,
+        "pumpDurationMs": 5000
+      }
+    }
+  },
+  {
+    "name": "flush duration over uint32 is rejected",
+    "expectedError": "schema_validation",
+    "input": {
+      "topic": "products/pc-mini/devices/PC-000001/events/urination",
+      "payload": {
+        "schemaVersion": 1,
+        "eventId": "PC-000001:overflow-flush",
+        "eventType": "urination",
+        "deviceId": "PC-000001",
+        "sequence": 42,
+        "recordedAtMs": 1785168000000,
+        "firmwareVersion": "1.2.0",
+        "flushDurationMs": 4294967296,
+        "pumpDurationMs": 5000
+      }
+    }
+  },
+  {
+    "name": "negative pump duration is rejected",
+    "expectedError": "schema_validation",
+    "input": {
+      "topic": "products/pc-mini/devices/PC-000001/events/urination",
+      "payload": {
+        "schemaVersion": 1,
+        "eventId": "PC-000001:negative-pump",
+        "eventType": "urination",
+        "deviceId": "PC-000001",
+        "sequence": 42,
+        "recordedAtMs": 1785168000000,
+        "firmwareVersion": "1.2.0",
+        "flushDurationMs": 3000,
+        "pumpDurationMs": -1
+      }
+    }
+  },
+  {
+    "name": "pump duration over uint32 is rejected",
+    "expectedError": "schema_validation",
+    "input": {
+      "topic": "products/pc-mini/devices/PC-000001/events/urination",
+      "payload": {
+        "schemaVersion": 1,
+        "eventId": "PC-000001:overflow-pump",
+        "eventType": "urination",
+        "deviceId": "PC-000001",
+        "sequence": 42,
+        "recordedAtMs": 1785168000000,
+        "firmwareVersion": "1.2.0",
+        "flushDurationMs": 3000,
+        "pumpDurationMs": 4294967296
+      }
+    }
+  }
+]

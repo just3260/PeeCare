@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://peecare.dev/contracts/device-events/battery-event.v1.schema.json",
+  "title": "PeeCare battery event v1",
+  "description": "Battery status event. batteryLevelPercent is a fixed 25% tier. batteryVoltageMv is optional; an absent field means the hardware reported no raw voltage, which is never encoded as null or 0.",
+  "type": "object",
+  "allOf": [
+    { "$ref": "common-event.v1.schema.json" }
+  ],
+  "properties": {
+    "eventType": { "const": "battery" },
+    "batteryLevelPercent": {
+      "type": "integer",
+      "enum": [0, 25, 50, 75, 100]
+    },
+    "batteryVoltageMv": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 20000
+    }
+  },
+  "required": ["batteryLevelPercent"],
+  "unevaluatedProperties": false
+}

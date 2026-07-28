@@ -1,0 +1,38 @@
+[
+  {
+    "name": "battery voltage below minimum is rejected",
+    "expectedError": "schema_validation",
+    "input": {
+      "topic": "products/pc-mini/devices/PC-000001/status/battery",
+      "payload": {
+        "schemaVersion": 1,
+        "eventId": "PC-000001:47",
+        "eventType": "battery",
+        "deviceId": "PC-000001",
+        "sequence": 47,
+        "recordedAtMs": 1785168000000,
+        "firmwareVersion": "1.2.0",
+        "batteryLevelPercent": 25,
+        "batteryVoltageMv": -1
+      }
+    }
+  },
+  {
+    "name": "battery voltage above maximum is rejected",
+    "expectedError": "schema_validation",
+    "input": {
+      "topic": "products/pc-mini/devices/PC-000001/status/battery",
+      "payload": {
+        "schemaVersion": 1,
+        "eventId": "PC-000001:48",
+        "eventType": "battery",
+        "deviceId": "PC-000001",
+        "sequence": 48,
+        "recordedAtMs": 1785168000000,
+        "firmwareVersion": "1.2.0",
+        "batteryLevelPercent": 25,
+        "batteryVoltageMv": 20001
+      }
+    }
+  }
+]

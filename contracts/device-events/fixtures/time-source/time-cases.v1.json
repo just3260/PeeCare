@@ -1,0 +1,42 @@
+[
+  {
+    "name": "valid device time is selected",
+    "receivedAtMs": 1785168060000,
+    "recordedAtMs": 1785168000000,
+    "expected": {
+      "effectiveAtMs": 1785168000000,
+      "timeSource": "device",
+      "recordedAtMs": 1785168000000
+    }
+  },
+  {
+    "name": "null device time falls back to server",
+    "receivedAtMs": 1785168060000,
+    "recordedAtMs": null,
+    "expected": {
+      "effectiveAtMs": 1785168060000,
+      "timeSource": "server",
+      "recordedAtMs": null
+    }
+  },
+  {
+    "name": "pre-product epoch falls back to server and preserves the original",
+    "receivedAtMs": 1785168060000,
+    "recordedAtMs": 0,
+    "expected": {
+      "effectiveAtMs": 1785168060000,
+      "timeSource": "server",
+      "recordedAtMs": 0
+    }
+  },
+  {
+    "name": "excessive future time falls back to server",
+    "receivedAtMs": 1785168060000,
+    "recordedAtMs": 1785168360001,
+    "expected": {
+      "effectiveAtMs": 1785168060000,
+      "timeSource": "server",
+      "recordedAtMs": 1785168360001
+    }
+  }
+]

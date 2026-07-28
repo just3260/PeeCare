@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://peecare.dev/contracts/device-events/urination-event.v1.schema.json",
+  "title": "PeeCare urination event v1",
+  "description": "Raw urination event: flush and pump durations only. No derived urine volume is carried; ingestion computes estimatedUrineMl from these durations.",
+  "type": "object",
+  "allOf": [
+    { "$ref": "common-event.v1.schema.json" }
+  ],
+  "properties": {
+    "eventType": { "const": "urination" },
+    "flushDurationMs": { "$ref": "common-event.v1.schema.json#/$defs/uint32" },
+    "pumpDurationMs": { "$ref": "common-event.v1.schema.json#/$defs/uint32" }
+  },
+  "required": ["flushDurationMs", "pumpDurationMs"],
+  "unevaluatedProperties": false
+}

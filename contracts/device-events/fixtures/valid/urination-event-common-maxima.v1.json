@@ -1,0 +1,14 @@
+{
+  "topic": "products/pc-mini/devices/DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD/events/urination",
+  "payload": {
+    "schemaVersion": 1,
+    "eventId": "EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE",
+    "eventType": "urination",
+    "deviceId": "DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD",
+    "sequence": 4294967295,
+    "recordedAtMs": 1785168000000,
+    "firmwareVersion": "1.2.3-alpha.1+build.7",
+    "flushDurationMs": 3000,
+    "pumpDurationMs": 5000
+  }
+}
