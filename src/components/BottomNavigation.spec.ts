@@ -11,13 +11,13 @@ function mountWithRouter() {
 }
 
 describe('BottomNavigation', () => {
-  it('marks history, devices, and notifications as aria-disabled', () => {
+  it('marks devices and notifications as aria-disabled', () => {
     const wrapper = mountWithRouter()
     const disabled = wrapper.findAll('[aria-disabled="true"]')
 
-    expect(disabled).toHaveLength(3)
+    expect(disabled).toHaveLength(2)
     const labels = disabled.map((node) => node.text())
-    expect(labels).toEqual(['歷史', '裝置', '通知'])
+    expect(labels).toEqual(['裝置', '通知'])
   })
 
   it('exposes an enabled home navigation control', () => {

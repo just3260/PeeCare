@@ -1,3 +1,5 @@
+import { fileURLToPath, URL } from 'node:url'
+
 import { defineConfig } from 'vitest/config'
 
 // Emulator-backed integration tests. These run in a plain Node environment (no
@@ -5,12 +7,20 @@ import { defineConfig } from 'vitest/config'
 // Emulator host env vars. Kept separate from the fast Vitest gate so
 // `npm run check` never needs Java or a running Emulator.
 export default defineConfig({
+  // Mirror the app's "@" alias so production modules that import "@/..." (the
+  // auth store and provider) load under the Emulator-backed config too.
+  resolve: {
+    alias: {
+      '@': fileURLToPath(new URL('./src', import.meta.url)),
+    },
+  },
   test: {
     environment: 'node',
     // The local Firebase client adapter tests plus the Emulator-backed
     // Security Rules tests, matching the spec's "client and rules tests".
     include: [
       'src/platform/firebase/*.spec.ts',
+      'src/features/auth/*.integration.spec.ts',
       'firebase/local/firestore.rules.spec.ts',
       'firebase/local/reset.integration.spec.ts',
     ],

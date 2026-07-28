@@ -78,3 +78,114 @@ describe('deny-by-default Firestore rules', () => {
     })
   })
 })
+
+// Owner-only, read-only device access. The ingestion service writes the registry
+// through the Admin SDK (bypassing Rules); the Web client may only *read* a
+// device and its child data when it is the single owner.
+const OWNER_UID = 'member-001'
+const OTHER_UID = 'member-002'
+const DEVICE_ID = 'PC-000001'
+const DEVICE_PATH = `devices/${DEVICE_ID}`
+const EVENT_PATH = `${DEVICE_PATH}/events/evt-1`
+const DAILY_PATH = `${DEVICE_PATH}/dailyStats/2026-07-29`
+
+const OWNED_DEVICE = {
+  deviceId: DEVICE_ID,
+  ownerUid: OWNER_UID,
+  productModel: 'pc-mini',
+  ingestionStatus: 'enabled',
+  lastReportedAtMs: 1_700_000_000_000,
+} as const
+
+/** Seed a device document (and optional child docs) through the Admin bypass. */
+async function seedDevice(device: Record<string, unknown>): Promise<void> {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore()
+    await setDoc(doc(db, DEVICE_PATH), device)
+    await setDoc(doc(db, EVENT_PATH), { eventId: 'evt-1', eventType: 'urination' })
+    await setDoc(doc(db, DAILY_PATH), { dayKey: '2026-07-29', urinationCount: 3 })
+  })
+}
+
+describe('owner-only device reads', () => {
+  beforeEach(async () => {
+    await seedDevice({ ...OWNED_DEVICE })
+  })
+
+  it('allows the owner to read their device', async () => {
+    const db = testEnv.authenticatedContext(OWNER_UID).firestore()
+    await assertSucceeds(getDoc(doc(db, DEVICE_PATH)))
+  })
+
+  it('denies another member reading the device', async () => {
+    const db = testEnv.authenticatedContext(OTHER_UID).firestore()
+    await assertFails(getDoc(doc(db, DEVICE_PATH)))
+  })
+
+  it('denies an anonymous client reading the device', async () => {
+    const db = testEnv.unauthenticatedContext().firestore()
+    await assertFails(getDoc(doc(db, DEVICE_PATH)))
+  })
+})
+
+describe('owner-only child data reads', () => {
+  beforeEach(async () => {
+    await seedDevice({ ...OWNED_DEVICE })
+  })
+
+  it('allows the owner to read an event under their device', async () => {
+    const db = testEnv.authenticatedContext(OWNER_UID).firestore()
+    await assertSucceeds(getDoc(doc(db, EVENT_PATH)))
+  })
+
+  it('allows the owner to read dailyStats under their device', async () => {
+    const db = testEnv.authenticatedContext(OWNER_UID).firestore()
+    await assertSucceeds(getDoc(doc(db, DAILY_PATH)))
+  })
+
+  it('denies another member reading child data', async () => {
+    const db = testEnv.authenticatedContext(OTHER_UID).firestore()
+    await assertFails(getDoc(doc(db, EVENT_PATH)))
+    await assertFails(getDoc(doc(db, DAILY_PATH)))
+  })
+
+  it('denies an anonymous client reading dailyStats', async () => {
+    const db = testEnv.unauthenticatedContext().firestore()
+    await assertFails(getDoc(doc(db, DAILY_PATH)))
+  })
+})
+
+describe('client write denial', () => {
+  beforeEach(async () => {
+    await seedDevice({ ...OWNED_DEVICE })
+  })
+
+  it('denies the owner creating, updating, or deleting the device', async () => {
+    const db = testEnv.authenticatedContext(OWNER_UID).firestore()
+    await assertFails(setDoc(doc(db, 'devices/PC-999999'), { deviceId: 'PC-999999', ownerUid: OWNER_UID }))
+    await assertFails(updateDoc(doc(db, DEVICE_PATH), { productModel: 'pc-pro' }))
+    await assertFails(updateDoc(doc(db, DEVICE_PATH), { ownerUid: OTHER_UID }))
+    await assertFails(deleteDoc(doc(db, DEVICE_PATH)))
+  })
+
+  it('denies the owner writing events and dailyStats', async () => {
+    const db = testEnv.authenticatedContext(OWNER_UID).firestore()
+    await assertFails(setDoc(doc(db, `${DEVICE_PATH}/events/evt-2`), { eventId: 'evt-2' }))
+    await assertFails(updateDoc(doc(db, DAILY_PATH), { urinationCount: 99 }))
+    await assertFails(deleteDoc(doc(db, EVENT_PATH)))
+  })
+})
+
+describe('malformed ownership denial', () => {
+  it.each([
+    ['empty ownerUid', { ...OWNED_DEVICE, ownerUid: '' }],
+    ['missing ownerUid', { deviceId: DEVICE_ID, productModel: 'pc-mini', ingestionStatus: 'enabled' }],
+    ['non-string ownerUid', { ...OWNED_DEVICE, ownerUid: 12345 }],
+  ])('denies an authenticated member reading a device with %s', async (_label, device) => {
+    await seedDevice(device as Record<string, unknown>)
+    const db = testEnv.authenticatedContext(OWNER_UID).firestore()
+    await assertFails(getDoc(doc(db, DEVICE_PATH)))
+    // Child data is equally unreachable when the parent owner is malformed.
+    await assertFails(getDoc(doc(db, EVENT_PATH)))
+  })
+})

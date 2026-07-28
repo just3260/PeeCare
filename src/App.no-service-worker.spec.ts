@@ -23,7 +23,8 @@ describe('App without Service Worker support', () => {
 
       expect(wrapper.find('.peecare-app').exists()).toBe(true)
       expect(wrapper.text()).toContain('PeeCare')
-      expect(wrapper.text()).toContain('尚無裝置資料')
+      // The home overview region mounts even with no device store injected.
+      expect(wrapper.find('[aria-label="首頁總覽"]').exists()).toBe(true)
     } finally {
       if (original) {
         Object.defineProperty(navigator, 'serviceWorker', original)

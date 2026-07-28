@@ -6,11 +6,10 @@ interface FutureNavEntry {
   label: string
 }
 
-// History, devices, and notifications are not implemented yet. They render as
+// Devices and notifications are not implemented yet. They render as
 // non-interactive, aria-disabled entries so assistive technology announces
 // that they cannot be activated — no blank feature pages are created.
 const futureEntries: FutureNavEntry[] = [
-  { key: 'history', label: '歷史' },
   { key: 'devices', label: '裝置' },
   { key: 'notifications', label: '通知' },
 ]
@@ -25,6 +24,8 @@ const futureEntries: FutureNavEntry[] = [
     >
       首頁
     </RouterLink>
+    <RouterLink to="/history" class="bottom-nav__item">歷史</RouterLink>
+    <RouterLink to="/stats" class="bottom-nav__item">統計</RouterLink>
     <span
       v-for="entry in futureEntries"
       :key="entry.key"

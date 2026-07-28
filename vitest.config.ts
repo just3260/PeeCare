@@ -12,8 +12,19 @@ export default mergeConfig(
       // contracts/ directory ships its own node:test fixtures and must not be
       // collected here, and firebase/local/firestore.rules.spec.ts is Emulator-
       // backed so it runs only under vitest.firebase.config.ts.
-      include: ['src/**/*.{test,spec}.{ts,tsx}', 'firebase/local/reset.spec.ts'],
-      exclude: [...configDefaults.exclude, 'e2e/**', 'contracts/**'],
+      include: [
+        'src/**/*.{test,spec}.{ts,tsx}',
+        'firebase/local/reset.spec.ts',
+        'firebase/local/fixtures/members-and-devices.spec.ts',
+      ],
+      // *.integration.spec.ts are Emulator-backed and run only under
+      // vitest.firebase.config.ts, never in this fast, mock-only gate.
+      exclude: [
+        ...configDefaults.exclude,
+        'e2e/**',
+        'contracts/**',
+        'src/**/*.integration.spec.ts',
+      ],
       root: fileURLToPath(new URL('./', import.meta.url)),
     },
   }),

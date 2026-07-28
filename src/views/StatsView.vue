@@ -1,0 +1,95 @@
+<script setup lang="ts">
+import { computed, inject, onMounted, watch } from 'vue'
+
+import DailyUrinationChart from '@/components/DailyUrinationChart.vue'
+import type { DailyCountPoint } from '@/features/stats/daily-series'
+import type { DailyStatsState } from '@/features/stats/daily-stats-store'
+import { DAILY_STATS_STORE_KEY } from '@/features/stats/daily-stats-store-key'
+import { DEVICE_OVERVIEW_STORE_KEY } from '@/features/devices/device-overview-store-key'
+import { AUTH_STORE_KEY } from '@/features/auth/auth-store-key'
+
+const props = withDefaults(defineProps<{
+  series?: readonly DailyCountPoint[]
+  state?: DailyStatsState
+}>(), { series: () => [] })
+
+const dailyStatsStore = inject(DAILY_STATS_STORE_KEY, null)
+const deviceStore = inject(DEVICE_OVERVIEW_STORE_KEY, null)
+const authStore = inject(AUTH_STORE_KEY, null)
+const series = computed(() => dailyStatsStore?.series.value ?? props.series)
+const state = computed<DailyStatsState>(() => {
+  if (deviceStore?.state?.value.status === 'error') return { status: 'error' }
+  return dailyStatsStore?.state.value
+    ?? props.state
+    ?? (props.series.length > 0 ? { status: 'ready' } : { status: 'no-device' })
+})
+
+async function syncDevice(): Promise<void> {
+  const session = authStore?.state.value
+  if (session?.status === 'signed-in') {
+    await deviceStore?.load(session.user.uid)
+  }
+  await dailyStatsStore?.selectDevice(deviceStore?.selectedDeviceId.value ?? null)
+}
+
+onMounted(syncDevice)
+watch(() => deviceStore?.selectedDeviceId.value, () => { void syncDevice() })
+watch(() => authStore?.state.value.status, () => { void syncDevice() })
+</script>
+
+<template>
+  <main class="stats-main" aria-label="排尿統計">
+    <section class="stats-section" aria-labelledby="daily-count-title">
+      <h1 id="daily-count-title">最近十四日排尿次數</h1>
+      <p v-if="state.status === 'no-device'" data-test="stats-no-device">請先選擇裝置</p>
+      <p v-else-if="state.status === 'loading'" data-test="stats-loading">載入中…</p>
+      <div v-else-if="state.status === 'error'" data-test="stats-error">
+        <p>無法載入排尿統計</p>
+        <button type="button" @click="syncDevice">重試</button>
+      </div>
+      <template v-else>
+        <DailyUrinationChart :series="series" />
+
+        <table class="daily-count-table" data-test="daily-count-table">
+        <caption>最近十四日每日排尿次數</caption>
+        <thead>
+          <tr>
+            <th scope="col" data-test="daily-count-date-header">日期</th>
+            <th scope="col" data-test="daily-count-value-header">排尿次數</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="point in series" :key="point.date">
+            <td><time :datetime="point.date" data-test="daily-count-date">{{ point.date }}</time></td>
+            <td data-test="daily-count-value">{{ point.urinationCount }} 次</td>
+          </tr>
+        </tbody>
+        </table>
+      </template>
+    </section>
+  </main>
+</template>
+
+<style scoped>
+.stats-main {
+  padding: 0 20px;
+}
+
+.stats-section {
+  padding: 20px;
+  border-radius: 20px;
+  background: var(--color-surface);
+}
+
+.daily-count-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.daily-count-table th,
+.daily-count-table td {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--color-border, #d0d0d0);
+}
+</style>

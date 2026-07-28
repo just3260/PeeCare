@@ -1,17 +1,59 @@
 rules_version = '2';
 
-// Deny-by-default baseline for the local Firebase platform.
+// Owner-only, read-only client access for the device registry.
 //
-// No domain schema is authorized yet. Every read and write on every document
-// path is denied for unauthenticated and authenticated clients alike. Each
-// future domain change MUST replace this with an explicit, tested delta rather
-// than loosening the baseline here.
+// The ingestion service writes devices/{deviceId} and its events/dailyStats
+// subcollections through the Admin SDK, which bypasses these Rules entirely.
+// The Web client is strictly read-only: it may read a device — and that device's
+// events and dailyStats — only when it is the single owner. Every other path and
+// every client write stays denied by the baseline at the bottom.
 //
 // Rules-disabled test contexts (initializeTestEnvironment withSecurityRulesDisabled)
 // may still arrange fixtures; that bypass is a test-harness capability, not a
 // client authorization path.
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null && request.auth.uid is string;
+    }
+
+    // Resolve the parent device's ownerUid for subcollection authorization.
+    function deviceOwnerUid(deviceId) {
+      return get(/databases/$(database)/documents/devices/$(deviceId)).data.ownerUid;
+    }
+
+    // A signed-in member owns the device only when it exists and its ownerUid is
+    // a string exactly equal to the caller's uid. Missing, empty, or non-string
+    // ownerUid never authorizes access.
+    function ownsDevice(deviceId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/devices/$(deviceId))
+        && deviceOwnerUid(deviceId) is string
+        && deviceOwnerUid(deviceId) == request.auth.uid;
+    }
+
+    match /devices/{deviceId} {
+      allow read: if isSignedIn()
+        && resource.data.ownerUid is string
+        && resource.data.ownerUid == request.auth.uid;
+      allow write: if false;
+
+      match /events/{eventId} {
+        allow read: if ownsDevice(deviceId);
+        allow write: if false;
+      }
+
+      match /dailyStats/{dayKey} {
+        allow read: if ownsDevice(deviceId);
+        allow write: if false;
+      }
+    }
+
+    // Deny-by-default baseline. Any path without an explicit allow above — and
+    // every client write — is denied for authenticated and anonymous clients
+    // alike. Future domain changes MUST add an explicit, tested delta rather than
+    // loosening this baseline.
     match /{document=**} {
       allow read, write: if false;
     }
