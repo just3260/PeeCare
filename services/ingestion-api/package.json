@@ -1,0 +1,25 @@
+{
+  "name": "@peecare/ingestion-api",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts",
+    "check": "npm run type-check && npm run test && npm run build",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^7.11.0",
+    "@peecare/device-events-contract": "file:../../contracts/device-events",
+    "fastify": "^5.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "~5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

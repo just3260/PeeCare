@@ -4,6 +4,12 @@
   "private": true,
   "type": "module",
   "description": "Language-agnostic MQTT topic and JSON Schema contract for PeeCare device urination and battery events, validated by executable fixtures.",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.mts",
+      "import": "./lib/index.mjs"
+    }
+  },
   "scripts": {
     "test": "node --test test/*.test.mjs && node scripts/validate-fixtures.mjs"
   },
