@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, watch } from 'vue'
 import AppHeader from '@/components/AppHeader.vue'
+import DeviceSelector from '@/components/DeviceSelector.vue'
 import type { DeviceEventHistoryState } from '@/features/history/device-event-history-store'
 import type { UrinationHistoryRecord } from '@/features/history/urination-history-model'
 import { formatTaipeiTimestamp } from '@/features/devices/device-overview-model'
 import { DEVICE_EVENT_HISTORY_STORE_KEY } from '@/features/history/device-event-history-store-key'
 import { DEVICE_OVERVIEW_STORE_KEY } from '@/features/devices/device-overview-store-key'
+import { useDeviceSelection } from '@/features/devices/use-device-selection'
 
 const props = withDefaults(defineProps<{
   state?: DeviceEventHistoryState
@@ -19,6 +21,7 @@ const emit = defineEmits<{
 
 const historyStore = inject(DEVICE_EVENT_HISTORY_STORE_KEY, null)
 const deviceStore = inject(DEVICE_OVERVIEW_STORE_KEY, null)
+const { devices, selectedDeviceId, hasMultipleDevices, selectDevice } = useDeviceSelection()
 const state = computed(() => historyStore?.state.value ?? props.state)
 const items = computed(() => historyStore?.items.value ?? props.items)
 
@@ -40,6 +43,12 @@ watch(() => deviceStore?.selectedDeviceId.value, syncDevice)
 <template>
   <AppHeader />
   <main class="history-main" aria-label="排尿歷史">
+    <DeviceSelector
+      v-if="hasMultipleDevices"
+      :devices="devices"
+      :selected-device-id="selectedDeviceId"
+      @select="selectDevice"
+    />
     <section class="history-section">
       <p v-if="state.status === 'loading'" class="history-notice" data-test="history-loading">載入中…</p>
       <p v-else-if="state.status === 'empty'" class="history-notice" data-test="history-empty">尚無排尿紀錄</p>

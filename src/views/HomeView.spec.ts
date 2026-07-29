@@ -138,7 +138,7 @@ describe('HomeView overview states', () => {
     })
     const wrapper = mountHomeView(store)
 
-    await wrapper.get('[data-test="device-option-PC-000002"]').trigger('click')
+    await wrapper.get('[data-test="device-select"]').setValue('PC-000002')
 
     expect(store.selectDevice).toHaveBeenCalledWith('PC-000002')
   })

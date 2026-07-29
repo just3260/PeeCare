@@ -3,10 +3,12 @@ import { computed, inject, onMounted, watch } from 'vue'
 
 import AppHeader from '@/components/AppHeader.vue'
 import DailyUrinationChart from '@/components/DailyUrinationChart.vue'
+import DeviceSelector from '@/components/DeviceSelector.vue'
 import type { DailyCountPoint } from '@/features/stats/daily-series'
 import type { DailyStatsState } from '@/features/stats/daily-stats-store'
 import { DAILY_STATS_STORE_KEY } from '@/features/stats/daily-stats-store-key'
 import { DEVICE_OVERVIEW_STORE_KEY } from '@/features/devices/device-overview-store-key'
+import { useDeviceSelection } from '@/features/devices/use-device-selection'
 import { AUTH_STORE_KEY } from '@/features/auth/auth-store-key'
 
 const props = withDefaults(defineProps<{
@@ -17,6 +19,7 @@ const props = withDefaults(defineProps<{
 const dailyStatsStore = inject(DAILY_STATS_STORE_KEY, null)
 const deviceStore = inject(DEVICE_OVERVIEW_STORE_KEY, null)
 const authStore = inject(AUTH_STORE_KEY, null)
+const { devices, selectedDeviceId, hasMultipleDevices, selectDevice } = useDeviceSelection()
 const series = computed(() => dailyStatsStore?.series.value ?? props.series)
 const state = computed<DailyStatsState>(() => {
   if (deviceStore?.state?.value.status === 'error') return { status: 'error' }
@@ -41,6 +44,12 @@ watch(() => authStore?.state.value.status, () => { void syncDevice() })
 <template>
   <AppHeader />
   <main class="stats-main" aria-label="排尿統計">
+    <DeviceSelector
+      v-if="hasMultipleDevices"
+      :devices="devices"
+      :selected-device-id="selectedDeviceId"
+      @select="selectDevice"
+    />
     <section class="stats-section" aria-labelledby="daily-count-title">
       <h1 id="daily-count-title" class="stats-title">最近十四日排尿次數</h1>
       <p v-if="state.status === 'no-device'" class="stats-notice" data-test="stats-no-device">請先選擇裝置</p>

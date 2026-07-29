@@ -4,10 +4,15 @@ import { ref } from 'vue'
 
 import type { DailyCountPoint } from '@/features/stats/daily-series'
 import type { DailyStatsState } from '@/features/stats/daily-stats-store'
+import type { OwnedDevice } from '@/features/devices/owned-device-model'
 import { AUTH_STORE_KEY } from '@/features/auth/auth-store-key'
 import { DAILY_STATS_STORE_KEY } from '@/features/stats/daily-stats-store-key'
 import { DEVICE_OVERVIEW_STORE_KEY } from '@/features/devices/device-overview-store-key'
 import StatsView from './StatsView.vue'
+
+function device(deviceId: string): OwnedDevice {
+  return { deviceId, ownerUid: 'member-001', productModel: 'pc-mini', ingestionStatus: 'enabled' }
+}
 
 const series: readonly DailyCountPoint[] = [
   { date: '2026-07-15', urinationCount: 1, synthetic: false },
@@ -109,5 +114,42 @@ describe('StatsView', () => {
     expect(wrapper.get('[data-test="daily-count-table"]').element.tagName).toBe('TABLE')
     expect(wrapper.get('[data-test="daily-count-date-header"]').attributes('scope')).toBe('col')
     expect(wrapper.get('[data-test="daily-count-value-header"]').attributes('scope')).toBe('col')
+  })
+
+  it('shows the shared device selector and switches devices when the member owns more than one', async () => {
+    const selectDevice = vi.fn()
+    const wrapper = mount(StatsView, {
+      props: { series },
+      global: {
+        provide: {
+          [DEVICE_OVERVIEW_STORE_KEY as symbol]: {
+            devices: ref([device('PC-000001'), device('PC-000002')]),
+            selectedDeviceId: ref('PC-000001'),
+            selectDevice,
+          },
+        },
+      },
+    })
+
+    expect(wrapper.find('.device-selector').exists()).toBe(true)
+    await wrapper.get('[data-test="device-select"]').setValue('PC-000002')
+    expect(selectDevice).toHaveBeenCalledWith('PC-000002')
+  })
+
+  it('omits the device selector when the member owns a single device', () => {
+    const wrapper = mount(StatsView, {
+      props: { series },
+      global: {
+        provide: {
+          [DEVICE_OVERVIEW_STORE_KEY as symbol]: {
+            devices: ref([device('PC-000001')]),
+            selectedDeviceId: ref('PC-000001'),
+            selectDevice: vi.fn(),
+          },
+        },
+      },
+    })
+
+    expect(wrapper.find('.device-selector').exists()).toBe(false)
   })
 })

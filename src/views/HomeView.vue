@@ -7,6 +7,7 @@ import DeviceSelector from '@/components/DeviceSelector.vue'
 import DeviceStatusCards from '@/components/DeviceStatusCards.vue'
 import { AUTH_STORE_KEY } from '@/features/auth/auth-store-key'
 import { DEVICE_OVERVIEW_STORE_KEY } from '@/features/devices/device-overview-store-key'
+import { useDeviceSelection } from '@/features/devices/use-device-selection'
 
 // The overview reads its data from the injected device store, which is driven by
 // the member session: signing in loads the owned devices; signing out disposes
@@ -15,12 +16,12 @@ import { DEVICE_OVERVIEW_STORE_KEY } from '@/features/devices/device-overview-st
 const authStore = inject(AUTH_STORE_KEY, null)
 const deviceStore = inject(DEVICE_OVERVIEW_STORE_KEY, null)
 
+// The device switcher is shared with History and Stats via this composable.
+const { devices, selectedDeviceId, hasMultipleDevices, selectDevice } = useDeviceSelection()
+
 const LOADING_STATE = { status: 'loading' } as const
 
 const state = computed(() => deviceStore?.state.value ?? LOADING_STATE)
-const devices = computed(() => deviceStore?.devices.value ?? [])
-const selectedDeviceId = computed(() => deviceStore?.selectedDeviceId.value ?? null)
-const hasMultipleDevices = computed(() => devices.value.length > 1)
 
 /** Keep the device store in step with the member session. */
 function syncSession(): void {
@@ -35,10 +36,6 @@ function syncSession(): void {
 
 onMounted(syncSession)
 watch(() => authStore?.state.value.status, syncSession)
-
-function handleSelect(deviceId: string): void {
-  deviceStore?.selectDevice(deviceId)
-}
 </script>
 
 <template>
@@ -76,7 +73,7 @@ function handleSelect(deviceId: string): void {
           v-if="hasMultipleDevices"
           :devices="devices"
           :selected-device-id="selectedDeviceId"
-          @select="handleSelect"
+          @select="selectDevice"
         />
         <DeviceStatusCards :projection="state.projection" />
       </template>

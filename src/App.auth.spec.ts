@@ -52,17 +52,18 @@ describe('App — session termination', () => {
       },
     })
 
-    // Reach the protected shell as member-001.
+    // Reach the protected shell as member-001, then open Settings where the
+    // sign-out control now lives (the App shell no longer renders one).
     observer.emit({ uid: 'member-001', displayName: null, email: null })
-    router.push('/')
+    router.push('/settings')
     await flushPromises()
-    expect(router.currentRoute.value.path).toBe('/')
+    expect(router.currentRoute.value.path).toBe('/settings')
 
     // Register a protected subscription that must stop on sign-out.
     const stopSubscription = vi.fn()
     store.registry.register(stopSubscription)
 
-    await wrapper.find('[data-test="sign-out"]').trigger('click')
+    await wrapper.find('[data-test="settings-sign-out"]').trigger('click')
     await flushPromises()
 
     expect(provider.signOut).toHaveBeenCalledTimes(1)
