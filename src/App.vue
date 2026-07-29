@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, onUnmounted } from 'vue'
-import { RouterView, useRouter } from 'vue-router'
+import { RouterView, useRoute, useRouter } from 'vue-router'
 
+import BottomNavigation from '@/components/BottomNavigation.vue'
 import { AUTH_STORE_KEY } from '@/features/auth/auth-store-key'
 import { AUTH_PROVIDER_KEY, type AuthProvider } from '@/features/auth/auth-provider'
 import { SIGN_IN_PATH } from '@/features/auth/return-route'
@@ -10,12 +11,14 @@ import { SIGN_IN_PATH } from '@/features/auth/return-route'
 // can mount App without any Firebase dependency (both default to null).
 const authStore = inject(AUTH_STORE_KEY, null)
 const authProvider = inject<AuthProvider | null>(AUTH_PROVIDER_KEY, null)
+const route = useRoute()
 const router = useRouter()
 
 onMounted(() => authStore?.mount())
 onUnmounted(() => authStore?.dispose())
 
 const isSignedIn = computed(() => authStore?.state.value.status === 'signed-in')
+const showsBottomNavigation = computed(() => route.matched.some((record) => record.meta.requiresAuth))
 
 async function handleSignOut(): Promise<void> {
   // End the session first; the observer then tears down protected subscriptions.
@@ -36,6 +39,7 @@ async function handleSignOut(): Promise<void> {
       登出
     </button>
     <RouterView />
+    <BottomNavigation v-if="showsBottomNavigation" />
   </div>
 </template>
 

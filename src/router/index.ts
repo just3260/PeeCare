@@ -8,6 +8,8 @@ import {
 import HomeView from '@/views/HomeView.vue'
 import HistoryView from '@/views/HistoryView.vue'
 import StatsView from '@/views/StatsView.vue'
+import NotificationsView from '@/views/NotificationsView.vue'
+import SettingsView from '@/views/SettingsView.vue'
 import SignInView from '@/views/SignInView.vue'
 import type { AuthState } from '@/features/auth/session'
 
@@ -37,6 +39,24 @@ export const routes: RouteRecordRaw[] = [
     name: 'stats',
     component: StatsView,
     meta: { requiresAuth: true },
+  },
+  {
+    path: '/notifications',
+    name: 'notifications',
+    component: NotificationsView,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/settings',
+    name: 'settings',
+    component: SettingsView,
+    meta: { requiresAuth: true },
+  },
+  {
+    // Device management moved into the settings page; the legacy path now
+    // redirects there so existing links and bookmarks keep working.
+    path: '/devices',
+    redirect: '/settings',
   },
   {
     path: '/sign-in',

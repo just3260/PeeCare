@@ -79,6 +79,12 @@ describe('HomeView overview states', () => {
     expect(empty.text()).toContain('尚無裝置')
   })
 
+  it('guides the empty state to the settings device management', () => {
+    const wrapper = mountHomeView(makeDeviceStore({ state: { status: 'empty' } }))
+    const guidance = wrapper.get('[data-test="overview-settings-guidance"]')
+    expect(guidance.attributes('href')).toBe('/settings')
+  })
+
   it('renders the ready state with status cards and no fabricated measurements', () => {
     const wrapper = mountHomeView(
       makeDeviceStore({

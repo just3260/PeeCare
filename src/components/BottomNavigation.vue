@@ -1,40 +1,88 @@
 <script setup lang="ts">
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 
-interface FutureNavEntry {
-  key: string
-  label: string
+const route = useRoute()
+
+function isActive(name: string): boolean {
+  return route.name === name
 }
-
-// Devices and notifications are not implemented yet. They render as
-// non-interactive, aria-disabled entries so assistive technology announces
-// that they cannot be activated — no blank feature pages are created.
-const futureEntries: FutureNavEntry[] = [
-  { key: 'devices', label: '裝置' },
-  { key: 'notifications', label: '通知' },
-]
 </script>
 
 <template>
   <nav class="bottom-nav" aria-label="主要導覽">
     <RouterLink
+      to="/history"
+      class="bottom-nav__item"
+      :class="{ 'bottom-nav__item--active': isActive('history') }"
+      :aria-current="isActive('history') ? 'page' : undefined"
+      aria-label="歷史紀錄"
+    >
+      <svg class="bottom-nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+        <path d="M3 4v4h4" />
+        <path d="M12 8v4l3 2" />
+      </svg>
+      <span class="bottom-nav__label">歷史</span>
+    </RouterLink>
+
+    <RouterLink
+      to="/stats"
+      class="bottom-nav__item"
+      :class="{ 'bottom-nav__item--active': isActive('stats') }"
+      :aria-current="isActive('stats') ? 'page' : undefined"
+      aria-label="統計數據"
+    >
+      <svg class="bottom-nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 20V10" />
+        <path d="M10 20V4" />
+        <path d="M16 20v-7" />
+        <path d="M22 20H2" />
+      </svg>
+      <span class="bottom-nav__label">統計</span>
+    </RouterLink>
+
+    <RouterLink
       to="/"
-      class="bottom-nav__item bottom-nav__item--active"
+      class="bottom-nav__item bottom-nav__item--home"
+      :class="{ 'bottom-nav__item--active': isActive('home') }"
+      :aria-current="isActive('home') ? 'page' : undefined"
       aria-label="PeeCare 首頁"
     >
-      首頁
+      <svg class="bottom-nav__icon bottom-nav__icon--home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 10.5 12 3l9 7.5" />
+        <path d="M5 9.5V20h14V9.5" />
+        <path d="M10 20v-5h4v5" />
+      </svg>
+      <span class="bottom-nav__label">首頁</span>
     </RouterLink>
-    <RouterLink to="/history" class="bottom-nav__item">歷史</RouterLink>
-    <RouterLink to="/stats" class="bottom-nav__item">統計</RouterLink>
-    <span
-      v-for="entry in futureEntries"
-      :key="entry.key"
-      class="bottom-nav__item bottom-nav__item--disabled"
-      role="link"
-      aria-disabled="true"
+
+    <RouterLink
+      to="/notifications"
+      class="bottom-nav__item"
+      :class="{ 'bottom-nav__item--active': isActive('notifications') }"
+      :aria-current="isActive('notifications') ? 'page' : undefined"
+      aria-label="通知"
     >
-      {{ entry.label }}
-    </span>
+      <svg class="bottom-nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+        <path d="M13.5 21a1.7 1.7 0 0 1-3 0" />
+      </svg>
+      <span class="bottom-nav__label">通知</span>
+    </RouterLink>
+
+    <RouterLink
+      to="/settings"
+      class="bottom-nav__item"
+      :class="{ 'bottom-nav__item--active': isActive('settings') }"
+      :aria-current="isActive('settings') ? 'page' : undefined"
+      aria-label="設定"
+    >
+      <svg class="bottom-nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
+      </svg>
+      <span class="bottom-nav__label">設定</span>
+    </RouterLink>
   </nav>
 </template>
 
@@ -46,29 +94,52 @@ const futureEntries: FutureNavEntry[] = [
   transform: translateX(-50%);
   display: flex;
   justify-content: space-around;
+  align-items: flex-end;
   width: 100%;
   max-width: var(--content-max-width);
-  padding: 16px 20px 24px;
+  padding: 12px 16px 20px;
   border-radius: 24px 24px 0 0;
   background-color: var(--color-surface);
   box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.05);
 }
 
 .bottom-nav__item {
-  padding: 8px 16px;
-  border-radius: 20px;
-  font-size: 14px;
-  font-weight: 500;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  padding: 6px 4px;
   color: var(--color-disabled);
   text-decoration: none;
 }
 
+.bottom-nav__icon {
+  width: 24px;
+  height: 24px;
+}
+
+.bottom-nav__label {
+  font-size: 12px;
+  font-weight: 500;
+}
+
 .bottom-nav__item--active {
-  background-color: var(--color-brand-soft);
   color: var(--color-brand);
 }
 
-.bottom-nav__item--disabled {
-  cursor: not-allowed;
+/* Home is the primary entry: raised, enlarged, and visually centred. */
+.bottom-nav__item--home {
+  transform: translateY(-16px);
+}
+
+.bottom-nav__item--home .bottom-nav__icon--home {
+  width: 30px;
+  height: 30px;
+  padding: 14px;
+  border-radius: 50%;
+  background-color: var(--color-brand);
+  color: var(--color-surface);
+  box-shadow: 0 6px 16px var(--color-brand-soft, rgba(0, 0, 0, 0.15));
 }
 </style>

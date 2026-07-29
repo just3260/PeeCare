@@ -11,21 +11,10 @@ function mountHome() {
 }
 
 describe('shell landmarks and accessibility', () => {
-  it('exposes header, main, and navigation landmarks', () => {
+  it('exposes header and main landmarks', () => {
     const wrapper = mountHome()
 
     expect(wrapper.find('header').exists()).toBe(true)
     expect(wrapper.find('main').exists()).toBe(true)
-
-    const nav = wrapper.find('nav')
-    expect(nav.exists()).toBe(true)
-    expect(nav.attributes('aria-label')).toBe('主要導覽')
-  })
-
-  it('gives the enabled home control an accessible PeeCare label', () => {
-    const wrapper = mountHome()
-    const home = wrapper.get('a.bottom-nav__item--active')
-
-    expect(home.attributes('aria-label')).toContain('PeeCare')
   })
 })

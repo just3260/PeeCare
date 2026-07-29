@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PeeCare 本地測試工具</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, "Noto Sans TC", "PingFang TC", system-ui, sans-serif;
+    margin: 0; padding: 24px; line-height: 1.5;
+    background: #f4f5f7; color: #1c1e21;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { background: #16181c; color: #e6e8eb; }
+    .card, .shared { background: #1f2228 !important; border-color: #30343c !important; }
+    input, select { background: #14161a !important; color: #e6e8eb !important; border-color: #3a3f48 !important; }
+    pre.curl { background: #0e1013 !important; color: #cbd2da !important; }
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  h2 .ep { font-size: 12px; font-weight: 500; color: #8a9099; font-family: ui-monospace, monospace; }
+  .hint { color: #8a9099; font-size: 13px; margin: 0 0 20px; }
+  .wrap { max-width: 920px; margin: 0 auto; }
+  .card, .shared {
+    background: #fff; border: 1px solid #e3e5e8; border-radius: 12px;
+    padding: 18px; margin-bottom: 16px;
+  }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+  label { display: block; font-size: 12px; color: #6b7178; margin-bottom: 4px; }
+  input, select {
+    width: 100%; padding: 7px 9px; border: 1px solid #d3d6da; border-radius: 7px;
+    font-size: 13px; font-family: inherit; background: #fff;
+  }
+  input:disabled { opacity: .55; }
+  .row { display: flex; gap: 8px; align-items: flex-end; }
+  .row > div { flex: 1; }
+  .cb { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #6b7178; margin-top: 6px; }
+  .cb input { width: auto; }
+  .actions { display: flex; gap: 8px; margin: 14px 0 0; flex-wrap: wrap; }
+  button {
+    border: 0; border-radius: 8px; padding: 8px 16px; font-size: 13px; font-weight: 600;
+    cursor: pointer; background: #2f6fed; color: #fff;
+  }
+  button.ghost { background: transparent; color: #2f6fed; border: 1px solid #2f6fed; }
+  button.big { background: #12a150; }
+  button:hover { filter: brightness(1.05); }
+  pre.curl {
+    background: #0e1013; color: #cbd2da; padding: 12px; border-radius: 8px;
+    font-size: 12px; font-family: ui-monospace, "SF Mono", monospace;
+    overflow-x: auto; white-space: pre; margin: 12px 0 0;
+  }
+  .result {
+    margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: 12.5px;
+    font-family: ui-monospace, monospace; white-space: pre-wrap; word-break: break-word;
+    display: none;
+  }
+  .result.show { display: block; }
+  .result.ok   { background: #e7f7ec; color: #12703a; }
+  .result.warn { background: #fdf3e0; color: #9a5b00; }
+  .result.err  { background: #fdeaea; color: #b02020; }
+  .result.pending { background: #eef1f5; color: #6b7178; }
+  @media (prefers-color-scheme: dark) {
+    .result.ok{background:#12331f;color:#7ee2a3}.result.warn{background:#3a2c10;color:#f1c27a}
+    .result.err{background:#3a1616;color:#f19a9a}.result.pending{background:#22262d;color:#9aa1ab}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>PeeCare 本地測試工具</h1>
+  <p class="hint">
+    透過本工具的後端代送請求（避開 CORS）。使用前請先啟動 Firebase Emulator 與 ingestion-api。
+    時間欄位可選「現在」自動帶入當下毫秒。
+  </p>
+
+  <!-- 共用設定 -->
+  <div class="shared">
+    <h2>共用設定</h2>
+    <div class="grid">
+      <div><label>ingestion-api Base URL</label><input id="ingestionBase" value="http://127.0.0.1:8080" /></div>
+      <div><label>Firestore Emulator Base URL</label><input id="firestoreBase" value="http://127.0.0.1:8085" /></div>
+      <div><label>Firebase Project ID</label><input id="projectId" value="demo-peecare" /></div>
+      <div><label>Webhook Secret（EMQX_WEBHOOK_SECRET_CURRENT）</label><input id="secret" value="local-dev-secret" /></div>
+      <div><label>productModel</label><input id="productModel" value="pc-mini" /></div>
+      <div><label>deviceId</label><input id="deviceId" value="PC-000001" /></div>
+      <div><label>ownerUid（Web 端讀取用）</label><input id="ownerUid" value="test-user-uid" /></div>
+      <div><label>clientId（須等於 deviceId）</label><input id="clientId" value="PC-000001" /></div>
+      <div><label>username</label><input id="username" value="PC-000001" /></div>
+      <div><label>qos</label>
+        <select id="qos"><option>0</option><option selected>1</option><option>2</option></select>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="big" id="runAll">依序執行：建立裝置 → 排尿 → 電量</button>
+    </div>
+  </div>
+
+  <!-- ① 健康檢查 -->
+  <div class="card">
+    <h2>① 健康檢查 <span class="ep">GET /healthz</span></h2>
+    <div class="actions">
+      <button class="ghost" onclick="preview('health')">預覽 curl</button>
+      <button onclick="run('health')">送出</button>
+    </div>
+    <pre class="curl" id="curl-health"></pre>
+    <div class="result" id="res-health"></div>
+  </div>
+
+  <!-- ② 建立 device -->
+  <div class="card">
+    <h2>② 建立 / 更新 device <span class="ep">PATCH Firestore REST</span></h2>
+    <div class="grid">
+      <div><label>ingestionStatus</label>
+        <select id="dev-status"><option value="enabled" selected>enabled</option><option value="disabled">disabled</option></select>
+      </div>
+    </div>
+    <p class="hint" style="margin:10px 0 0">deviceId / productModel / ownerUid 取自上方共用設定。使用 <code>Bearer owner</code> 繞過 Security Rules 直接寫入 Emulator。</p>
+    <div class="actions">
+      <button class="ghost" onclick="preview('device')">預覽 curl</button>
+      <button onclick="run('device')">送出</button>
+    </div>
+    <pre class="curl" id="curl-device"></pre>
+    <div class="result" id="res-device"></div>
+  </div>
+
+  <!-- ③ 排尿事件 -->
+  <div class="card">
+    <h2>③ 排尿事件 <span class="ep">POST /v1/emqx/events</span></h2>
+    <div class="grid">
+      <div><label>sequence</label><input id="ur-seq" type="number" value="42" /></div>
+      <div>
+        <label>eventId</label>
+        <input id="ur-eventId" value="PC-000001:42" />
+        <div class="cb"><input type="checkbox" id="ur-auto" checked /> 自動用 deviceId:sequence</div>
+      </div>
+      <div>
+        <label>recordedAtMs</label>
+        <select id="ur-timeMode">
+          <option value="now" selected>現在（自動帶入）</option>
+          <option value="null">null（無可信時間）</option>
+          <option value="custom">自訂</option>
+        </select>
+        <input id="ur-recorded" type="number" placeholder="自訂毫秒" style="margin-top:6px" />
+      </div>
+      <div><label>firmwareVersion</label><input id="ur-fw" value="1.2.0" /></div>
+      <div><label>flushDurationMs</label><input id="ur-flush" type="number" value="3000" /></div>
+      <div><label>pumpDurationMs</label><input id="ur-pump" type="number" value="5000" /></div>
+      <div>
+        <label>brokerReceivedAtMs</label>
+        <input id="ur-broker" type="number" placeholder="現在" disabled />
+        <div class="cb"><input type="checkbox" id="ur-brokerAuto" checked /> 現在（自動帶入）</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="ghost" onclick="preview('urination')">預覽 curl</button>
+      <button onclick="run('urination')">送出</button>
+    </div>
+    <pre class="curl" id="curl-urination"></pre>
+    <div class="result" id="res-urination"></div>
+  </div>
+
+  <!-- ④ 電量事件 -->
+  <div class="card">
+    <h2>④ 電量事件 <span class="ep">POST /v1/emqx/events</span></h2>
+    <div class="grid">
+      <div><label>sequence</label><input id="bt-seq" type="number" value="43" /></div>
+      <div>
+        <label>eventId</label>
+        <input id="bt-eventId" value="PC-000001:43" />
+        <div class="cb"><input type="checkbox" id="bt-auto" checked /> 自動用 deviceId:sequence</div>
+      </div>
+      <div>
+        <label>recordedAtMs</label>
+        <select id="bt-timeMode">
+          <option value="now" selected>現在（自動帶入）</option>
+          <option value="null">null（無可信時間）</option>
+          <option value="custom">自訂</option>
+        </select>
+        <input id="bt-recorded" type="number" placeholder="自訂毫秒" style="margin-top:6px" />
+      </div>
+      <div><label>firmwareVersion</label><input id="bt-fw" value="1.2.0" /></div>
+      <div><label>batteryLevelPercent</label>
+        <select id="bt-level"><option>0</option><option>25</option><option>50</option><option selected>75</option><option>100</option></select>
+      </div>
+      <div>
+        <label>batteryVoltageMv（選填）</label>
+        <input id="bt-voltage" type="number" value="3975" />
+        <div class="cb"><input type="checkbox" id="bt-voltageOn" checked /> 帶入 batteryVoltageMv</div>
+      </div>
+      <div>
+        <label>brokerReceivedAtMs</label>
+        <input id="bt-broker" type="number" placeholder="現在" disabled />
+        <div class="cb"><input type="checkbox" id="bt-brokerAuto" checked /> 現在（自動帶入）</div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="ghost" onclick="preview('battery')">預覽 curl</button>
+      <button onclick="run('battery')">送出</button>
+    </div>
+    <pre class="curl" id="curl-battery"></pre>
+    <div class="result" id="res-battery"></div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const val = (id) => $(id).value.trim();
+const nowMs = () => Date.now();
+
+function shared() {
+  const deviceId = val('deviceId');
+  return {
+    ingestionBase: val('ingestionBase').replace(/\/+$/, ''),
+    firestoreBase: val('firestoreBase').replace(/\/+$/, ''),
+    projectId: val('projectId'),
+    secret: val('secret'),
+    productModel: val('productModel'),
+    deviceId,
+    ownerUid: val('ownerUid'),
+    clientId: val('clientId') || deviceId,
+    username: val('username') || deviceId,
+    qos: Number(val('qos')),
+  };
+}
+
+function resolveTime(mode, customId) {
+  if (mode === 'now') return nowMs();
+  if (mode === 'null') return null;
+  const raw = val(customId);
+  return raw === '' ? null : Number(raw);
+}
+
+function resolveEventId(autoId, fieldId, deviceId, sequence) {
+  if ($(autoId).checked) {
+    const derived = `${deviceId}:${sequence}`;
+    $(fieldId).value = derived;
+    return derived;
+  }
+  return val(fieldId);
+}
+
+function eventUrl(s) { return `${s.ingestionBase}/v1/emqx/events`; }
+function eventHeaders(s) { return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${s.secret}` }; }
+
+const builders = {
+  health() {
+    const s = shared();
+    return { method: 'GET', url: `${s.ingestionBase}/healthz`, headers: {} };
+  },
+  device() {
+    const s = shared();
+    const url = `${s.firestoreBase}/v1/projects/${s.projectId}/databases/(default)/documents/devices/${s.deviceId}`;
+    const body = JSON.stringify({
+      fields: {
+        deviceId: { stringValue: s.deviceId },
+        productModel: { stringValue: s.productModel },
+        ingestionStatus: { stringValue: val('dev-status') },
+        ownerUid: { stringValue: s.ownerUid },
+      },
+    });
+    return { method: 'PATCH', url, headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' }, body };
+  },
+  urination() {
+    const s = shared();
+    const sequence = Number(val('ur-seq'));
+    const eventId = resolveEventId('ur-auto', 'ur-eventId', s.deviceId, sequence);
+    const payload = {
+      schemaVersion: 1, eventId, eventType: 'urination', deviceId: s.deviceId, sequence,
+      recordedAtMs: resolveTime(val('ur-timeMode'), 'ur-recorded'),
+      firmwareVersion: val('ur-fw'),
+      flushDurationMs: Number(val('ur-flush')),
+      pumpDurationMs: Number(val('ur-pump')),
+    };
+    const envelope = {
+      topic: `products/${s.productModel}/devices/${s.deviceId}/events/urination`,
+      clientId: s.clientId, username: s.username, qos: s.qos, retained: false,
+      brokerReceivedAtMs: $('ur-brokerAuto').checked ? nowMs() : Number(val('ur-broker')),
+      payload,
+    };
+    return { method: 'POST', url: eventUrl(s), headers: eventHeaders(s), body: JSON.stringify(envelope) };
+  },
+  battery() {
+    const s = shared();
+    const sequence = Number(val('bt-seq'));
+    const eventId = resolveEventId('bt-auto', 'bt-eventId', s.deviceId, sequence);
+    const payload = {
+      schemaVersion: 1, eventId, eventType: 'battery', deviceId: s.deviceId, sequence,
+      recordedAtMs: resolveTime(val('bt-timeMode'), 'bt-recorded'),
+      firmwareVersion: val('bt-fw'),
+      batteryLevelPercent: Number(val('bt-level')),
+    };
+    if ($('bt-voltageOn').checked) payload.batteryVoltageMv = Number(val('bt-voltage'));
+    const envelope = {
+      topic: `products/${s.productModel}/devices/${s.deviceId}/status/battery`,
+      clientId: s.clientId, username: s.username, qos: s.qos, retained: false,
+      brokerReceivedAtMs: $('bt-brokerAuto').checked ? nowMs() : Number(val('bt-broker')),
+      payload,
+    };
+    return { method: 'POST', url: eventUrl(s), headers: eventHeaders(s), body: JSON.stringify(envelope) };
+  },
+};
+
+function toCurl(req) {
+  const parts = [`curl -X ${req.method} '${req.url}'`];
+  for (const [k, v] of Object.entries(req.headers || {})) parts.push(`  -H '${k}: ${v}'`);
+  if (req.body) {
+    let pretty = req.body;
+    try { pretty = JSON.stringify(JSON.parse(req.body), null, 2); } catch {}
+    parts.push(`  -d '${pretty}'`);
+  }
+  return parts.join(' \\\n');
+}
+
+function preview(step) {
+  $(`curl-${step}`).textContent = toCurl(builders[step]());
+}
+
+async function run(step) {
+  const req = builders[step]();
+  $(`curl-${step}`).textContent = toCurl(req);
+  const box = $(`res-${step}`);
+  box.className = 'result show pending';
+  box.textContent = '送出中…';
+  let data;
+  try {
+    const r = await fetch('/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req) });
+    data = await r.json();
+  } catch (e) {
+    box.className = 'result show err';
+    box.textContent = '無法連上測試工具後端：' + e.message;
+    return null;
+  }
+  if (!data.ok) {
+    box.className = 'result show err';
+    box.textContent = '請求失敗：' + data.error;
+    return null;
+  }
+  const success = data.status >= 200 && data.status < 300;
+  box.className = 'result show ' + (success ? 'ok' : 'warn');
+  let body = data.body;
+  try { body = JSON.stringify(JSON.parse(data.body), null, 2); } catch {}
+  box.textContent = `HTTP ${data.status} ${data.statusText} · ${data.elapsedMs}ms\n\n${body}`;
+  return data;
+}
+
+async function runAll() {
+  for (const step of ['device', 'urination', 'battery']) {
+    const data = await run(step);
+    if (!data) break;
+  }
+}
+$('runAll').addEventListener('click', runAll);
+
+// eventId 欄位在「自動」開啟時鎖定，並隨 deviceId / sequence 即時更新
+function syncAuto(autoId, fieldId, seqId) {
+  const auto = $(autoId).checked;
+  $(fieldId).disabled = auto;
+  if (auto) $(fieldId).value = `${val('deviceId')}:${val(seqId)}`;
+}
+['ur-auto', 'bt-auto', 'ur-seq', 'bt-seq', 'deviceId'].forEach((id) =>
+  $(id).addEventListener('input', () => {
+    syncAuto('ur-auto', 'ur-eventId', 'ur-seq');
+    syncAuto('bt-auto', 'bt-eventId', 'bt-seq');
+  }),
+);
+$('ur-auto').addEventListener('change', () => syncAuto('ur-auto', 'ur-eventId', 'ur-seq'));
+$('bt-auto').addEventListener('change', () => syncAuto('bt-auto', 'bt-eventId', 'bt-seq'));
+
+// 自訂/現在 切換時，啟用或停用對應輸入框
+$('ur-brokerAuto').addEventListener('change', (e) => { $('ur-broker').disabled = e.target.checked; });
+$('bt-brokerAuto').addEventListener('change', (e) => { $('bt-broker').disabled = e.target.checked; });
+$('bt-voltageOn').addEventListener('change', (e) => { $('bt-voltage').disabled = !e.target.checked; });
+
+// 初始化
+syncAuto('ur-auto', 'ur-eventId', 'ur-seq');
+syncAuto('bt-auto', 'bt-eventId', 'bt-seq');
+</script>
+</body>
+</html>

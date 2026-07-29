@@ -124,37 +124,44 @@ tests:
 ---
 ### Requirement: Session termination
 
-The app SHALL terminate Firebase Authentication state on sign-out, stop registered protected-data subscriptions, and redirect to `/sign-in`.
+The app SHALL terminate Firebase Authentication state on sign-out, stop registered protected-data subscriptions, and redirect to `/sign-in`. The sign-out control SHALL be presented in the account section of the settings page.
 
 #### Scenario: Sign out a member
+
 - **WHEN** a signed-in member selects sign out
 - **THEN** the Firebase session ends, protected subscriptions stop, and protected routes become inaccessible
 
+#### Scenario: Reach sign out from settings
+
+- **WHEN** a signed-in member opens the settings page
+- **THEN** the account section SHALL present a sign-out control that terminates the session when activated
+
 
 <!-- @trace
-source: establish-member-authentication
+source: redesign-bottom-navigation
 updated: 2026-07-29
 code:
-  - src/features/auth/auth-provider.ts
-  - src/features/auth/auth-store.ts
-  - src/features/auth/auth-store-key.ts
-  - src/views/SignInView.vue
-  - src/App.vue
-  - src/features/auth/session.ts
-  - vitest.config.ts
   - src/router/index.ts
-  - src/features/auth/return-route.ts
-  - vitest.firebase.config.ts
-  - src/features/auth/protected-resource-registry.ts
-  - src/main.ts
+  - docs/mqtt-interfaces-and-firestore-models.md
+  - src/views/HistoryView.vue
+  - src/views/SettingsView.vue
+  - scripts/test-tool.html
+  - src/components/BottomNavigation.vue
+  - src/views/StatsView.vue
+  - src/views/HomeView.vue
+  - scripts/test-tool.mjs
+  - src/views/NotificationsView.vue
+  - src/App.vue
 tests:
-  - src/views/SignInView.spec.ts
-  - src/features/auth/auth-emulator.integration.spec.ts
-  - src/features/auth/return-route.spec.ts
-  - src/features/auth/protected-resource-registry.spec.ts
-  - src/router/auth-guard.spec.ts
-  - src/features/auth/auth-store.spec.ts
-  - src/App.auth.spec.ts
+  - src/App.spec.ts
+  - src/views/HistoryView.spec.ts
+  - src/views/StatsView.spec.ts
+  - src/router/index.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/components/ShellAccessibility.spec.ts
+  - src/components/BottomNavigation.spec.ts
+  - src/views/NotificationsView.spec.ts
+  - src/views/SettingsView.spec.ts
 -->
 
 ---

@@ -1,0 +1,286 @@
+# PeeCare — MQTT 接口與 Firestore Model 總覽
+
+本文件整理 PeeCare 專案目前**提供給裝置經由 MQTT 上報**的所有接口，以及**最終寫入 Firestore 的資料模型（Model）**。
+
+## 資料流
+
+```text
+裝置 (韌體)
+   │  發布 MQTT 訊息到 canonical topic
+   ▼
+EMQX Broker
+   │  Webhook 轉發 (HTTP POST)
+   ▼
+ingestion-api (Cloud Run, Fastify)
+   │  驗證 envelope + schema，計算 effectiveAtMs，冪等去重
+   ▼
+Firestore  (devices / events / dailyStats)
+   ▲
+   │  Owner-only 唯讀 (Security Rules)
+Web client
+```
+
+契約（Topic + JSON Schema + fixtures）只定義格式與驗證，**不**實作 Webhook、Firestore 寫入或尿量校正；ingestion 服務負責實際持久化。
+
+---
+
+## 一、提供給 MQTT 的接口
+
+### 1.1 Canonical MQTT Topics（v1）
+
+版本 1 只使用兩個 Topic（定義於 `contracts/device-events/lib/topic.mjs`）：
+
+| Topic | 事件類型 | Schema |
+|---|---|---|
+| `products/{productModel}/devices/{deviceId}/events/urination` | 排尿事件 | `schemas/urination-event.v1.schema.json` |
+| `products/{productModel}/devices/{deviceId}/status/battery` | 電量事件 | `schemas/battery-event.v1.schema.json` |
+
+**Topic 規則**
+
+- `productModel` 與 `deviceId` 每個 segment 必須符合 `[A-Za-z0-9][A-Za-z0-9_-]{0,63}`（ASCII 英數起頭，可含底線、連字號，長度 1–64）。
+- 不得包含空白、斜線或 MQTT 萬用字元（`+`、`#`）。
+- Payload 內必須再次包含 `deviceId`，且需與 Topic 的 `deviceId` segment 完全相同（否則 `device_mismatch`）。
+- Topic **不含** `v1` segment；相容性由 payload 的 `schemaVersion` 管理。
+- 舊版原型 Topic（如 `peecare/device/1/status`）不再是正式契約。
+
+**Topic 解析錯誤碼**
+
+| 錯誤碼 | 意義 |
+|---|---|
+| `unsupported_topic` | Topic 結構不符任何 v1 正式模板 |
+| `topic_format` | 結構相符，但 `productModel`／`deviceId` segment 違反字元或長度規則 |
+
+### 1.2 共用 Payload 欄位（Common Event Envelope）
+
+每個 v1 事件都必須包含下列共用欄位（`schemas/common-event.v1.schema.json`），以 `unevaluatedProperties: false` 與 AJV strict mode 拒絕未知欄位與型別轉換：
+
+| 欄位 | 型別與規則 |
+|---|---|
+| `schemaVersion` | 整數，固定為 `1` |
+| `eventId` | 字串，符合 `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`；跨重送的冪等識別，可安全作為 Firestore Document ID |
+| `eventType` | 字串，`urination` 或 `battery` |
+| `deviceId` | 字串，符合 Topic segment 格式 `[A-Za-z0-9][A-Za-z0-9_-]{0,63}` |
+| `sequence` | 整數 0–4294967295；用於排序與漏訊診斷，**不**作為去重鍵 |
+| `recordedAtMs` | 非負整數（UTC Unix epoch 毫秒）或 `null` |
+| `firmwareVersion` | 字串，Semantic Versioning 核心版本，可含 pre-release／build metadata |
+
+### 1.3 排尿事件 Payload
+
+Topic：`products/{productModel}/devices/{deviceId}/events/urination`
+
+```json
+{
+  "schemaVersion": 1,
+  "eventId": "PC-000001:42",
+  "eventType": "urination",
+  "deviceId": "PC-000001",
+  "sequence": 42,
+  "recordedAtMs": 1785168000000,
+  "firmwareVersion": "1.2.0",
+  "flushDurationMs": 3000,
+  "pumpDurationMs": 5000
+}
+```
+
+- `flushDurationMs`、`pumpDurationMs`：0–4294967295 的整數（毫秒）。
+- 只傳送原始流程時間，**不得**包含 `estimatedUrineMl`、每日次數或其他衍生尿量；尿量由後端依校正版本計算。
+
+### 1.4 電量事件 Payload
+
+Topic：`products/{productModel}/devices/{deviceId}/status/battery`
+
+```json
+{
+  "schemaVersion": 1,
+  "eventId": "PC-000001:43",
+  "eventType": "battery",
+  "deviceId": "PC-000001",
+  "sequence": 43,
+  "recordedAtMs": 1785168000000,
+  "firmwareVersion": "1.2.0",
+  "batteryLevelPercent": 75,
+  "batteryVoltageMv": 3975
+}
+```
+
+- `batteryLevelPercent`：只接受 `0`、`25`、`50`、`75`、`100`。
+- `batteryVoltageMv`：選填，存在時為 0–20000 的整數。硬體未提供原始電壓時**省略**此欄位，不得以 `null` 或 `0` 表示未知。
+
+### 1.5 重送與時間語義
+
+- **重送冪等**：`eventId` 是跨重送的冪等識別。重送同一事件必須重用相同 Topic、`eventId` 與完整 payload，逐欄位不變；否則 `retry_mismatch`。`sequence` 永不取代 `eventId` 作為去重鍵。
+- **時間來源**（`lib/effective-time.mjs`）：
+  1. `recordedAtMs` 為整數、不早於 `1767225600000`（2026-01-01T00:00:00Z）、且不晚於 `receivedAtMs + 300000`（5 分鐘容忍）→ `effectiveAtMs = recordedAtMs`，`timeSource = "device"`。
+  2. 否則（`null`、過早或超過未來容忍）→ `effectiveAtMs = receivedAtMs`，`timeSource = "server"`。
+  3. 原始 `recordedAtMs` 永久保留，時間回退不覆寫裝置提供值。
+
+### 1.6 EMQX Webhook 接收端點（ingestion-api HTTP）
+
+定義於 `services/ingestion-api/src/app.ts`（Fastify，bodyLimit 64 KB）。
+
+| Method + Path | 用途 | 主要回應 |
+|---|---|---|
+| `GET /healthz` | 健康檢查 | `200 { status: "ok" }` |
+| `POST /v1/emqx/events` | 接收 EMQX 轉發的裝置事件 | `201 stored` / `202 accepted` / `200 duplicate`；錯誤見下 |
+
+**`POST /v1/emqx/events` 規則**
+
+- 只接受 `Content-Type: application/json`（否則 `415`）。
+- 需 `Authorization` 驗證，支援 current／previous secret 輪替（`security/webhook-auth.ts`，否則 `401`）。
+- Body 為 EMQX envelope（`contracts/emqx-webhook-envelope.ts`），欄位固定且不多不少：
+
+| 欄位 | 規則 |
+|---|---|
+| `topic` | 字串 |
+| `clientId` | 字串，長度 1–128 |
+| `username` | 字串，長度 1–128 |
+| `qos` | `0`／`1`／`2` |
+| `retained` | 必須為 `false`（`true` → `422 retained_event`） |
+| `brokerReceivedAtMs` | 非負 safe integer |
+| `payload` | 物件（後續交由 schema 驗證） |
+
+**回應狀態碼對照**
+
+| 狀態碼 | 情境 |
+|---|---|
+| `201` | `stored`（首次成功寫入） |
+| `202` | `accepted` |
+| `200` | `duplicate`（相同 `eventId` 且 `canonicalHash` 一致） |
+| `400` | `invalid_envelope` / `malformed_json` |
+| `401` | `unauthorized` |
+| `403` | `device_disabled` |
+| `405` | 對 `/v1/emqx/events` 使用非 POST |
+| `409` | `event_id_conflict`（相同 `eventId` 但 payload 不同） |
+| `413` | `body_too_large` |
+| `415` | `unsupported_media_type` |
+| `422` | `retained_event` / schema 驗證失敗 / `unknown_device` / `product_model_mismatch` |
+| `503` | `persistence_unavailable` / `sink_unavailable` / `temporarily_unavailable` |
+| `500` | `aggregation_integrity_error` / `internal_error` |
+
+---
+
+## 二、寫入 Firestore 的 Model
+
+集合結構以 `devices/{deviceId}` 為根，底下有 `events` 與 `dailyStats` 兩個子集合。寫入由 Admin SDK 在單一 transaction 中完成（`firestore/firestore-event-sink.ts`），並以 `eventId` 為 document id 進行冪等去重；client 端依 `firestore.rules` 僅限 owner 唯讀（所有 client 寫入一律拒絕）。
+
+### 2.1 `devices/{deviceId}` — 裝置註冊 + 最新狀態投影
+
+ingestion 讀取校驗欄位（`ownerUid`、`ingestionStatus`、`productModel`、`deviceId`），並 `update` 下列投影欄位（僅在新事件比目前最新更晚時更新）。
+
+> `deviceId`、`productModel`、`ownerUid`、`ingestionStatus` 由裝置佈建流程建立，ingestion 只讀取校驗，不新建裝置文件。
+
+**校驗與門檻**
+
+| 條件 | 結果 |
+|---|---|
+| 裝置文件不存在或 `deviceId` 不符 | `unknown_device`（422） |
+| `ingestionStatus !== 'enabled'` | `device_disabled`（403） |
+| `productModel` 不符 | `product_model_mismatch`（422） |
+
+**投影欄位**
+
+| 欄位 | 說明 |
+|---|---|
+| `lastReportedAtMs` | 任一事件都更新，取 `max(現值, receivedAtMs)` |
+| `latestUrinationEventId` | 最新排尿事件 id |
+| `latestUrinationAtMs` | 最新排尿 `effectiveAtMs` |
+| `latestUrinationReceivedAtMs` | 最新排尿 `receivedAtMs` |
+| `latestUrinationFirmwareVersion` | 最新排尿韌體版本 |
+| `latestBatteryEventId` | 最新電量事件 id |
+| `latestBatteryLevelPercent` | 最新電量百分比 |
+| `latestBatteryAtMs` | 最新電量 `effectiveAtMs` |
+| `latestBatteryReceivedAtMs` | 最新電量 `receivedAtMs` |
+| `latestBatteryFirmwareVersion` | 最新電量韌體版本 |
+| `latestBatteryVoltageMv` | 最新電壓；缺值時以 `FieldValue.delete()` 移除 |
+
+最新性以三元組 `[effectiveAtMs, receivedAtMs, eventId]` 字典序比較，避免亂序處理將 metadata 倒退。
+
+### 2.2 `devices/{deviceId}/events/{eventId}` — 事件明細
+
+以 `eventId` 為 document id。若已存在且 `canonicalHash` 相同 → `duplicate`；不同 → `event_id_conflict`。
+
+**排尿事件 record**（`persistence/urination-event-record.ts`）
+
+| 欄位 | 值／來源 |
+|---|---|
+| `eventId` | payload |
+| `eventType` | `'urination'` |
+| `deviceId` | 事件 |
+| `productModel` | 事件 |
+| `schemaVersion` | payload |
+| `sequence` | payload |
+| `recordedAtMs` | payload（為數字時才寫入） |
+| `brokerReceivedAtMs` | envelope |
+| `receivedAtMs` | 伺服器接收時間 |
+| `effectiveAtMs` | 依時間來源規則計算 |
+| `timeSource` | `'device'` / `'server'` |
+| `firmwareVersion` | payload |
+| `flushDurationMs` | payload |
+| `pumpDurationMs` | payload |
+| `estimatedUrineMl` | `null`（尚未校正） |
+| `estimationStatus` | `'pending_calibration'` |
+| `canonicalHash` | 去重雜湊 |
+| `createdAtMs` | `receivedAtMs` |
+| `transport` | `{ topic, clientId, username, qos }` |
+
+**電量事件 record**（`persistence/battery-event-record.ts`）
+
+| 欄位 | 值／來源 |
+|---|---|
+| `eventId` | payload |
+| `eventType` | `'battery'` |
+| `deviceId` | 事件 |
+| `productModel` | 事件 |
+| `schemaVersion` | payload |
+| `sequence` | payload |
+| `recordedAtMs` | payload（為數字時才寫入） |
+| `brokerReceivedAtMs` | envelope |
+| `receivedAtMs` | 伺服器接收時間 |
+| `effectiveAtMs` | 依時間來源規則計算 |
+| `timeSource` | `'device'` / `'server'` |
+| `firmwareVersion` | payload |
+| `batteryLevelPercent` | payload |
+| `batteryVoltageMv` | payload（為數字時才寫入） |
+| `canonicalHash` | 去重雜湊 |
+| `createdAtMs` | `receivedAtMs` |
+| `transport` | `{ topic, clientId, username, qos }` |
+
+### 2.3 `devices/{deviceId}/dailyStats/{dayKey}` — 每日排尿彙總
+
+`DailyUrinationRecord`（`aggregation/daily-urination-record.ts`）。`dayKey` 以 `Asia/Taipei` 日界計算，**僅排尿事件**在同一 transaction 內遞增；寫入前以 `assertValidDailyDocument` 做 fail-closed 校驗。
+
+| 欄位 | 型別／值 |
+|---|---|
+| `date` | 字串 `dayKey`（Asia/Taipei 當地日期） |
+| `timeZone` | `'Asia/Taipei'` |
+| `urinationCount` | 整數，首筆為 `1`，之後 +1（溢位丟 `AggregationIntegrityError`） |
+| `volumeStatus` | `'pending_calibration'` |
+| `estimatedUrineTotalMl` | `null` |
+| `estimatedUrineAverageMl` | `null` |
+| `estimatedUrineMinMl` | `null` |
+| `estimatedUrineMaxMl` | `null` |
+| `lastEventAtMs` | `max(現值, effectiveAtMs)` |
+| `updatedAtMs` | `max(現值, receivedAtMs)` |
+
+---
+
+## 三、備註
+
+- 所有尿量欄位（event 的 `estimatedUrineMl`、daily 的四個 `estimatedUrine*Ml`）目前固定為 `null` 並標記 `pending_calibration`，因為校正公式尚未實作——刻意讓讀取端能區分「尚未校正」與「數值為 0」。
+- 事件寫入、裝置投影更新、每日彙總遞增皆在**同一個 Firestore transaction** 中完成，確保去重與計數一致性。
+
+## 四、對應原始碼
+
+| 主題 | 檔案 |
+|---|---|
+| Topic 解析與規則 | `contracts/device-events/lib/topic.mjs` |
+| JSON Schema | `contracts/device-events/schemas/*.v1.schema.json` |
+| 時間來源規則 | `contracts/device-events/lib/effective-time.mjs` |
+| HTTP 端點 | `services/ingestion-api/src/app.ts` |
+| EMQX envelope 驗證 | `services/ingestion-api/src/contracts/emqx-webhook-envelope.ts` |
+| Webhook 驗證（secret 輪替） | `services/ingestion-api/src/security/webhook-auth.ts` |
+| Firestore 寫入 transaction | `services/ingestion-api/src/firestore/firestore-event-sink.ts` |
+| 排尿事件 record | `services/ingestion-api/src/persistence/urination-event-record.ts` |
+| 電量事件 record | `services/ingestion-api/src/persistence/battery-event-record.ts` |
+| 每日彙總 record | `services/ingestion-api/src/aggregation/daily-urination-record.ts` |
+| Security Rules | `firestore.rules` |

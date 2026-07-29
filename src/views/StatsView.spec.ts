@@ -16,6 +16,20 @@ const series: readonly DailyCountPoint[] = [
 ]
 
 describe('StatsView', () => {
+  it('uses the shared header and surface card presentation', () => {
+    const wrapper = mount(StatsView, { props: { state: { status: 'no-device' } } })
+
+    expect(wrapper.find('header.app-header').exists()).toBe(true)
+    expect(wrapper.find('.stats-section').exists()).toBe(true)
+  })
+
+  it('uses the shared primary and secondary typography classes', () => {
+    const wrapper = mount(StatsView, { props: { series } })
+
+    expect(wrapper.get('#daily-count-title').classes()).toContain('stats-title')
+    expect(wrapper.get('[data-test="daily-count-table"]').classes()).toContain('stats-table')
+  })
+
   it('loads the selected device before querying on a cold signed-in stats route', async () => {
     const selectedDeviceId = ref<string | null>(null)
     const load = vi.fn(async () => { selectedDeviceId.value = 'PC-000001' })

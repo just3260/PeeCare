@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, watch } from 'vue'
+import { RouterLink } from 'vue-router'
 
 import AppHeader from '@/components/AppHeader.vue'
-import BottomNavigation from '@/components/BottomNavigation.vue'
 import DeviceSelector from '@/components/DeviceSelector.vue'
 import DeviceStatusCards from '@/components/DeviceStatusCards.vue'
 import { AUTH_STORE_KEY } from '@/features/auth/auth-store-key'
@@ -53,13 +53,16 @@ function handleSelect(deviceId: string): void {
         載入中…
       </p>
 
-      <p
-        v-else-if="state.status === 'empty'"
-        class="overview__notice"
-        data-test="overview-empty"
-      >
-        尚無裝置
-      </p>
+      <div v-else-if="state.status === 'empty'" class="overview__notice" data-test="overview-empty">
+        <p>尚無裝置</p>
+        <RouterLink
+          to="/settings"
+          class="overview__guidance"
+          data-test="overview-settings-guidance"
+        >
+          前往設定綁定裝置
+        </RouterLink>
+      </div>
 
       <div v-else-if="state.status === 'error'" class="overview__notice" data-test="overview-error">
         <p>無法載入裝置資料</p>
@@ -79,7 +82,6 @@ function handleSelect(deviceId: string): void {
       </template>
     </section>
   </main>
-  <BottomNavigation />
 </template>
 
 <style scoped>

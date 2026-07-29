@@ -12,10 +12,25 @@ const record: UrinationHistoryRecord = Object.freeze({
 })
 
 function render(state: DeviceEventHistoryState, items: readonly UrinationHistoryRecord[] = []) {
-  return mount(HistoryView, { props: { state, items, error: null } })
+  return mount(HistoryView, { props: { state, items } })
 }
 
 describe('HistoryView', () => {
+  it('uses the shared header and surface card presentation', () => {
+    const wrapper = render({ status: 'empty' })
+
+    expect(wrapper.find('header.app-header').exists()).toBe(true)
+    expect(wrapper.find('.history-section').exists()).toBe(true)
+  })
+
+  it('uses the shared primary and secondary typography classes', () => {
+    const wrapper = render({ status: 'ready' }, [record])
+
+    expect(wrapper.find('.history-item__time').exists()).toBe(true)
+    expect(wrapper.findAll('.history-item__detail')).toHaveLength(3)
+    expect(wrapper.get('[data-test="history-load-more"]').classes()).toContain('history-action')
+  })
+
   it('renders distinct loading, empty, ready, end, and retryable error states', () => {
     expect(render({ status: 'loading' }).find('[data-test="history-loading"]').exists()).toBe(true)
     expect(render({ status: 'empty' }).find('[data-test="history-empty"]').exists()).toBe(true)
@@ -36,7 +51,7 @@ describe('HistoryView', () => {
   it('formats UTC-boundary history dates in Asia/Taipei without changing the stored instant', () => {
     const wrapper = render({ status: 'end' }, [record])
 
-    expect(wrapper.get('time').text()).toContain('2026/07/28 00:00')
+    expect(wrapper.get('time').text()).toMatch(/2026\/07\/28\s+00:00/)
     expect(wrapper.get('time').attributes('datetime')).toBe('2026-07-27T16:00:00.000Z')
   })
 })

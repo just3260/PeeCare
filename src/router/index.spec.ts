@@ -25,4 +25,26 @@ describe('router', () => {
     expect(router.currentRoute.value.path).toBe('/')
     expect(router.currentRoute.value.name).toBe('home')
   })
+
+  it('resolves the settings route', async () => {
+    const router = createTestRouter()
+    router.push('/settings')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('settings')
+    expect(router.currentRoute.value.path).toBe('/settings')
+  })
+
+  it('redirects the legacy devices path to settings', async () => {
+    const router = createTestRouter()
+    router.push('/devices')
+    await router.isReady()
+
+    expect(router.currentRoute.value.path).toBe('/settings')
+    expect(router.currentRoute.value.name).toBe('settings')
+  })
+
+  it('no longer registers a component-backed devices route', () => {
+    expect(routes.some((route) => route.name === 'devices')).toBe(false)
+  })
 })

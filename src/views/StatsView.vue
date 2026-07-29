@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, watch } from 'vue'
 
+import AppHeader from '@/components/AppHeader.vue'
 import DailyUrinationChart from '@/components/DailyUrinationChart.vue'
 import type { DailyCountPoint } from '@/features/stats/daily-series'
 import type { DailyStatsState } from '@/features/stats/daily-stats-store'
@@ -38,19 +39,20 @@ watch(() => authStore?.state.value.status, () => { void syncDevice() })
 </script>
 
 <template>
+  <AppHeader />
   <main class="stats-main" aria-label="排尿統計">
     <section class="stats-section" aria-labelledby="daily-count-title">
-      <h1 id="daily-count-title">最近十四日排尿次數</h1>
-      <p v-if="state.status === 'no-device'" data-test="stats-no-device">請先選擇裝置</p>
-      <p v-else-if="state.status === 'loading'" data-test="stats-loading">載入中…</p>
-      <div v-else-if="state.status === 'error'" data-test="stats-error">
+      <h1 id="daily-count-title" class="stats-title">最近十四日排尿次數</h1>
+      <p v-if="state.status === 'no-device'" class="stats-notice" data-test="stats-no-device">請先選擇裝置</p>
+      <p v-else-if="state.status === 'loading'" class="stats-notice" data-test="stats-loading">載入中…</p>
+      <div v-else-if="state.status === 'error'" class="stats-notice" data-test="stats-error">
         <p>無法載入排尿統計</p>
-        <button type="button" @click="syncDevice">重試</button>
+        <button type="button" class="stats-action" @click="syncDevice">重試</button>
       </div>
       <template v-else>
         <DailyUrinationChart :series="series" />
 
-        <table class="daily-count-table" data-test="daily-count-table">
+        <table class="daily-count-table stats-table" data-test="daily-count-table">
         <caption>最近十四日每日排尿次數</caption>
         <thead>
           <tr>
@@ -79,12 +81,43 @@ watch(() => authStore?.state.value.status, () => { void syncDevice() })
   padding: 20px;
   border-radius: 20px;
   background: var(--color-surface);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
+}
+
+.stats-title {
+  color: var(--color-ink);
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.stats-notice {
+  color: var(--color-muted);
+  font-size: 14px;
+}
+
+.stats-action {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  background-color: var(--color-surface);
+  color: var(--color-ink);
+  font-size: 13px;
+  cursor: pointer;
 }
 
 .daily-count-table {
   width: 100%;
   border-collapse: collapse;
+  color: var(--color-muted);
+  font-size: 14px;
   text-align: left;
+}
+
+.daily-count-table caption,
+.daily-count-table th {
+  color: var(--color-muted);
+  font-size: 13px;
+  font-weight: 500;
 }
 
 .daily-count-table th,
