@@ -17,6 +17,8 @@ const completeSnapshot = {
   latestUrinationEventId: 'evt-urination-1',
   latestUrinationAtMs: 1_700_000_000_000,
   latestUrinationReceivedAtMs: 1_700_000_000_100,
+  latestUrinationEstimatedUrineMl: 200,
+  latestUrinationEstimationStatus: 'estimated',
   latestBatteryEventId: 'evt-battery-1',
   latestBatteryLevelPercent: 50,
   latestBatteryAtMs: 1_700_000_000_200,
@@ -206,6 +208,8 @@ describe('device overview store: snapshot states', () => {
           eventId: 'evt-urination-1',
           atMs: 1_700_000_000_000,
           receivedAtMs: 1_700_000_000_100,
+          estimatedUrineMl: 200,
+          estimationStatus: 'estimated',
         },
         battery: {
           eventId: 'evt-battery-1',

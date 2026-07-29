@@ -2,6 +2,7 @@ import { FieldValue, type DocumentReference, type Firestore } from '@google-clou
 import type { ValidatedDeviceEvent } from '../domain/validated-device-event.js';
 import { canonicalEventHash } from '../persistence/canonical-event-hash.js';
 import { buildUrinationEventRecord } from '../persistence/urination-event-record.js';
+import { estimateUrineVolume } from '../persistence/urine-volume-estimate.js';
 import { buildBatteryEventRecord } from '../persistence/battery-event-record.js';
 import { toAsiaTaipeiDayKey } from '../aggregation/asia-taipei-day-key.js';
 import {
@@ -19,7 +20,7 @@ type DeviceRegistry = {
   latestBatteryAtMs?: unknown; latestBatteryReceivedAtMs?: unknown; latestBatteryEventId?: unknown;
   lastReportedAtMs?: unknown;
 };
-type EventPayload = { eventId?: unknown; firmwareVersion?: unknown; batteryLevelPercent?: unknown; batteryVoltageMv?: unknown };
+type EventPayload = { eventId?: unknown; firmwareVersion?: unknown; batteryLevelPercent?: unknown; batteryVoltageMv?: unknown; flushDurationMs?: unknown; pumpDurationMs?: unknown };
 
 function compareTuple(left: [number, number, string], right: [number, number, string]): number {
   return left[0] - right[0] || left[1] - right[1] || left[2].localeCompare(right[2]);
@@ -72,9 +73,12 @@ function urinationProjection(event: ValidatedDeviceEvent, device: DeviceRegistry
   const currentTuple = latestTuple(device, 'Urination');
   const nextTuple: [number, number, string] = [event.effectiveAtMs, event.receivedAtMs, eventId];
   const projection: Record<string, string | number | FieldValue> = { lastReportedAtMs: Math.max(typeof device.lastReportedAtMs === 'number' ? device.lastReportedAtMs : 0, event.receivedAtMs) };
+  const volume = estimateUrineVolume(payload.flushDurationMs as number, payload.pumpDurationMs as number);
   if (!currentTuple || compareTuple(nextTuple, currentTuple) > 0) Object.assign(projection, {
     latestUrinationEventId: eventId, latestUrinationAtMs: event.effectiveAtMs,
-    latestUrinationReceivedAtMs: event.receivedAtMs, ...(typeof payload.firmwareVersion === 'string' ? { latestUrinationFirmwareVersion: payload.firmwareVersion } : {}),
+    latestUrinationReceivedAtMs: event.receivedAtMs,
+    latestUrinationEstimatedUrineMl: volume.estimatedUrineMl, latestUrinationEstimationStatus: volume.estimationStatus,
+    ...(typeof payload.firmwareVersion === 'string' ? { latestUrinationFirmwareVersion: payload.firmwareVersion } : {}),
   });
   return projection;
 }

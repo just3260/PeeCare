@@ -101,8 +101,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Firestore event sink', ()
     await firestore.doc('devices/PC-000001').set(enabled);
     const sink = new FirestoreEventSink(firestore);
     await expect(sink.accept(makeEvent(), { requestId: 'r' })).resolves.toBe('stored');
-    expect((await firestore.doc('devices/PC-000001/events/evt-000001').get()).data()).toMatchObject({ estimatedUrineMl: null, estimationStatus: 'pending_calibration' });
-    expect((await firestore.doc('devices/PC-000001').get()).data()).toMatchObject({ latestUrinationEventId: 'evt-000001', lastReportedAtMs: 2100 });
+    expect((await firestore.doc('devices/PC-000001/events/evt-000001').get()).data()).toMatchObject({ estimatedUrineMl: 200, estimationStatus: 'estimated' });
+    expect((await firestore.doc('devices/PC-000001').get()).data()).toMatchObject({ latestUrinationEventId: 'evt-000001', lastReportedAtMs: 2100, latestUrinationEstimatedUrineMl: 200, latestUrinationEstimationStatus: 'estimated' });
   }, 20_000);
 
   it('dispatches an eligible battery event through the shared device gate and transaction', async () => {

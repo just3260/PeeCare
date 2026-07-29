@@ -1,3 +1,17 @@
+/**
+ * Volume estimation outcome carried by a persisted urination event:
+ * - `estimated`    — a plausible, positive volume derived from the pump window.
+ * - `no_flow`      — the pump did not exceed the flush; no measurable urine (0 ml).
+ * - `out_of_range` — a positive but implausibly large volume, kept but flagged.
+ */
+export type UrinationVolumeStatus = 'estimated' | 'no_flow' | 'out_of_range'
+
+const URINATION_VOLUME_STATUSES: readonly UrinationVolumeStatus[] = [
+  'estimated',
+  'no_flow',
+  'out_of_range',
+]
+
 /** An immutable, validated urination event safe to expose to history UI code. */
 export interface UrinationHistoryRecord {
   readonly eventId: string
@@ -7,8 +21,8 @@ export interface UrinationHistoryRecord {
   readonly effectiveAtMs: number
   readonly flushDurationMs: number
   readonly pumpDurationMs: number
-  readonly estimatedUrineMl: null
-  readonly estimationStatus: 'pending_calibration'
+  readonly estimatedUrineMl: number
+  readonly estimationStatus: UrinationVolumeStatus
 }
 
 export type UrinationHistoryDataIntegrityCode =
@@ -19,6 +33,8 @@ export type UrinationHistoryDataIntegrityCode =
   | 'invalid_effective_at_ms'
   | 'invalid_flush_duration_ms'
   | 'invalid_pump_duration_ms'
+  | 'invalid_estimated_urine_ml'
+  | 'invalid_volume_status'
   | 'invalid_volume_contract'
 
 /** Raised when an immutable event document cannot safely be rendered as history. */
@@ -81,8 +97,14 @@ export function parseUrinationHistoryRecord(
   if (!isNonNegativeInteger(record.pumpDurationMs)) {
     return fail('invalid_pump_duration_ms', `Event "${input.documentId}" has an invalid pump duration.`)
   }
-  if (record.estimatedUrineMl !== null || record.estimationStatus !== 'pending_calibration') {
-    return fail('invalid_volume_contract', `Event "${input.documentId}" violates the pending-calibration volume contract.`)
+  if (!isNonNegativeInteger(record.estimatedUrineMl)) {
+    return fail('invalid_estimated_urine_ml', `Event "${input.documentId}" has an invalid estimated urine volume.`)
+  }
+  if (!URINATION_VOLUME_STATUSES.includes(record.estimationStatus as UrinationVolumeStatus)) {
+    return fail('invalid_volume_status', `Event "${input.documentId}" has an invalid volume status.`)
+  }
+  if (record.estimationStatus === 'no_flow' && record.estimatedUrineMl !== 0) {
+    return fail('invalid_volume_contract', `Event "${input.documentId}" reports no_flow with a non-zero volume.`)
   }
 
   return Object.freeze({
@@ -93,7 +115,7 @@ export function parseUrinationHistoryRecord(
     effectiveAtMs: record.effectiveAtMs,
     flushDurationMs: record.flushDurationMs,
     pumpDurationMs: record.pumpDurationMs,
-    estimatedUrineMl: null,
-    estimationStatus: 'pending_calibration',
+    estimatedUrineMl: record.estimatedUrineMl,
+    estimationStatus: record.estimationStatus as UrinationVolumeStatus,
   })
 }

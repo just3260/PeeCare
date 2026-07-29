@@ -19,6 +19,12 @@ const emit = defineEmits<{
   retry: []
 }>()
 
+/** Human-readable urine volume label; flags implausible estimates for review. */
+function formatVolume(item: UrinationHistoryRecord): string {
+  const base = `排尿量：${item.estimatedUrineMl} mL`
+  return item.estimationStatus === 'out_of_range' ? `${base}（數值異常）` : base
+}
+
 const historyStore = inject(DEVICE_EVENT_HISTORY_STORE_KEY, null)
 const deviceStore = inject(DEVICE_OVERVIEW_STORE_KEY, null)
 const { devices, selectedDeviceId, hasMultipleDevices, selectDevice } = useDeviceSelection()
@@ -58,9 +64,7 @@ watch(() => deviceStore?.selectedDeviceId.value, syncDevice)
             <time class="history-item__time" :datetime="new Date(item.effectiveAtMs).toISOString()">
               {{ formatTaipeiTimestamp(item.effectiveAtMs) }}
             </time>
-            <span class="history-item__detail" data-test="history-flush-duration">沖水 {{ item.flushDurationMs }} ms</span>
-            <span class="history-item__detail" data-test="history-pump-duration">抽水 {{ item.pumpDurationMs }} ms</span>
-            <span class="history-item__detail" data-test="history-volume-status">尿量：待校正</span>
+            <span class="history-item__detail" data-test="history-volume-status">{{ formatVolume(item) }}</span>
           </li>
         </ul>
         <button v-if="state.status === 'ready'" type="button" class="history-action" data-test="history-load-more" @click="loadMore">

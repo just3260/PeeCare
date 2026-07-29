@@ -16,6 +16,8 @@ const completeProjection = {
   latestUrinationEventId: 'evt-urination-1',
   latestUrinationAtMs: 1_700_000_000_000,
   latestUrinationReceivedAtMs: 1_700_000_000_100,
+  latestUrinationEstimatedUrineMl: 200,
+  latestUrinationEstimationStatus: 'estimated',
   latestBatteryEventId: 'evt-battery-1',
   latestBatteryLevelPercent: 75,
   latestBatteryAtMs: 1_700_000_000_200,
@@ -33,6 +35,8 @@ describe('parseDeviceOverview', () => {
         eventId: 'evt-urination-1',
         atMs: 1_700_000_000_000,
         receivedAtMs: 1_700_000_000_100,
+        estimatedUrineMl: 200,
+        estimationStatus: 'estimated',
       },
       battery: {
         eventId: 'evt-battery-1',
@@ -101,12 +105,24 @@ describe('parseDeviceOverview', () => {
     )
   })
 
+  it('reads a legacy urination tuple without a stored volume as null volume', () => {
+    const { latestUrinationEstimatedUrineMl: _ml, latestUrinationEstimationStatus: _status, ...legacy } =
+      completeProjection
+
+    const overview = parseDeviceOverview({ deviceId: 'PC-000001', data: legacy })
+
+    expect(overview.urination).toMatchObject({ eventId: 'evt-urination-1', estimatedUrineMl: null, estimationStatus: null })
+  })
+
   it.each([
     ['non-canonical level 30', { ...completeProjection, latestBatteryLevelPercent: 30 }, 'invalid_battery_level'],
     ['negative epoch', { ...completeProjection, latestUrinationAtMs: -1 }, 'invalid_timestamp'],
     ['non-integer voltage', { ...completeProjection, latestBatteryVoltageMv: 3840.5 }, 'invalid_battery_voltage'],
     ['string voltage', { ...completeProjection, latestBatteryVoltageMv: '3840' }, 'invalid_battery_voltage'],
     ['negative lastReported', { ...completeProjection, lastReportedAtMs: -5 }, 'invalid_last_reported'],
+    ['negative urine volume', { ...completeProjection, latestUrinationEstimatedUrineMl: -1 }, 'invalid_urination_volume'],
+    ['unknown volume status', { ...completeProjection, latestUrinationEstimationStatus: 'pending_calibration' }, 'invalid_urination_volume'],
+    ['incoherent no_flow volume', { ...completeProjection, latestUrinationEstimationStatus: 'no_flow' }, 'invalid_urination_volume'],
   ])('raises a typed integrity error for %s', (_label, data, expectedCode) => {
     try {
       parseDeviceOverview({ deviceId: 'PC-000001', data })

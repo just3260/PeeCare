@@ -34,13 +34,13 @@ describe('BottomNavigation', () => {
     ])
   })
 
-  it('renders the home entry in the centre as an enlarged control', async () => {
+  it('renders the home entry in the centre, aligned with the other entries', async () => {
     const wrapper = await mountWithRouter()
     const links = wrapper.findAll('.bottom-nav__item')
     const home = links[2]
 
     expect(home.attributes('href')).toBe('/')
-    expect(home.classes()).toContain('bottom-nav__item--home')
+    expect(home.classes()).not.toContain('bottom-nav__item--home')
   })
 
   it('renders both an icon and a text label for every entry', async () => {

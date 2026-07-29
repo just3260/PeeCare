@@ -33,8 +33,8 @@ function eventDocument(eventId: string, effectiveAtMs: number) {
       effectiveAtMs,
       flushDurationMs: 3_000,
       pumpDurationMs: 5_000,
-      estimatedUrineMl: null,
-      estimationStatus: 'pending_calibration',
+      estimatedUrineMl: 200,
+      estimationStatus: 'estimated',
     }),
   }
 }
@@ -72,6 +72,25 @@ describe('loadUrinationPage', () => {
       1_700_000_000_000,
       1_700_000_000_000,
     ])
+  })
+
+  it('skips an unrenderable legacy document instead of failing the whole page', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const legacy = {
+      id: 'event-legacy',
+      data: () => ({
+        eventId: 'event-legacy', eventType: 'urination', deviceId: 'PC-000001', sequence: 1,
+        effectiveAtMs: 1_700_000_000_000, flushDurationMs: 3_000, pumpDurationMs: 5_000,
+        estimatedUrineMl: null, estimationStatus: 'pending_calibration',
+      }),
+    }
+    getDocs.mockResolvedValue({ docs: [eventDocument('event-B', 1_700_000_000_000), legacy] })
+
+    const page = await loadUrinationPage(firestore, 'PC-000001')
+
+    expect(page.items.map((item) => item.eventId)).toEqual(['event-B'])
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('event-legacy'), expect.anything())
+    warn.mockRestore()
   })
 
   it('continues a 30-record history from the final document without duplicates', async () => {

@@ -51,14 +51,26 @@ export async function loadUrinationPage(
   const snapshot = await getDocs(query(ownedDeviceEventsRef(firestore, deviceId), ...constraints))
   const lastDocument = snapshot.docs.at(-1) ?? null
 
+  // A single malformed or legacy document is skipped (and reported) rather than
+  // failing the whole page: the reader must never blank an entire history over
+  // one unrenderable row. Pagination still advances by the raw document cursor.
+  const items: UrinationHistoryRecord[] = []
+  for (const document of snapshot.docs) {
+    try {
+      items.push(
+        parseUrinationHistoryRecord({
+          documentId: document.id,
+          selectedDeviceId: deviceId,
+          data: document.data(),
+        }),
+      )
+    } catch (error) {
+      console.warn(`Skipping unrenderable urination event "${document.id}".`, error)
+    }
+  }
+
   return {
-    items: snapshot.docs.map((document) =>
-      parseUrinationHistoryRecord({
-        documentId: document.id,
-        selectedDeviceId: deviceId,
-        data: document.data(),
-      }),
-    ),
+    items,
     cursor: lastDocument,
     hasMore: snapshot.docs.length === URINATION_HISTORY_PAGE_SIZE,
   }

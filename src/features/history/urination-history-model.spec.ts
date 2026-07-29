@@ -13,12 +13,12 @@ const validRecord = {
   effectiveAtMs: 1_785_168_000_000,
   flushDurationMs: 3_000,
   pumpDurationMs: 5_000,
-  estimatedUrineMl: null,
-  estimationStatus: 'pending_calibration',
+  estimatedUrineMl: 200,
+  estimationStatus: 'estimated',
 }
 
 describe('parseUrinationHistoryRecord', () => {
-  it('creates an immutable record only from the persisted pending-calibration contract', () => {
+  it('creates an immutable record from the persisted estimated-volume contract', () => {
     const record = parseUrinationHistoryRecord({
       documentId: 'evt-000001',
       selectedDeviceId: 'PC-000001',
@@ -27,6 +27,19 @@ describe('parseUrinationHistoryRecord', () => {
 
     expect(record).toEqual(validRecord)
     expect(Object.isFrozen(record)).toBe(true)
+  })
+
+  it.each([
+    ['no_flow', 0],
+    ['out_of_range', 3_000],
+  ] as const)('accepts the %s status with its coherent volume', (estimationStatus, estimatedUrineMl) => {
+    const record = parseUrinationHistoryRecord({
+      documentId: 'evt-000001',
+      selectedDeviceId: 'PC-000001',
+      data: { ...validRecord, estimationStatus, estimatedUrineMl },
+    })
+
+    expect(record).toMatchObject({ estimationStatus, estimatedUrineMl })
   })
 
   it('rejects a cross-device document as a typed data-integrity error', () => {
@@ -57,8 +70,11 @@ describe('parseUrinationHistoryRecord', () => {
     ['invalid_effective_at_ms', { effectiveAtMs: 8_640_000_000_000_001 }],
     ['invalid_flush_duration_ms', { flushDurationMs: -1 }],
     ['invalid_pump_duration_ms', { pumpDurationMs: Number.NaN }],
-    ['invalid_volume_contract', { estimatedUrineMl: 12 }],
-    ['invalid_volume_contract', { estimationStatus: 'estimated' }],
+    ['invalid_estimated_urine_ml', { estimatedUrineMl: null }],
+    ['invalid_estimated_urine_ml', { estimatedUrineMl: -1 }],
+    ['invalid_estimated_urine_ml', { estimatedUrineMl: 1.5 }],
+    ['invalid_volume_status', { estimationStatus: 'pending_calibration' }],
+    ['invalid_volume_contract', { estimationStatus: 'no_flow', estimatedUrineMl: 200 }],
   ] as const)('rejects a document with %s', (code, override) => {
     expect(() =>
       parseUrinationHistoryRecord({

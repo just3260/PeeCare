@@ -15,7 +15,7 @@ function device(deviceId: string): OwnedDevice {
 const record: UrinationHistoryRecord = Object.freeze({
   eventId: 'evt-000001', eventType: 'urination', deviceId: 'PC-000001', sequence: 42,
   effectiveAtMs: Date.parse('2026-07-27T16:00:00.000Z'), flushDurationMs: 3_000, pumpDurationMs: 5_000,
-  estimatedUrineMl: null, estimationStatus: 'pending_calibration',
+  estimatedUrineMl: 200, estimationStatus: 'estimated',
 })
 
 function render(state: DeviceEventHistoryState, items: readonly UrinationHistoryRecord[] = []) {
@@ -34,7 +34,7 @@ describe('HistoryView', () => {
     const wrapper = render({ status: 'ready' }, [record])
 
     expect(wrapper.find('.history-item__time').exists()).toBe(true)
-    expect(wrapper.findAll('.history-item__detail')).toHaveLength(3)
+    expect(wrapper.findAll('.history-item__detail')).toHaveLength(1)
     expect(wrapper.get('[data-test="history-load-more"]').classes()).toContain('history-action')
   })
 
@@ -46,13 +46,21 @@ describe('HistoryView', () => {
     expect(render({ status: 'error' }).find('[data-test="history-error"]').exists()).toBe(true)
   })
 
-  it('displays raw durations and the pending-calibration status without inventing volume', () => {
+  it('displays only the estimated urine volume, hiding flush and pump internals', () => {
     const wrapper = render({ status: 'ready' }, [record])
 
-    expect(wrapper.get('[data-test="history-flush-duration"]').text()).toContain('3000 ms')
-    expect(wrapper.get('[data-test="history-pump-duration"]').text()).toContain('5000 ms')
-    expect(wrapper.get('[data-test="history-volume-status"]').text()).toContain('待校正')
-    expect(wrapper.text()).not.toContain('mL')
+    expect(wrapper.get('[data-test="history-volume-status"]').text()).toContain('排尿量：200 mL')
+    expect(wrapper.find('[data-test="history-flush-duration"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="history-pump-duration"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('沖水')
+    expect(wrapper.text()).not.toContain('抽水')
+  })
+
+  it('flags an out-of-range estimate for review', () => {
+    const suspect = Object.freeze({ ...record, estimatedUrineMl: 3_000, estimationStatus: 'out_of_range' as const })
+    const wrapper = render({ status: 'ready' }, [suspect])
+
+    expect(wrapper.get('[data-test="history-volume-status"]').text()).toContain('排尿量：3000 mL（數值異常）')
   })
 
   it('formats UTC-boundary history dates in Asia/Taipei without changing the stored instant', () => {

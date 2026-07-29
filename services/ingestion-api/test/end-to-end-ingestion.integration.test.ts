@@ -64,11 +64,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('EMQX request to Firestore
 
     expect(response.statusCode).toBe(201);
     expect((await firestore.doc(`devices/${DEVICE_ID}/events/evt-000001`).get()).data()).toMatchObject({
-      eventType: 'urination', flushDurationMs: 3000, pumpDurationMs: 5000, estimatedUrineMl: null,
-      estimationStatus: 'pending_calibration', receivedAtMs: RECEIVED_FIRST, createdAtMs: RECEIVED_FIRST,
+      eventType: 'urination', flushDurationMs: 3000, pumpDurationMs: 5000, estimatedUrineMl: 200,
+      estimationStatus: 'estimated', receivedAtMs: RECEIVED_FIRST, createdAtMs: RECEIVED_FIRST,
     });
     const device = (await firestore.doc(`devices/${DEVICE_ID}`).get()).data() ?? {};
-    expect(device).toMatchObject({ latestUrinationEventId: 'evt-000001', lastReportedAtMs: RECEIVED_FIRST });
+    expect(device).toMatchObject({
+      latestUrinationEventId: 'evt-000001', lastReportedAtMs: RECEIVED_FIRST,
+      latestUrinationEstimatedUrineMl: 200, latestUrinationEstimationStatus: 'estimated',
+    });
     expect(Object.keys(device).some(key => /battery/i.test(key))).toBe(false);
     const dailyDocs = await firestore.collection(`devices/${DEVICE_ID}/dailyStats`).listDocuments();
     expect(dailyDocs.length).toBe(1);

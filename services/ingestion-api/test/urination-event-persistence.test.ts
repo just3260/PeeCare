@@ -23,11 +23,12 @@ describe('canonical event identity', () => {
 });
 
 describe('urination event record', () => {
-  it('preserves raw measurements and transport audit with calibration pending', () => {
+  it('preserves raw measurements and transport audit with an estimated urine volume', () => {
+    // net pump window = 5000 - 3000 = 2000 ms -> 2000 / 100 * 10 = 200 ml
     expect(buildUrinationEventRecord(event, 'hash')).toEqual(expect.objectContaining({
       eventId: 'evt-000001', eventType: 'urination', deviceId: 'PC-000001', productModel: 'pc-mini', sequence: 42,
-      recordedAtMs: 1785168000000, flushDurationMs: 3000, pumpDurationMs: 5000, estimatedUrineMl: null,
-      estimationStatus: 'pending_calibration', canonicalHash: 'hash', createdAtMs: 1785168061000,
+      recordedAtMs: 1785168000000, flushDurationMs: 3000, pumpDurationMs: 5000, estimatedUrineMl: 200,
+      estimationStatus: 'estimated', canonicalHash: 'hash', createdAtMs: 1785168061000,
       transport: { topic: event.topic, clientId: event.clientId, username: event.username, qos: event.qos },
     }));
   });

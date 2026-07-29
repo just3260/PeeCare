@@ -11,7 +11,7 @@ function readyProjection(
   overrides: Partial<DeviceOverviewProjection> = {},
 ): DeviceOverviewProjection {
   return {
-    urination: { eventId: 'evt-u', atMs: BOUNDARY_MS, receivedAtMs: BOUNDARY_MS },
+    urination: { eventId: 'evt-u', atMs: BOUNDARY_MS, receivedAtMs: BOUNDARY_MS, estimatedUrineMl: 200, estimationStatus: 'estimated' },
     battery: {
       eventId: 'evt-b',
       levelPercent: 50,
@@ -98,5 +98,43 @@ describe('DeviceStatusCards', () => {
 
     expect(wrapper.get('[data-test="urination-time"]').text()).toBe('尚無資料')
     expect(wrapper.get('[data-test="last-reported-time"]').text()).toBe('尚無資料')
+  })
+
+  it('shows the estimated urine volume alongside the latest urination time', () => {
+    const wrapper = mount(DeviceStatusCards, { props: { projection: readyProjection() } })
+
+    expect(wrapper.get('[data-test="urination-volume"]').text()).toContain('排尿量 200 mL')
+  })
+
+  it('gives the volume the prominent value style and the time the muted footer style', () => {
+    const wrapper = mount(DeviceStatusCards, { props: { projection: readyProjection() } })
+
+    expect(wrapper.get('[data-test="urination-volume"]').classes()).toContain('status-card__value')
+    expect(wrapper.get('[data-test="urination-time"]').classes()).toContain('status-card__footer')
+  })
+
+  it('flags an out-of-range urine volume for review', () => {
+    const wrapper = mount(DeviceStatusCards, {
+      props: {
+        projection: readyProjection({
+          urination: { eventId: 'evt-u', atMs: BOUNDARY_MS, receivedAtMs: BOUNDARY_MS, estimatedUrineMl: 3_000, estimationStatus: 'out_of_range' },
+        }),
+      },
+    })
+
+    expect(wrapper.get('[data-test="urination-volume"]').text()).toContain('排尿量 3000 mL（數值異常）')
+  })
+
+  it('omits the volume line for a legacy projection without a stored volume', () => {
+    const wrapper = mount(DeviceStatusCards, {
+      props: {
+        projection: readyProjection({
+          urination: { eventId: 'evt-u', atMs: BOUNDARY_MS, receivedAtMs: BOUNDARY_MS, estimatedUrineMl: null, estimationStatus: null },
+        }),
+      },
+    })
+
+    expect(wrapper.get('[data-test="urination-time"]').text()).toContain('2026/07/28')
+    expect(wrapper.find('[data-test="urination-volume"]').exists()).toBe(false)
   })
 })

@@ -21,6 +21,15 @@ const urinationTime = computed(() =>
     : UNKNOWN_LABEL,
 )
 
+// The estimated urine volume is shown only when the projection carries it; a
+// legacy projection without volume shows the time alone, never a fabricated 0.
+const urinationVolume = computed(() => {
+  const urination = props.projection.urination
+  if (!urination || urination.estimatedUrineMl === null) return null
+  const base = `${urination.estimatedUrineMl} mL`
+  return urination.estimationStatus === 'out_of_range' ? `${base}（數值異常）` : base
+})
+
 const batteryLevel = computed(() =>
   props.projection.battery ? `${props.projection.battery.levelPercent}%` : UNKNOWN_LABEL,
 )
@@ -45,7 +54,14 @@ const lastReportedTime = computed(() =>
   <div class="status-cards" aria-label="裝置最新狀態">
     <article class="status-card">
       <p class="status-card__label">最近排尿</p>
-      <p class="status-card__value" data-test="urination-time">{{ urinationTime }}</p>
+      <!-- When a volume is known it takes the prominent value slot and the time
+           drops to the muted footer; a legacy projection without a volume keeps
+           the time as the value. -->
+      <template v-if="urinationVolume">
+        <p class="status-card__value" data-test="urination-volume">排尿量 {{ urinationVolume }}</p>
+        <p class="status-card__footer" data-test="urination-time">{{ urinationTime }}</p>
+      </template>
+      <p v-else class="status-card__value" data-test="urination-time">{{ urinationTime }}</p>
     </article>
 
     <article class="status-card">

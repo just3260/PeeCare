@@ -10,7 +10,7 @@ import {
 const event: UrinationHistoryRecord = Object.freeze({
   eventId: 'evt-000001', eventType: 'urination', deviceId: 'PC-000001', sequence: 1,
   effectiveAtMs: 1_785_168_000_000, flushDurationMs: 3_000, pumpDurationMs: 5_000,
-  estimatedUrineMl: null, estimationStatus: 'pending_calibration',
+  estimatedUrineMl: 200, estimationStatus: 'estimated',
 })
 
 describe('device event history store', () => {

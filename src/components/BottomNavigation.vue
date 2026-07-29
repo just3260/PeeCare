@@ -43,12 +43,12 @@ function isActive(name: string): boolean {
 
     <RouterLink
       to="/"
-      class="bottom-nav__item bottom-nav__item--home"
+      class="bottom-nav__item"
       :class="{ 'bottom-nav__item--active': isActive('home') }"
       :aria-current="isActive('home') ? 'page' : undefined"
       aria-label="PeeCare 首頁"
     >
-      <svg class="bottom-nav__icon bottom-nav__icon--home" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg class="bottom-nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M3 10.5 12 3l9 7.5" />
         <path d="M5 9.5V20h14V9.5" />
         <path d="M10 20v-5h4v5" />
@@ -126,20 +126,5 @@ function isActive(name: string): boolean {
 
 .bottom-nav__item--active {
   color: var(--color-brand);
-}
-
-/* Home is the primary entry: raised, enlarged, and visually centred. */
-.bottom-nav__item--home {
-  transform: translateY(-16px);
-}
-
-.bottom-nav__item--home .bottom-nav__icon--home {
-  width: 30px;
-  height: 30px;
-  padding: 14px;
-  border-radius: 50%;
-  background-color: var(--color-brand);
-  color: var(--color-surface);
-  box-shadow: 0 6px 16px var(--color-brand-soft, rgba(0, 0, 0, 0.15));
 }
 </style>

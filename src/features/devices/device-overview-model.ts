@@ -11,11 +11,15 @@
 // model stays sortable and testable; presentation formatting to the fixed
 // `Asia/Taipei` timezone is a separate, explicit step (see formatTaipeiTimestamp).
 
+import type { UrinationVolumeStatus } from '@/features/history/urination-history-model'
+
 /** The five canonical latest-battery levels the projection may report. */
 export const CANONICAL_BATTERY_LEVELS = [0, 25, 50, 75, 100] as const
 
 /** A latest-battery level, constrained to the canonical quantized set. */
 export type BatteryLevelPercent = (typeof CANONICAL_BATTERY_LEVELS)[number]
+
+const URINATION_VOLUME_STATUSES: readonly UrinationVolumeStatus[] = ['estimated', 'no_flow', 'out_of_range']
 
 /** A complete latest-urination projection tuple. */
 export interface UrinationProjection {
@@ -24,6 +28,10 @@ export interface UrinationProjection {
   readonly atMs: number
   /** Ingestion receive instant, epoch milliseconds. */
   readonly receivedAtMs: number
+  /** Backend-estimated urine volume in millilitres, or null for legacy projections. */
+  readonly estimatedUrineMl: number | null
+  /** Volume estimation status, or null when the projection predates volume estimation. */
+  readonly estimationStatus: UrinationVolumeStatus | null
 }
 
 /** A complete latest-battery projection tuple; voltage is optional. */
@@ -50,6 +58,7 @@ export interface DeviceOverviewProjection {
 /** Stable machine codes for latest-projection data-integrity defects. */
 export type DeviceOverviewIntegrityCode =
   | 'partial_urination_tuple'
+  | 'invalid_urination_volume'
   | 'partial_battery_tuple'
   | 'invalid_battery_level'
   | 'invalid_battery_voltage'
@@ -101,6 +110,37 @@ function isCanonicalBatteryLevel(value: unknown): value is BatteryLevelPercent {
   return (CANONICAL_BATTERY_LEVELS as readonly unknown[]).includes(value)
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
+
+function isUrinationVolumeStatus(value: unknown): value is UrinationVolumeStatus {
+  return (URINATION_VOLUME_STATUSES as readonly unknown[]).includes(value)
+}
+
+/**
+ * Validate the optional latest-urination volume fields. Both are absent on
+ * legacy projections (→ null/null); when either is present the pair must be a
+ * coherent, in-set estimate, otherwise the projection is a data-integrity defect.
+ */
+function parseUrinationVolume(
+  deviceId: string,
+  ml: unknown,
+  status: unknown,
+): { estimatedUrineMl: number | null; estimationStatus: UrinationVolumeStatus | null } {
+  if (!isPresent(ml) && !isPresent(status)) {
+    return { estimatedUrineMl: null, estimationStatus: null }
+  }
+  if (!isNonNegativeInteger(ml) || !isUrinationVolumeStatus(status) || (status === 'no_flow' && ml !== 0)) {
+    throw new DeviceOverviewIntegrityError(
+      'invalid_urination_volume',
+      deviceId,
+      `Device "${deviceId}" has an invalid latest urination volume projection.`,
+    )
+  }
+  return { estimatedUrineMl: ml, estimationStatus: status }
+}
+
 function parseUrination(
   deviceId: string,
   record: Record<string, unknown>,
@@ -127,7 +167,12 @@ function parseUrination(
       `Device "${deviceId}" has an invalid latest urination timestamp.`,
     )
   }
-  return { eventId, atMs, receivedAtMs }
+  const volume = parseUrinationVolume(
+    deviceId,
+    record.latestUrinationEstimatedUrineMl,
+    record.latestUrinationEstimationStatus,
+  )
+  return { eventId, atMs, receivedAtMs, ...volume }
 }
 
 function parseBattery(deviceId: string, record: Record<string, unknown>): BatteryProjection | null {
