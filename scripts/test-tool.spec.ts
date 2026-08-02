@@ -226,6 +226,35 @@ describe('local test tool device simulator', () => {
     })
   })
 
+  it('shakes the dog image over the machine and only sends after the shake finishes', async () => {
+    const document = loadTool()
+    const view = document.defaultView as Window & typeof globalThis
+    let endShake = () => {}
+    const finished = new Promise<void>((resolve) => {
+      endShake = () => resolve()
+    })
+    // JSDOM 沒有 Web Animations API，補一個假的才能觀察抖動期間的畫面
+    view.HTMLElement.prototype.animate = vi.fn(() => ({ finished })) as unknown as HTMLElement['animate']
+    const sendRequest = vi.fn(async () => ({
+      json: async () => ({ ok: true, status: 200, statusText: 'OK', elapsedMs: 1, body: '{}' }),
+    }))
+    view.fetch = sendRequest as unknown as typeof fetch
+
+    const card = deviceCards(document)[0]
+    card.querySelector<HTMLButtonElement>('button[data-event="urination"]')?.click()
+    await flushPending()
+
+    expect(card.querySelector('.sim-button img.sim-dog')?.getAttribute('src')).toBe('/dog.png')
+    expect(sendRequest).not.toHaveBeenCalled()
+
+    endShake()
+    await flushPending()
+
+    // 抖完就收掉狗狗，接著才打 API
+    expect(card.querySelector('.sim-dog')).toBeNull()
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+  })
+
   it('reads the device document and shows its customName above the serial', async () => {
     const document = loadTool()
     const view = document.defaultView as Window & typeof globalThis

@@ -55,10 +55,16 @@
   /* 排尿按鈕在左、回應在右 */
   .device-card-body { display: flex; align-items: stretch; gap: 12px; margin-top: 10px; }
   button.sim-button {
-    display: block; flex: 0 0 220px; padding: 6px;
+    position: relative; display: block; flex: 0 0 220px; padding: 6px;
     background: #f4f5f7; color: #4f5661; border: 1px solid #d3d6da;
   }
-  button.sim-button img { display: block; width: 100%; height: auto; }
+  button.sim-button img:not(.sim-dog) { display: block; width: 100%; height: auto; }
+  /* 送出前讓狗狗在機器圖正中間抖動；置中用 translate，抖動才能獨佔 transform */
+  .sim-dog {
+    position: absolute; top: 50%; left: 50%; width: 40%; height: auto;
+    translate: -50% -50%; pointer-events: none;
+    filter: drop-shadow(0 2px 6px rgba(0, 0, 0, .35));
+  }
   button[data-event]:disabled { opacity: .5; cursor: progress; }
   .device-card-body .result { flex: 1; margin-top: 0; overflow: auto; }
   button.danger { background: #c53434; }
@@ -653,6 +659,12 @@ const DEVICE_DEFAULTS = {
   batteryVoltageMv: 3975,
   batteryVoltageEnabled: true,
 };
+/** 排尿按鈕的狗狗抖動時間，抖完才送出事件 */
+const SHAKE_DURATION_MS = 1000;
+/** 單次左右抖動的時間，SHAKE_DURATION_MS 除以它就是來回次數 */
+const SHAKE_STEP_MS = 100;
+/** 動畫被瀏覽器暫停時的保底等待，超過就直接送出 */
+const SHAKE_TIMEOUT_SLACK_MS = 400;
 
 const deviceList = $('device-list');
 const addDeviceButton = $('add-device');
@@ -861,6 +873,35 @@ function closeDeviceSettings() {
   (opener?.isConnected ? opener : addDeviceButton).focus();
 }
 
+/**
+ * 在機器圖正中間讓狗狗抖動（約 SHAKE_DURATION_MS）後才解析。
+ * 沒有 Web Animations API 的環境（例如 JSDOM 測試）直接略過動畫。
+ */
+function shakeDog(card) {
+  const button = card.querySelector('.sim-button');
+  if (!button || typeof button.animate !== 'function') return Promise.resolve();
+
+  const dog = document.createElement('img');
+  dog.className = 'sim-dog';
+  dog.src = '/dog.png';
+  dog.alt = '';
+  dog.setAttribute('aria-hidden', 'true');
+  button.append(dog);
+
+  const shake = dog.animate(
+    [{ transform: 'translateX(-7%) rotate(-7deg)' }, { transform: 'translateX(7%) rotate(7deg)' }],
+    {
+      duration: SHAKE_STEP_MS,
+      iterations: SHAKE_DURATION_MS / SHAKE_STEP_MS,
+      direction: 'alternate',
+      easing: 'ease-in-out',
+    },
+  );
+  // 動畫被中斷（卡片被移除）或被暫停（分頁切到背景）都不該把送出流程卡住
+  const timeout = new Promise((resolve) => setTimeout(resolve, SHAKE_DURATION_MS + SHAKE_TIMEOUT_SLACK_MS));
+  return Promise.race([shake.finished.catch(() => {}), timeout]).finally(() => dog.remove());
+}
+
 async function runDeviceEvent(uid, eventType) {
   const unit = deviceOf(uid);
   const card = cardOf(uid);
@@ -871,6 +912,7 @@ async function runDeviceEvent(uid, eventType) {
   for (const button of buttons) button.disabled = true;
   let data;
   try {
+    if (eventType === 'urination') await shakeDog(card);
     data = await sendRequest(req, card.querySelector('.result'));
   } finally {
     for (const button of buttons) button.disabled = false;
