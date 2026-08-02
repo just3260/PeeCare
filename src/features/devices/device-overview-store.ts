@@ -21,10 +21,15 @@ import {
   type Firestore,
 } from 'firebase/firestore'
 
-import { getLocalFirebaseServices } from '@/platform/firebase/client'
+import { getFirebaseServices } from '@/platform/firebase/client'
 import type { ProtectedResourceRegistry } from '@/features/auth/protected-resource-registry'
 import { listOwnedDevices } from './owned-device-repository'
 import type { OwnedDevice } from './owned-device-model'
+import type {
+  MemberDeviceApi,
+  RenameDeviceFailureReason,
+  RenameDeviceResult,
+} from './member-device-api'
 import { parseDeviceOverview, type DeviceOverviewProjection } from './device-overview-model'
 
 /** Releases a single live device listener. */
@@ -52,6 +57,15 @@ export type DeviceOverviewState =
   | { readonly status: 'ready'; readonly projection: DeviceOverviewProjection }
   | { readonly status: 'error' }
 
+export type DeviceRenameState =
+  | { readonly status: 'idle' }
+  | { readonly status: 'saving'; readonly deviceId: string }
+  | {
+      readonly status: 'error'
+      readonly deviceId: string
+      readonly reason: RenameDeviceFailureReason
+    }
+
 export interface DeviceOverviewStore {
   /** Owned devices in stable (deviceId-sorted) order. */
   readonly devices: DeepReadonly<Ref<readonly OwnedDevice[]>>
@@ -59,16 +73,22 @@ export interface DeviceOverviewStore {
   readonly selectedDeviceId: DeepReadonly<Ref<string | null>>
   /** The current overview state for the selected device. */
   readonly state: DeepReadonly<Ref<DeviceOverviewState>>
+  /** State of the single allowed shared-name mutation. */
+  readonly renameState: DeepReadonly<Ref<DeviceRenameState>>
   /** Load the owned-device list for the member, then select and watch one. */
   load(authenticatedUid: string): Promise<void>
   /** Switch the selected device, stopping the previous listener first. */
   selectDevice(deviceId: string): void
+  /** Rename or clear one owned device through the authenticated Member API. */
+  renameDevice(deviceId: string, customName: string | null): Promise<RenameDeviceResult>
   /** Stop the listener and clear all state (used on sign-out). */
   dispose(): void
 }
 
 export interface CreateDeviceOverviewStoreOptions {
   readonly source: OwnedDeviceSource
+  /** Member mutation boundary, injected when naming is enabled. */
+  readonly memberApi?: MemberDeviceApi
   /** Registry so the live listener is torn down on sign-out. Optional. */
   readonly registry?: ProtectedResourceRegistry
 }
@@ -76,6 +96,7 @@ export interface CreateDeviceOverviewStoreOptions {
 const LOADING: DeviceOverviewState = { status: 'loading' }
 const EMPTY: DeviceOverviewState = { status: 'empty' }
 const ERROR: DeviceOverviewState = { status: 'error' }
+const RENAME_IDLE: DeviceRenameState = { status: 'idle' }
 
 /** Devices ordered deterministically by id so the selection is stable. */
 function inStableOrder(devices: readonly OwnedDevice[]): OwnedDevice[] {
@@ -103,14 +124,17 @@ export function chooseSelectedDevice(
 export function createDeviceOverviewStore(
   options: CreateDeviceOverviewStoreOptions,
 ): DeviceOverviewStore {
-  const { source, registry } = options
+  const { source, registry, memberApi } = options
 
   const devices = ref<readonly OwnedDevice[]>([])
   const selectedDeviceId = ref<string | null>(null)
   const state = ref<DeviceOverviewState>(LOADING)
+  const renameState = ref<DeviceRenameState>(RENAME_IDLE)
 
   let unsubscribe: DeviceUnsubscribe | null = null
   let registeredTeardown = false
+  let renameInFlight: Promise<RenameDeviceResult> | null = null
+  let lifecycle = 0
 
   function stopListener(): void {
     if (unsubscribe) {
@@ -183,7 +207,70 @@ export function createDeviceOverviewStore(
     selectDevice(next)
   }
 
+  function renameDevice(
+    deviceId: string,
+    customName: string | null,
+  ): Promise<RenameDeviceResult> {
+    if (renameInFlight) return renameInFlight
+
+    const operationLifecycle = lifecycle
+    renameState.value = { status: 'saving', deviceId }
+
+    const operation = (async (): Promise<RenameDeviceResult> => {
+      let result: RenameDeviceResult
+      try {
+        result = memberApi
+          ? await memberApi.renameDevice(deviceId, customName)
+          : { ok: false, reason: 'unexpected_error' }
+      } catch {
+        result = { ok: false, reason: 'unexpected_error' }
+      }
+
+      // Sign-out/dispose invalidates the operation. Return its transport result
+      // to the original caller, but never republish data into a cleared store.
+      if (operationLifecycle !== lifecycle) return result
+
+      if (!result.ok) {
+        renameState.value = { status: 'error', deviceId, reason: result.reason }
+        return result
+      }
+
+      if (
+        result.device.deviceId !== deviceId ||
+        !devices.value.some((device) => device.deviceId === deviceId)
+      ) {
+        const invalidResult: RenameDeviceResult = {
+          ok: false,
+          reason: 'unexpected_error',
+        }
+        renameState.value = {
+          status: 'error',
+          deviceId,
+          reason: invalidResult.reason,
+        }
+        return invalidResult
+      }
+
+      devices.value = devices.value.map((device) =>
+        device.deviceId === deviceId
+          ? { ...device, customName: result.device.customName }
+          : device,
+      )
+      renameState.value = RENAME_IDLE
+      return result
+    })()
+
+    renameInFlight = operation
+    void operation.then(() => {
+      if (renameInFlight === operation) renameInFlight = null
+    })
+    return operation
+  }
+
   function dispose(): void {
+    lifecycle += 1
+    renameInFlight = null
+    renameState.value = RENAME_IDLE
     stopListener()
     devices.value = []
     selectedDeviceId.value = null
@@ -194,8 +281,10 @@ export function createDeviceOverviewStore(
     devices: readonly(devices),
     selectedDeviceId: readonly(selectedDeviceId),
     state: readonly(state),
+    renameState: readonly(renameState),
     load,
     selectDevice,
+    renameDevice,
     dispose,
   }
 }
@@ -207,7 +296,7 @@ export function createDeviceOverviewStore(
  */
 export function createFirestoreDeviceSource(): OwnedDeviceSource {
   function firestore(): Firestore {
-    return getLocalFirebaseServices().firestore
+    return getFirebaseServices().firestore
   }
   return {
     list(authenticatedUid: string): Promise<OwnedDevice[]> {

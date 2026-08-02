@@ -20,6 +20,7 @@ export interface DeviceRegistryDocument {
   readonly productModel: string
   readonly ingestionStatus: string
   readonly ownerUid?: string
+  readonly customName?: string
   readonly lastReportedAtMs?: number
   readonly latestUrinationAtMs?: number
   readonly latestUrinationReceivedAtMs?: number
@@ -35,6 +36,7 @@ export interface DeviceRegistryDocument {
 export interface DeviceOwnership {
   readonly deviceId: string
   readonly ownerUid: string
+  readonly customName?: string
 }
 
 /**
@@ -43,7 +45,7 @@ export interface DeviceOwnership {
  * ingestion `DEVICE_FIXTURES`.
  */
 export const DEVICE_OWNERSHIP: readonly DeviceOwnership[] = [
-  { deviceId: 'PC-000001', ownerUid: 'member-001' },
+  { deviceId: 'PC-000001', ownerUid: 'member-001', customName: '主浴室' },
   { deviceId: 'PC-000002', ownerUid: 'member-001' },
   { deviceId: 'PC-000003', ownerUid: 'member-002' },
 ] as const
@@ -72,10 +74,14 @@ export function mergeOwnerUid(
  * preserved. Intended for the rules-disabled fixture/admin path only.
  */
 export async function seedDeviceOwnership(firestore: Firestore): Promise<void> {
-  for (const { deviceId, ownerUid } of DEVICE_OWNERSHIP) {
+  for (const { deviceId, ownerUid, customName } of DEVICE_OWNERSHIP) {
     if (ownerUid.trim().length === 0) {
       throw new Error(`Refusing to seed empty ownerUid for device ${deviceId}.`)
     }
-    await setDoc(doc(firestore, 'devices', deviceId), { ownerUid }, { merge: true })
+    await setDoc(
+      doc(firestore, 'devices', deviceId),
+      customName === undefined ? { ownerUid } : { ownerUid, customName },
+      { merge: true },
+    )
   }
 }

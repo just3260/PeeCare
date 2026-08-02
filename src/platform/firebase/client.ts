@@ -1,4 +1,4 @@
-// Single fail-closed entry point to the local Firebase SDK.
+// Single fail-closed entry point to the Firebase Web SDK.
 //
 // getLocalFirebaseServices validates configuration first (parseLocalFirebaseConfig
 // throws before any SDK call on invalid input), then initializes exactly one
@@ -11,7 +11,12 @@ import { initializeApp, type FirebaseApp } from 'firebase/app'
 import { connectAuthEmulator, getAuth, type Auth } from 'firebase/auth'
 import { connectFirestoreEmulator, getFirestore, type Firestore } from 'firebase/firestore'
 
-import { parseLocalFirebaseConfig, type RawFirebaseEnv } from './config'
+import {
+  parseFirebaseClientConfig,
+  parseLocalFirebaseConfig,
+  type FirebaseClientConfig,
+  type RawFirebaseEnv,
+} from './config'
 
 export interface LocalFirebaseServices {
   readonly app: FirebaseApp
@@ -19,7 +24,37 @@ export interface LocalFirebaseServices {
   readonly firestore: Firestore
 }
 
+export type FirebaseServices = LocalFirebaseServices
+
 let cachedServices: LocalFirebaseServices | null = null
+
+function initializeServices(config: FirebaseClientConfig): FirebaseServices {
+  const app = initializeApp({ projectId: config.projectId, apiKey: config.apiKey })
+  const auth = getAuth(app)
+  const firestore = getFirestore(app)
+
+  if (config.environment === 'local') {
+    connectAuthEmulator(
+      auth,
+      `http://${config.authEmulator.host}:${config.authEmulator.port}`,
+      { disableWarnings: true },
+    )
+    connectFirestoreEmulator(
+      firestore,
+      config.firestoreEmulator.host,
+      config.firestoreEmulator.port,
+    )
+  }
+
+  cachedServices = { app, auth, firestore }
+  return cachedServices
+}
+
+/** Return the one Firebase app for either production or local Emulator mode. */
+export function getFirebaseServices(env: RawFirebaseEnv = import.meta.env): FirebaseServices {
+  if (cachedServices) return cachedServices
+  return initializeServices(parseFirebaseClientConfig(env))
+}
 
 /**
  * Return the lazily-initialized local Firebase services. The first valid call
@@ -37,21 +72,7 @@ export function getLocalFirebaseServices(
     return cachedServices
   }
 
-  const config = parseLocalFirebaseConfig(env)
-
-  const app = initializeApp({ projectId: config.projectId, apiKey: config.apiKey })
-  const auth = getAuth(app)
-  const firestore = getFirestore(app)
-
-  connectAuthEmulator(
-    auth,
-    `http://${config.authEmulator.host}:${config.authEmulator.port}`,
-    { disableWarnings: true },
-  )
-  connectFirestoreEmulator(firestore, config.firestoreEmulator.host, config.firestoreEmulator.port)
-
-  cachedServices = { app, auth, firestore }
-  return cachedServices
+  return initializeServices({ environment: 'local', ...parseLocalFirebaseConfig(env) })
 }
 
 /**

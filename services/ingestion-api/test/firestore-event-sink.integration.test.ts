@@ -112,6 +112,19 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Firestore event sink', ()
     expect((await firestore.doc('devices/PC-000001/events/evt-battery-001').get()).data()).toMatchObject({ eventType: 'battery', batteryLevelPercent: 75, batteryVoltageMv: 3840 });
   }, 20_000);
 
+  it('preserves the shared custom name during a real ingestion projection update', async () => {
+    await firestore.doc('devices/PC-000001').set({ ...enabled, customName: '主浴室' });
+    const sink = new FirestoreEventSink(firestore);
+
+    await expect(sink.accept(makeBatteryEvent(), { requestId: 'named-device' })).resolves.toBe('stored');
+
+    expect((await firestore.doc('devices/PC-000001').get()).data()).toMatchObject({
+      customName: '主浴室',
+      latestBatteryEventId: 'evt-battery-001',
+      latestBatteryLevelPercent: 75,
+    });
+  }, 20_000);
+
   it('stores a first battery delivery, treats an identical retry as a zero-write duplicate, and preserves a cross-type conflict', async () => {
     await firestore.doc('devices/PC-000001').set(enabled);
     const sink = new FirestoreEventSink(firestore);

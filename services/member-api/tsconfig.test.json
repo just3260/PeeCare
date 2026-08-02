@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "../..",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "paths": {
+      "@/*": ["src/*"]
+    },
+    "rootDir": "../.."
+  },
+  "include": ["../../env.d.ts", "src/**/*.ts", "test/**/*.ts"]
+}

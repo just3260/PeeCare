@@ -8,7 +8,7 @@
 import type { InjectionKey } from 'vue'
 import { signInWithEmailAndPassword, signOut as firebaseSignOut } from 'firebase/auth'
 
-import { getLocalFirebaseServices } from '@/platform/firebase/client'
+import { getFirebaseServices } from '@/platform/firebase/client'
 
 /** Credentials the local provider accepts. Production providers may differ. */
 export interface SignInInput {
@@ -34,11 +34,11 @@ export const AUTH_PROVIDER_KEY: InjectionKey<AuthProvider> = Symbol('auth-provid
 export function createFirebaseAuthProvider(): AuthProvider {
   return {
     async signIn({ email, password }: SignInInput): Promise<void> {
-      const { auth } = getLocalFirebaseServices()
+      const { auth } = getFirebaseServices()
       await signInWithEmailAndPassword(auth, email, password)
     },
     async signOut(): Promise<void> {
-      const { auth } = getLocalFirebaseServices()
+      const { auth } = getFirebaseServices()
       await firebaseSignOut(auth)
     },
   }

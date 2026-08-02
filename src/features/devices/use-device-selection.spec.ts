@@ -7,7 +7,7 @@ import { DEVICE_OVERVIEW_STORE_KEY } from './device-overview-store-key'
 import type { OwnedDevice } from './owned-device-model'
 
 function device(deviceId: string): OwnedDevice {
-  return { deviceId, ownerUid: 'member-001', productModel: 'pc-mini', ingestionStatus: 'enabled' }
+  return { deviceId, ownerUid: 'member-001', productModel: 'pc-mini', ingestionStatus: 'enabled', customName: null }
 }
 
 /** Run the composable inside a real setup and return its API for assertions. */

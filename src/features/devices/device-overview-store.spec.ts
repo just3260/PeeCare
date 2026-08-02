@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createProtectedResourceRegistry } from '@/features/auth/protected-resource-registry'
 import type { OwnedDevice } from './owned-device-model'
+import { resolveDeviceDisplayName } from './device-display-name'
+import type { MemberDeviceApi, RenameDeviceResult } from './member-device-api'
 import {
   chooseSelectedDevice,
   createDeviceOverviewStore,
@@ -10,7 +12,26 @@ import {
 } from './device-overview-store'
 
 function device(deviceId: string, ownerUid = 'member-001'): OwnedDevice {
-  return { deviceId, ownerUid, productModel: 'pc-mini', ingestionStatus: 'enabled' }
+  return { deviceId, ownerUid, productModel: 'pc-mini', ingestionStatus: 'enabled', customName: null }
+}
+
+function memberApi(result: RenameDeviceResult): {
+  api: MemberDeviceApi
+  renameDevice: ReturnType<typeof vi.fn>
+} {
+  const renameDevice = vi.fn().mockResolvedValue(result)
+  return { api: { renameDevice }, renameDevice }
+}
+
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+} {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((settle) => {
+    resolve = settle
+  })
+  return { promise, resolve }
 }
 
 const completeSnapshot = {
@@ -268,6 +289,128 @@ describe('device overview store: snapshot states', () => {
     watchers[0].handlers.onData(null)
 
     expect(store.state.value).toEqual({ status: 'error' })
+  })
+})
+
+describe('device overview store: shared device rename', () => {
+  it('updates only the matching device after canonical API success without changing order or selection', async () => {
+    const { source } = createFakeSource([device('PC-000002'), device('PC-000001')])
+    const { api, renameDevice } = memberApi({
+      ok: true,
+      device: { deviceId: 'PC-000002', customName: '主浴室', displayName: '主浴室' },
+    })
+    const store = createDeviceOverviewStore({ source, memberApi: api })
+    await store.load('member-001')
+    store.selectDevice('PC-000002')
+
+    await expect(store.renameDevice('PC-000002', ' 主浴室 ')).resolves.toEqual({
+      ok: true,
+      device: { deviceId: 'PC-000002', customName: '主浴室', displayName: '主浴室' },
+    })
+
+    expect(renameDevice).toHaveBeenCalledWith('PC-000002', ' 主浴室 ')
+    expect(store.devices.value.map(({ deviceId, customName }) => ({ deviceId, customName }))).toEqual([
+      { deviceId: 'PC-000001', customName: null },
+      { deviceId: 'PC-000002', customName: '主浴室' },
+    ])
+    expect(store.selectedDeviceId.value).toBe('PC-000002')
+    expect(store.renameState.value).toEqual({ status: 'idle' })
+  })
+
+  it('commits null from a clear response so display name falls back to deviceId', async () => {
+    const named = { ...device('PC-000001'), customName: '主浴室' }
+    const { source } = createFakeSource([named])
+    const { api } = memberApi({
+      ok: true,
+      device: { deviceId: 'PC-000001', customName: null, displayName: 'PC-000001' },
+    })
+    const store = createDeviceOverviewStore({ source, memberApi: api })
+    await store.load('member-001')
+
+    await store.renameDevice('PC-000001', null)
+
+    expect(store.devices.value[0].customName).toBeNull()
+    expect(resolveDeviceDisplayName(store.devices.value[0])).toBe('PC-000001')
+  })
+
+  it.each([
+    'unauthorized',
+    'device_not_found',
+    'persistence_unavailable',
+    'unexpected_error',
+  ] as const)('keeps committed devices unchanged on %s failure', async (reason) => {
+    const named = { ...device('PC-000001'), customName: '原名稱' }
+    const { source } = createFakeSource([named])
+    const { api } = memberApi({ ok: false, reason })
+    const store = createDeviceOverviewStore({ source, memberApi: api })
+    await store.load('member-001')
+
+    await store.renameDevice('PC-000001', '新名稱')
+
+    expect(store.devices.value).toEqual([named])
+    expect(store.renameState.value).toEqual({ status: 'error', deviceId: 'PC-000001', reason })
+  })
+
+  it('exposes saving state and suppresses a duplicate while one rename is in flight', async () => {
+    const pending = deferred<RenameDeviceResult>()
+    const renameDevice = vi.fn().mockReturnValue(pending.promise)
+    const { source } = createFakeSource([device('PC-000001')])
+    const store = createDeviceOverviewStore({ source, memberApi: { renameDevice } })
+    await store.load('member-001')
+
+    const first = store.renameDevice('PC-000001', '主浴室')
+    const duplicate = store.renameDevice('PC-000001', '另一個名稱')
+
+    expect(store.renameState.value).toEqual({ status: 'saving', deviceId: 'PC-000001' })
+    expect(renameDevice).toHaveBeenCalledOnce()
+    pending.resolve({
+      ok: true,
+      device: { deviceId: 'PC-000001', customName: '主浴室', displayName: '主浴室' },
+    })
+    await expect(Promise.all([first, duplicate])).resolves.toEqual([
+      { ok: true, device: { deviceId: 'PC-000001', customName: '主浴室', displayName: '主浴室' } },
+      { ok: true, device: { deviceId: 'PC-000001', customName: '主浴室', displayName: '主浴室' } },
+    ])
+    expect(store.devices.value[0].customName).toBe('主浴室')
+  })
+
+  it('rejects a success response for a different device without changing committed state', async () => {
+    const original = device('PC-000001')
+    const { source } = createFakeSource([original, device('PC-000002')])
+    const { api } = memberApi({
+      ok: true,
+      device: { deviceId: 'PC-000002', customName: '錯誤更新', displayName: '錯誤更新' },
+    })
+    const store = createDeviceOverviewStore({ source, memberApi: api })
+    await store.load('member-001')
+
+    await expect(store.renameDevice('PC-000001', '主浴室')).resolves.toEqual({
+      ok: false,
+      reason: 'unexpected_error',
+    })
+    expect(store.devices.value[0]).toEqual(original)
+    expect(store.devices.value[1].customName).toBeNull()
+  })
+
+  it('does not apply a rename response that arrives after dispose', async () => {
+    const pending = deferred<RenameDeviceResult>()
+    const { source } = createFakeSource([device('PC-000001')])
+    const store = createDeviceOverviewStore({
+      source,
+      memberApi: { renameDevice: vi.fn().mockReturnValue(pending.promise) },
+    })
+    await store.load('member-001')
+
+    const rename = store.renameDevice('PC-000001', '主浴室')
+    store.dispose()
+    pending.resolve({
+      ok: true,
+      device: { deviceId: 'PC-000001', customName: '主浴室', displayName: '主浴室' },
+    })
+    await rename
+
+    expect(store.devices.value).toEqual([])
+    expect(store.renameState.value).toEqual({ status: 'idle' })
   })
 })
 

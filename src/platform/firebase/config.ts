@@ -22,6 +22,7 @@ export type LocalFirebaseConfigErrorCode =
   | 'project_mismatch'
   | 'non_loopback_host'
   | 'production_mode'
+  | 'emulator_enabled_in_production'
 
 /** Raised for every invalid local configuration, before any SDK initialization. */
 export class LocalFirebaseConfigurationError extends Error {
@@ -64,6 +65,134 @@ export interface RawFirebaseEnv {
   readonly VITE_FIREBASE_AUTH_EMULATOR_PORT?: string
   readonly VITE_FIREBASE_FIRESTORE_EMULATOR_HOST?: string
   readonly VITE_FIREBASE_FIRESTORE_EMULATOR_PORT?: string
+  readonly VITE_MEMBER_API_URL?: string
+}
+
+export type MemberApiConfigErrorCode =
+  | 'missing_member_api_url'
+  | 'invalid_member_api_url'
+  | 'insecure_member_api_url'
+  | 'local_member_api_url'
+
+export class MemberApiConfigurationError extends Error {
+  readonly code: MemberApiConfigErrorCode
+
+  constructor(code: MemberApiConfigErrorCode, message: string) {
+    super(message)
+    this.name = 'MemberApiConfigurationError'
+    this.code = code
+    Object.setPrototypeOf(this, MemberApiConfigurationError.prototype)
+  }
+}
+
+export interface MemberApiConfig {
+  readonly baseUrl: URL
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/\.+$/, '')
+  if (normalized === 'localhost') return true
+  const ipv4Segments = normalized.split('.')
+  const isIpv4Literal =
+    ipv4Segments.length === 4 &&
+    ipv4Segments.every(
+      (segment) => /^\d{1,3}$/.test(segment) && Number(segment) >= 0 && Number(segment) <= 255,
+    )
+  if (isIpv4Literal && Number(ipv4Segments[0]) === 127) return true
+  const ipv6 = normalized.startsWith('[') && normalized.endsWith(']')
+    ? normalized.slice(1, -1)
+    : normalized
+  return ipv6 === '::1' || /^::ffff:7f[0-9a-f]{2}:/.test(ipv6)
+}
+
+/** Validate the Member API origin before the composition root creates any client. */
+export function parseMemberApiConfig(env: RawFirebaseEnv): MemberApiConfig {
+  const raw = env.VITE_MEMBER_API_URL
+  if (typeof raw !== 'string' || raw.trim().length === 0) {
+    throw new MemberApiConfigurationError(
+      'missing_member_api_url',
+      'VITE_MEMBER_API_URL is required.',
+    )
+  }
+
+  let baseUrl: URL
+  try {
+    baseUrl = new URL(raw)
+  } catch {
+    throw new MemberApiConfigurationError(
+      'invalid_member_api_url',
+      'VITE_MEMBER_API_URL must be a valid HTTP(S) origin.',
+    )
+  }
+
+  if (
+    (baseUrl.protocol !== 'http:' && baseUrl.protocol !== 'https:') ||
+    baseUrl.username.length > 0 ||
+    baseUrl.password.length > 0 ||
+    baseUrl.pathname !== '/' ||
+    baseUrl.search.length > 0 ||
+    baseUrl.hash.length > 0 ||
+    (raw !== baseUrl.origin && raw !== `${baseUrl.origin}/`)
+  ) {
+    throw new MemberApiConfigurationError(
+      'invalid_member_api_url',
+      'VITE_MEMBER_API_URL must be an exact HTTP(S) origin.',
+    )
+  }
+
+  const production = env.PROD === true || env.MODE === 'production'
+  const loopback = isLoopbackHostname(baseUrl.hostname)
+  if (production && loopback) {
+    throw new MemberApiConfigurationError(
+      'local_member_api_url',
+      'A production build must not use a local Member API URL.',
+    )
+  }
+  if (baseUrl.protocol !== 'https:' && !(!production && loopback)) {
+    throw new MemberApiConfigurationError(
+      'insecure_member_api_url',
+      'Member API requires HTTPS except for a local loopback endpoint.',
+    )
+  }
+
+  return { baseUrl: new URL(`${baseUrl.origin}/`) }
+}
+
+export interface ProductionFirebaseConfig {
+  readonly environment: 'production'
+  readonly projectId: string
+  readonly apiKey: string
+}
+
+export type FirebaseClientConfig =
+  | ProductionFirebaseConfig
+  | (LocalFirebaseConfig & { readonly environment: 'local' })
+
+/** Resolve one Firebase client contract for the active Vite environment. */
+export function parseFirebaseClientConfig(env: RawFirebaseEnv): FirebaseClientConfig {
+  const production = env.PROD === true || env.MODE === 'production'
+  if (!production) {
+    return { environment: 'local', ...parseLocalFirebaseConfig(env) }
+  }
+
+  if (
+    env.VITE_FIREBASE_USE_EMULATORS !== undefined ||
+    env.VITE_FIREBASE_AUTH_EMULATOR_HOST !== undefined ||
+    env.VITE_FIREBASE_AUTH_EMULATOR_PORT !== undefined ||
+    env.VITE_FIREBASE_FIRESTORE_EMULATOR_HOST !== undefined ||
+    env.VITE_FIREBASE_FIRESTORE_EMULATOR_PORT !== undefined
+  ) {
+    throw new LocalFirebaseConfigurationError(
+      'emulator_enabled_in_production',
+      'Production Firebase configuration must not include Emulator settings.',
+    )
+  }
+
+  return {
+    environment: 'production',
+    projectId: requireString(env.VITE_FIREBASE_PROJECT_ID, 'VITE_FIREBASE_PROJECT_ID'),
+    apiKey: requireString(env.VITE_FIREBASE_API_KEY, 'VITE_FIREBASE_API_KEY'),
+  }
 }
 
 function isNonEmptyString(value: string | undefined): value is string {

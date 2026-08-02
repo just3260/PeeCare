@@ -15,8 +15,8 @@ import type {
 import type { OwnedDevice } from '@/features/devices/owned-device-model'
 import type { DeviceOverviewProjection } from '@/features/devices/device-overview-model'
 
-function device(deviceId: string): OwnedDevice {
-  return { deviceId, ownerUid: 'member-001', productModel: 'pc-mini', ingestionStatus: 'enabled' }
+function device(deviceId: string, customName: string | null = null): OwnedDevice {
+  return { deviceId, ownerUid: 'member-001', productModel: 'pc-mini', ingestionStatus: 'enabled', customName }
 }
 
 // 2026-07-28T02:00:00.000Z is 2026-07-28 10:00 in Asia/Taipei, so a projection
@@ -188,12 +188,16 @@ describe('HomeView overview states', () => {
     const wrapper = mountHomeView(
       makeDeviceStore({
         state: { status: 'ready', projection: readyProjection },
-        devices: [device('PC-000001'), device('PC-000002')],
+        devices: [device('PC-000001', '主浴室'), device('PC-000002')],
         selectedDeviceId: 'PC-000001',
       }),
     )
 
     expect(wrapper.find('.device-selector').exists()).toBe(true)
+    expect(wrapper.get('[data-test="device-select"]').findAll('option').map((option) => option.text())).toEqual([
+      '主浴室',
+      'PC-000002',
+    ])
   })
 
   it('switches devices through the store when a selector option is clicked', async () => {

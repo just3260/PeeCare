@@ -10,7 +10,9 @@ import {
   createFirestoreDeviceSource,
 } from '@/features/devices/device-overview-store'
 import { DEVICE_OVERVIEW_STORE_KEY } from '@/features/devices/device-overview-store-key'
-import { getLocalFirebaseServices } from '@/platform/firebase/client'
+import { createMemberDeviceApi } from '@/features/devices/member-device-api'
+import { getFirebaseServices } from '@/platform/firebase/client'
+import { parseMemberApiConfig } from '@/platform/firebase/config'
 import { loadUrinationPage } from '@/features/history/device-event-history-repository'
 import { createDeviceEventHistoryStore } from '@/features/history/device-event-history-store'
 import { DEVICE_EVENT_HISTORY_STORE_KEY } from '@/features/history/device-event-history-store-key'
@@ -23,26 +25,29 @@ import './styles/main.css'
 // Composition root: the single auth store and provider are created here and
 // shared with the shell (App.vue mounts/disposes the store lifecycle) and the
 // navigation guard. Tests provide their own fakes instead.
+const memberApiConfig = parseMemberApiConfig(import.meta.env)
 const authStore = createAuthStore()
 const authProvider = createFirebaseAuthProvider()
+const memberDeviceApi = createMemberDeviceApi({ baseUrl: memberApiConfig.baseUrl })
 
 // The device overview store shares the auth store's teardown registry so its
 // live Firestore listener is disposed when the member signs out.
 const deviceOverviewStore = createDeviceOverviewStore({
   source: createFirestoreDeviceSource(),
+  memberApi: memberDeviceApi,
   registry: authStore.registry,
 })
 const deviceEventHistoryStore = createDeviceEventHistoryStore({
   source: {
     loadPage(deviceId, cursor) {
-      return loadUrinationPage(getLocalFirebaseServices().firestore, deviceId, cursor as never)
+      return loadUrinationPage(getFirebaseServices().firestore, deviceId, cursor as never)
     },
   },
 })
 const dailyStatsStore = createDailyStatsStore({
   source: createDailyStatsSource({
     loadDocuments(deviceId, range) {
-      return loadDailyStats(getLocalFirebaseServices().firestore, deviceId, range)
+      return loadDailyStats(getFirebaseServices().firestore, deviceId, range)
     },
   }),
 })

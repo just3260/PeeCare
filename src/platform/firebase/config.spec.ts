@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   LocalFirebaseConfigurationError,
+  MemberApiConfigurationError,
   parseLocalFirebaseConfig,
+  parseMemberApiConfig,
+  parseFirebaseClientConfig,
   type RawFirebaseEnv,
 } from './config'
 
@@ -147,5 +150,133 @@ describe('parseLocalFirebaseConfig', () => {
       expect(error).toBeInstanceOf(Error)
       expect((error as LocalFirebaseConfigurationError).code).toBe('emulator_disabled')
     }
+  })
+})
+
+describe('parseMemberApiConfig', () => {
+  it('accepts a fixed loopback HTTP endpoint in local mode', () => {
+    const config = parseMemberApiConfig({
+      ...validEnv(),
+      VITE_MEMBER_API_URL: 'http://127.0.0.1:8087',
+    })
+
+    expect(config.baseUrl.href).toBe('http://127.0.0.1:8087/')
+  })
+
+  it('accepts a remote HTTPS endpoint in production', () => {
+    const config = parseMemberApiConfig({
+      MODE: 'production',
+      PROD: true,
+      VITE_MEMBER_API_URL: 'https://member.peecare.example',
+    })
+
+    expect(config.baseUrl.href).toBe('https://member.peecare.example/')
+  })
+
+  it.each([undefined, '', '   '])('fails closed when Member API URL is missing: %j', (value) => {
+    expect(() => parseMemberApiConfig({ ...validEnv(), VITE_MEMBER_API_URL: value })).toThrowError(
+      expect.objectContaining({ code: 'missing_member_api_url' }),
+    )
+  })
+
+  it.each([
+    'not a url',
+    'ftp://member.peecare.example',
+    'https://user:pass@member.peecare.example',
+    'https://member.peecare.example/path',
+    'https://member.peecare.example?query=1',
+    'https://member.peecare.example#fragment',
+  ])('rejects malformed or non-origin Member API URL %s', (url) => {
+    expect(() => parseMemberApiConfig({ ...validEnv(), VITE_MEMBER_API_URL: url })).toThrowError(
+      expect.objectContaining({ code: 'invalid_member_api_url' }),
+    )
+  })
+
+  it('rejects a remote HTTP endpoint even in local mode', () => {
+    expect(() =>
+      parseMemberApiConfig({
+        ...validEnv(),
+        VITE_MEMBER_API_URL: 'http://member.peecare.example',
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'insecure_member_api_url' }))
+  })
+
+  it('does not mistake a DNS name starting with 127 for a loopback IPv4 literal', () => {
+    expect(() =>
+      parseMemberApiConfig({
+        ...validEnv(),
+        VITE_MEMBER_API_URL: 'http://127.example.com:8080',
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'insecure_member_api_url' }))
+
+    expect(
+      parseMemberApiConfig({
+        MODE: 'production',
+        PROD: true,
+        VITE_MEMBER_API_URL: 'https://127.example.com',
+      }).baseUrl.href,
+    ).toBe('https://127.example.com/')
+  })
+
+  it.each(['http://127.0.0.1:8080', 'https://127.0.0.1:8080']) (
+    'rejects local endpoint %s in production',
+    (url) => {
+      expect(() =>
+        parseMemberApiConfig({ MODE: 'production', PROD: true, VITE_MEMBER_API_URL: url }),
+      ).toThrowError(expect.objectContaining({ code: 'local_member_api_url' }))
+    },
+  )
+
+  it.each([
+    'https://localhost.',
+    'https://127.0.0.2',
+    'https://[::ffff:7f00:1]',
+  ])('rejects canonical loopback representation %s in production', (url) => {
+    expect(() =>
+      parseMemberApiConfig({ MODE: 'production', PROD: true, VITE_MEMBER_API_URL: url }),
+    ).toThrowError(expect.objectContaining({ code: 'local_member_api_url' }))
+  })
+
+  it('requires HTTPS for every production Member API endpoint', () => {
+    expect(() =>
+      parseMemberApiConfig({
+        MODE: 'production',
+        PROD: true,
+        VITE_MEMBER_API_URL: 'http://member.peecare.example',
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'insecure_member_api_url' }))
+  })
+
+  it('throws a typed configuration error before runtime initialization', () => {
+    expect(() => parseMemberApiConfig({ ...validEnv() })).toThrow(MemberApiConfigurationError)
+  })
+})
+
+describe('parseFirebaseClientConfig', () => {
+  it('returns production Firebase config without Emulator endpoints', () => {
+    expect(
+      parseFirebaseClientConfig({
+        MODE: 'production',
+        PROD: true,
+        VITE_FIREBASE_PROJECT_ID: 'peecare-production',
+        VITE_FIREBASE_API_KEY: 'production-api-key',
+      }),
+    ).toEqual({
+      environment: 'production',
+      projectId: 'peecare-production',
+      apiKey: 'production-api-key',
+    })
+  })
+
+  it('rejects Emulator configuration in production', () => {
+    expect(() =>
+      parseFirebaseClientConfig({
+        MODE: 'production',
+        PROD: true,
+        VITE_FIREBASE_PROJECT_ID: 'peecare-production',
+        VITE_FIREBASE_API_KEY: 'production-api-key',
+        VITE_FIREBASE_USE_EMULATORS: 'true',
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'emulator_enabled_in_production' }))
   })
 })

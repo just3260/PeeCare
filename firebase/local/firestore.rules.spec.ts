@@ -6,8 +6,9 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing'
-import { deleteDoc, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore'
+import { deleteDoc, deleteField, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { seedDeviceOwnership } from './fixtures/members-and-devices'
 
 // Emulator-backed verification of the deny-by-default Firestore rules. Runs under
 // `firebase emulators:exec`, which starts Firestore on 127.0.0.1:8085 and exports
@@ -76,6 +77,44 @@ describe('deny-by-default Firestore rules', () => {
       const denied = await assertFails(getDoc(clientRef))
       expect(denied).toBeDefined()
     })
+
+    it('uses the production ownership fixture to preserve registry fields and seed named/unnamed devices', async () => {
+      await testEnv.withSecurityRulesDisabled(async (context) => {
+        const db = context.firestore()
+        for (const deviceId of ['PC-000001', 'PC-000002', 'PC-000003']) {
+          await setDoc(doc(db, 'devices', deviceId), {
+            deviceId,
+            productModel: 'pc-mini',
+            ingestionStatus: 'enabled',
+            lastReportedAtMs: 1_700_000_000_000,
+            latestBatteryLevelPercent: 75,
+          })
+        }
+
+        await seedDeviceOwnership(db)
+
+        const named = (await getDoc(doc(db, 'devices/PC-000001'))).data()
+        const unnamed = (await getDoc(doc(db, 'devices/PC-000002'))).data()
+        expect(named).toMatchObject({
+          deviceId: 'PC-000001',
+          ownerUid: 'member-001',
+          customName: '主浴室',
+          productModel: 'pc-mini',
+          ingestionStatus: 'enabled',
+          lastReportedAtMs: 1_700_000_000_000,
+          latestBatteryLevelPercent: 75,
+        })
+        expect(unnamed).toMatchObject({
+          deviceId: 'PC-000002',
+          ownerUid: 'member-001',
+          productModel: 'pc-mini',
+          ingestionStatus: 'enabled',
+          lastReportedAtMs: 1_700_000_000_000,
+          latestBatteryLevelPercent: 75,
+        })
+        expect(unnamed).not.toHaveProperty('customName')
+      })
+    })
   })
 })
 
@@ -115,6 +154,15 @@ describe('owner-only device reads', () => {
   it('allows the owner to read their device', async () => {
     const db = testEnv.authenticatedContext(OWNER_UID).firestore()
     await assertSucceeds(getDoc(doc(db, DEVICE_PATH)))
+  })
+
+  it('allows the owner to read the same device when it has a customName', async () => {
+    await seedDevice({ ...OWNED_DEVICE, customName: '主浴室' })
+    const db = testEnv.authenticatedContext(OWNER_UID).firestore()
+
+    const snapshot = await assertSucceeds(getDoc(doc(db, DEVICE_PATH)))
+
+    expect(snapshot.data()?.customName).toBe('主浴室')
   })
 
   it('denies another member reading the device', async () => {
@@ -166,6 +214,14 @@ describe('client write denial', () => {
     await assertFails(updateDoc(doc(db, DEVICE_PATH), { productModel: 'pc-pro' }))
     await assertFails(updateDoc(doc(db, DEVICE_PATH), { ownerUid: OTHER_UID }))
     await assertFails(deleteDoc(doc(db, DEVICE_PATH)))
+  })
+
+  it('denies the owner setting or clearing customName through the Web SDK', async () => {
+    const db = testEnv.authenticatedContext(OWNER_UID).firestore()
+    await assertFails(updateDoc(doc(db, DEVICE_PATH), { customName: '主浴室' }))
+
+    await seedDevice({ ...OWNED_DEVICE, customName: '既有名稱' })
+    await assertFails(updateDoc(doc(db, DEVICE_PATH), { customName: deleteField() }))
   })
 
   it('denies the owner writing events and dailyStats', async () => {

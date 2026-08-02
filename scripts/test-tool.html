@@ -39,9 +39,14 @@
   .device-list { display: flex; flex-direction: column; gap: 12px; }
   .device-card { border: 1px solid #e3e5e8; border-radius: 10px; padding: 12px; }
   .device-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  /* 標題顯示 customName（沒有就顯示序號）；有自訂名稱時序號改列在下方 */
+  .device-card-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .device-card-name {
-    flex: 1; min-width: 0;
-    font-size: 14px; font-weight: 600; font-family: ui-monospace, monospace;
+    font-size: 14px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .device-card-serial {
+    font-size: 11px; color: #8a9099; font-family: ui-monospace, monospace;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .device-card-head .icon-button { width: 32px; height: 32px; }
@@ -177,12 +182,19 @@
   <section class="panel" id="device-sim">
     <header class="panel-head">
       <h2>裝置模擬器</h2>
-      <button type="button" class="ghost" id="add-device">＋ 新增裝置</button>
+      <div style="display:flex; gap:8px">
+        <button type="button" class="ghost" id="refresh-device-names">↻ 重新整理名稱</button>
+        <button type="button" class="ghost" id="add-device">＋ 新增裝置</button>
+      </div>
     </header>
     <p class="hint" style="margin:0 0 12px">
       每張卡片是一台裝置，deviceId 與排尿／電量參數各自獨立；
       其餘欄位（base URL、secret、productModel、bootId、sequence、firmwareVersion、時間…）皆取自共用設定。
       送出後 sequence 依共用設定的「自動 +1」規則前進。
+    </p>
+    <p class="hint" style="margin:0 0 12px">
+      卡片標題顯示裝置的 <code>customName</code>（由 Member API 寫入 Firestore），未設定時回退顯示裝置序號。
+      名稱是在 Web App 或 Member API 改的，本工具不會自動察覺；改完按「重新整理名稱」重新讀取。
     </p>
     <div id="device-list" class="device-list"></div>
   </section>
@@ -471,7 +483,12 @@ const builders = {
   },
   device() {
     const s = shared();
-    const url = `${s.firestoreBase}/v1/projects/${s.projectId}/databases/(default)/documents/devices/${s.deviceId}`;
+    // 帶 updateMask 才是部分更新：沒有列出的欄位（例如 Member API 寫入的 customName）
+    // 會原樣保留；省略 updateMask 的 PATCH 會整份取代文件而清掉自訂名稱。
+    const updateMask = ['deviceId', 'productModel', 'ingestionStatus', 'ownerUid']
+      .map((field) => `updateMask.fieldPaths=${field}`)
+      .join('&');
+    const url = `${s.firestoreBase}/v1/projects/${s.projectId}/databases/(default)/documents/devices/${s.deviceId}?${updateMask}`;
     const body = JSON.stringify({
       fields: {
         deviceId: { stringValue: s.deviceId },
@@ -617,6 +634,7 @@ const DEVICE_DEFAULTS = {
 
 const deviceList = $('device-list');
 const addDeviceButton = $('add-device');
+const refreshDeviceNamesButton = $('refresh-device-names');
 const deleteDeviceButton = $('delete-device');
 const closeDeviceButton = $('close-device');
 
@@ -672,11 +690,82 @@ const cardOf = (uid) => deviceList.querySelector(`.device-card[data-uid="${uid}"
 
 const GEAR_SVG = $('open-settings').querySelector('svg').outerHTML;
 
+// ── 裝置自訂名稱（customName）────────────────────────────────────────────────
+// customName 屬於整台裝置，由 Member API（PATCH /v1/devices/:deviceId/display-name）
+// 寫入 devices/{deviceId}。該 service 沒有讀取端點，因此模擬器直接向 Firestore
+// Emulator 讀同一份文件；讀不到就沿用與 Web App 相同的 fallback：顯示裝置序號。
+const CUSTOM_NAME_MAX_CODE_POINTS = 30;
+/** deviceId → 有效的 customName；null 代表沒有名稱或尚未讀到。 */
+const customNames = new Map();
+
+/** 與 Member API 相同的名稱規則：trim 後 1–30 個 code points，且不含控制字元。 */
+function normalizeCustomName(raw) {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  if ([...trimmed].length > CUSTOM_NAME_MAX_CODE_POINTS) return null;
+  if (/\p{Cc}/u.test(trimmed)) return null;
+  return trimmed;
+}
+
+/** 顯示名稱的唯一來源：有有效 customName 就用它，否則回退裝置序號。 */
+function displayNameOf(deviceId) {
+  return customNames.get(deviceId) ?? deviceId;
+}
+
+function deviceDocumentUrl(deviceId) {
+  const base = val('firestoreBase').replace(/\/+$/, '');
+  const projectId = val('projectId');
+  if (base === '' || projectId === '' || deviceId === '') return null;
+  return `${base}/v1/projects/${projectId}/databases/(default)/documents/devices/${encodeURIComponent(deviceId)}`;
+}
+
+/** 讀不到（Emulator 未啟動、裝置尚未建立）時回傳 null，讓卡片靜默回退序號。 */
+async function fetchCustomName(deviceId) {
+  const url = deviceDocumentUrl(deviceId);
+  if (url === null) return null;
+  try {
+    const response = await fetch('/api/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ method: 'GET', url, headers: { Authorization: 'Bearer owner' } }),
+    });
+    const data = await response.json();
+    if (!data.ok || data.status !== 200) return null;
+    return normalizeCustomName(JSON.parse(data.body)?.fields?.customName?.stringValue);
+  } catch {
+    return null;
+  }
+}
+
+/** 重新讀取畫面上所有裝置的名稱；同一個 deviceId 只讀一次。 */
+async function refreshCustomNames() {
+  const deviceIds = [...new Set(devices.map((device) => device.deviceId))];
+  await Promise.all(
+    deviceIds.map(async (deviceId) => {
+      customNames.set(deviceId, await fetchCustomName(deviceId));
+    }),
+  );
+  refreshDeviceLabels();
+}
+
+function refreshDeviceLabels() {
+  for (const unit of devices) {
+    const card = cardOf(unit.uid);
+    if (card) applyDeviceLabels(card, unit);
+  }
+}
+
 function applyDeviceLabels(card, unit) {
-  card.querySelector('.device-card-name').textContent = unit.deviceId;
-  card.querySelector('.device-settings').setAttribute('aria-label', `${unit.deviceId} 裝置設定`);
-  card.querySelector('[data-event="urination"]').setAttribute('aria-label', `${unit.deviceId} 送出排尿事件`);
-  card.querySelector('[data-event="battery"]').setAttribute('aria-label', `${unit.deviceId} 送出電量事件`);
+  const displayName = displayNameOf(unit.deviceId);
+  const serial = card.querySelector('.device-card-serial');
+  card.querySelector('.device-card-name').textContent = displayName;
+  serial.textContent = `裝置序號：${unit.deviceId}`;
+  // 沒有 customName 時標題本身就是序號，不必重複顯示
+  serial.hidden = displayName === unit.deviceId;
+  card.querySelector('.device-settings').setAttribute('aria-label', `${displayName} 裝置設定`);
+  card.querySelector('[data-event="urination"]').setAttribute('aria-label', `${displayName} 送出排尿事件`);
+  card.querySelector('[data-event="battery"]').setAttribute('aria-label', `${displayName} 送出電量事件`);
 }
 
 function deviceCardElement(unit) {
@@ -685,7 +774,10 @@ function deviceCardElement(unit) {
   card.dataset.uid = unit.uid;
   card.innerHTML = `
     <div class="device-card-head">
-      <span class="device-card-name"></span>
+      <div class="device-card-title">
+        <span class="device-card-name"></span>
+        <span class="device-card-serial" hidden></span>
+      </div>
       <button type="button" class="icon-button" data-event="battery" title="送出電量事件">
         <span class="glyph" aria-hidden="true">🔋</span>
       </button>
@@ -719,7 +811,7 @@ function updateEditingDevice(patch) {
   const unit = deviceOf(editingUid);
   const card = cardOf(editingUid);
   if (card) applyDeviceLabels(card, unit);
-  $('device-view-title').textContent = `${unit.deviceId} 裝置設定`;
+  $('device-view-title').textContent = `${displayNameOf(unit.deviceId)} 裝置設定`;
 }
 
 function openDeviceSettings(uid, opener) {
@@ -727,7 +819,7 @@ function openDeviceSettings(uid, opener) {
   if (!unit) return;
   editingUid = uid;
   deviceReturnFocus = opener;
-  $('device-view-title').textContent = `${unit.deviceId} 裝置設定`;
+  $('device-view-title').textContent = `${displayNameOf(unit.deviceId)} 裝置設定`;
   $('unit-deviceId').value = unit.deviceId;
   $('unit-flush').value = String(unit.flushDurationMs);
   $('unit-pump').value = String(unit.pumpDurationMs);
@@ -771,7 +863,10 @@ addDeviceButton.addEventListener('click', () => {
   devices = [...devices, createDevice(nextDeviceId(last ? last.deviceId : val('deviceId')))];
   saveDevices();
   renderDevices();
+  refreshCustomNames();
 });
+
+refreshDeviceNamesButton.addEventListener('click', () => { refreshCustomNames(); });
 
 deleteDeviceButton.addEventListener('click', () => {
   if (editingUid === null) return;
@@ -784,7 +879,20 @@ deleteDeviceButton.addEventListener('click', () => {
 
 closeDeviceButton.addEventListener('click', closeDeviceSettings);
 
-$('unit-deviceId').addEventListener('input', (e) => updateEditingDevice({ deviceId: e.target.value.trim() }));
+// 改 deviceId 等於換一台裝置，名稱要跟著重讀；打字期間先等停頓再送，避免每個字元都打一次 Firestore。
+let customNameRefreshTimer = null;
+function scheduleCustomNameRefresh() {
+  if (customNameRefreshTimer !== null) clearTimeout(customNameRefreshTimer);
+  customNameRefreshTimer = setTimeout(() => {
+    customNameRefreshTimer = null;
+    refreshCustomNames();
+  }, 400);
+}
+
+$('unit-deviceId').addEventListener('input', (e) => {
+  updateEditingDevice({ deviceId: e.target.value.trim() });
+  scheduleCustomNameRefresh();
+});
 $('unit-flush').addEventListener('input', (e) => updateEditingDevice({ flushDurationMs: Number(e.target.value) }));
 $('unit-pump').addEventListener('input', (e) => updateEditingDevice({ pumpDurationMs: Number(e.target.value) }));
 $('unit-battery-level').addEventListener('input', (e) => updateEditingDevice({ batteryLevelPercent: Number(e.target.value) }));
@@ -797,6 +905,7 @@ $('unit-voltageOn').addEventListener('change', (e) => {
 // 初始化
 syncEventId();
 renderDevices();
+refreshCustomNames();
 </script>
 </body>
 </html>

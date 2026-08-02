@@ -8,8 +8,8 @@ import type { OwnedDevice } from '@/features/devices/owned-device-model'
 import { DEVICE_OVERVIEW_STORE_KEY } from '@/features/devices/device-overview-store-key'
 import HistoryView from './HistoryView.vue'
 
-function device(deviceId: string): OwnedDevice {
-  return { deviceId, ownerUid: 'member-001', productModel: 'pc-mini', ingestionStatus: 'enabled' }
+function device(deviceId: string, customName: string | null = null): OwnedDevice {
+  return { deviceId, ownerUid: 'member-001', productModel: 'pc-mini', ingestionStatus: 'enabled', customName }
 }
 
 const record: UrinationHistoryRecord = Object.freeze({
@@ -77,7 +77,7 @@ describe('HistoryView', () => {
       global: {
         provide: {
           [DEVICE_OVERVIEW_STORE_KEY as symbol]: {
-            devices: ref([device('PC-000001'), device('PC-000002')]),
+            devices: ref([device('PC-000001', '主浴室'), device('PC-000002')]),
             selectedDeviceId: ref('PC-000001'),
             selectDevice,
           },
@@ -86,6 +86,10 @@ describe('HistoryView', () => {
     })
 
     expect(wrapper.find('.device-selector').exists()).toBe(true)
+    expect(wrapper.get('[data-test="device-select"]').findAll('option').map((option) => option.text())).toEqual([
+      '主浴室',
+      'PC-000002',
+    ])
     await wrapper.get('[data-test="device-select"]').setValue('PC-000002')
     expect(selectDevice).toHaveBeenCalledWith('PC-000002')
   })

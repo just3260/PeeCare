@@ -70,8 +70,20 @@ describe('listOwnedDevices', () => {
     const devices = await listOwnedDevices(firestore, 'member-001')
 
     expect(devices).toEqual([
-      { deviceId: 'PC-000001', ownerUid: 'member-001', productModel: 'pc-mini', ingestionStatus: 'enabled' },
-      { deviceId: 'PC-000002', ownerUid: 'member-001', productModel: 'pc-mini', ingestionStatus: 'enabled' },
+      {
+        deviceId: 'PC-000001',
+        ownerUid: 'member-001',
+        productModel: 'pc-mini',
+        ingestionStatus: 'enabled',
+        customName: null,
+      },
+      {
+        deviceId: 'PC-000002',
+        ownerUid: 'member-001',
+        productModel: 'pc-mini',
+        ingestionStatus: 'enabled',
+        customName: null,
+      },
     ])
   })
 

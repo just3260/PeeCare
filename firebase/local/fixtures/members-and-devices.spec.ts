@@ -69,4 +69,16 @@ describe('DEVICE_OWNERSHIP', () => {
       expect(ownerUid.trim().length).toBeGreaterThan(0)
     }
   })
+
+  it('includes both a canonically named device and an existing unnamed device', () => {
+    expect(DEVICE_OWNERSHIP).toContainEqual({
+      deviceId: 'PC-000001',
+      ownerUid: 'member-001',
+      customName: '主浴室',
+    })
+    expect(DEVICE_OWNERSHIP).toContainEqual({
+      deviceId: 'PC-000002',
+      ownerUid: 'member-001',
+    })
+  })
 })

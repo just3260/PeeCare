@@ -12,11 +12,12 @@
     "preview": "vite preview",
     "type-check": "vue-tsc --build",
     "test:unit": "vitest run",
-    "check": "npm run type-check && npm run test:unit && npm run build && npm run check:ingestion",
+    "check": "npm run type-check && npm run test:unit && npm run build && npm run check:member && npm run check:ingestion",
+    "check:member": "npm --prefix services/member-api run check",
     "check:ingestion": "npm --prefix services/ingestion-api run check",
     "emulators:start": "firebase emulators:start --project demo-peecare",
     "emulators:reset": "node firebase/local/reset.mjs",
-    "test:firebase": "firebase emulators:exec --project demo-peecare --only auth,firestore \"vitest run --config vitest.firebase.config.ts && npm --prefix services/ingestion-api test -- --run test/firestore-emulator.integration.test.ts test/device-fixtures.integration.test.ts test/firestore-event-sink.integration.test.ts test/end-to-end-ingestion.integration.test.ts\"",
+    "test:firebase": "node scripts/test-firebase.mjs",
     "check:all": "npm run check && npm run test:firebase"
   },
   "dependencies": {

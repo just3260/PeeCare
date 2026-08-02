@@ -226,6 +226,87 @@ describe('local test tool device simulator', () => {
     })
   })
 
+  it('reads the device document and shows its customName above the serial', async () => {
+    const document = loadTool()
+    const view = document.defaultView as Window & typeof globalThis
+    const sendRequest = vi.fn(async () => ({
+      json: async () => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        elapsedMs: 1,
+        body: JSON.stringify({ fields: { customName: { stringValue: '主浴室' } } }),
+      }),
+    }))
+    view.fetch = sendRequest as unknown as typeof fetch
+
+    element<HTMLButtonElement>(document, 'refresh-device-names').click()
+    await flushPending()
+
+    const proxied = JSON.parse(String((sendRequest.mock.calls[0] as unknown as [string, RequestInit])[1].body))
+    expect(proxied.method).toBe('GET')
+    expect(proxied.url).toBe(
+      'http://127.0.0.1:8085/v1/projects/demo-peecare/databases/(default)/documents/devices/PC-000001',
+    )
+
+    const card = deviceCards(document)[0]
+    const serial = card.querySelector<HTMLElement>('.device-card-serial')
+    expect(card.querySelector('.device-card-name')?.textContent).toBe('主浴室')
+    expect(serial?.textContent).toBe('裝置序號：PC-000001')
+    expect(serial?.hidden).toBe(false)
+    expect(card.querySelector('button.device-settings')?.getAttribute('aria-label')).toBe('主浴室 裝置設定')
+  })
+
+  it('falls back to the device serial when the document has no customName', async () => {
+    const document = loadTool()
+    const view = document.defaultView as Window & typeof globalThis
+    view.fetch = vi.fn(async () => ({
+      json: async () => ({
+        ok: true,
+        status: 200,
+        statusText: 'OK',
+        elapsedMs: 1,
+        body: JSON.stringify({ fields: { deviceId: { stringValue: 'PC-000001' } } }),
+      }),
+    })) as unknown as typeof fetch
+
+    element<HTMLButtonElement>(document, 'refresh-device-names').click()
+    await flushPending()
+
+    const card = deviceCards(document)[0]
+    expect(card.querySelector('.device-card-name')?.textContent).toBe('PC-000001')
+    expect(card.querySelector<HTMLElement>('.device-card-serial')?.hidden).toBe(true)
+  })
+
+  it('keeps the serial when the device document cannot be read', async () => {
+    const document = loadTool()
+    const view = document.defaultView as Window & typeof globalThis
+    view.fetch = vi.fn(async () => ({
+      json: async () => ({ ok: false, error: 'connect ECONNREFUSED' }),
+    })) as unknown as typeof fetch
+
+    element<HTMLButtonElement>(document, 'refresh-device-names').click()
+    await flushPending()
+
+    const card = deviceCards(document)[0]
+    expect(card.querySelector('.device-card-name')?.textContent).toBe('PC-000001')
+    expect(card.querySelector<HTMLElement>('.device-card-serial')?.hidden).toBe(true)
+  })
+
+  it('updates the device document with a mask so the custom name survives', async () => {
+    const document = loadTool()
+    const deviceCard = [...document.querySelectorAll<HTMLElement>('#main-view details.card')][1]
+
+    deviceCard.querySelector<HTMLButtonElement>('button.ghost')?.click()
+    // curl 區塊展開會非同步觸發 toggle，等它跑完再結束，才不會在 DOM 關閉後才重繪。
+    await flushPending()
+
+    const curl = element<HTMLElement>(document, 'curl-device').textContent ?? ''
+    expect(curl).toContain('updateMask.fieldPaths=deviceId')
+    expect(curl).toContain('updateMask.fieldPaths=ownerUid')
+    expect(curl).not.toContain('customName')
+  })
+
   it('sends a battery event and honours the optional voltage toggle', async () => {
     const document = loadTool()
     const view = document.defaultView as Window & typeof globalThis

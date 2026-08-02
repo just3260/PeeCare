@@ -21,7 +21,7 @@ vi.mock('firebase/firestore', () => ({
   connectFirestoreEmulator: mocks.connectFirestoreEmulator,
 }))
 
-import { getLocalFirebaseServices, resetLocalFirebaseServices } from './client'
+import { getFirebaseServices, getLocalFirebaseServices, resetLocalFirebaseServices } from './client'
 
 function validEnv(): RawFirebaseEnv {
   return {
@@ -125,4 +125,27 @@ describe('getLocalFirebaseServices', () => {
       expect(mocks.connectFirestoreEmulator).not.toHaveBeenCalled()
     },
   )
+})
+
+describe('getFirebaseServices in production', () => {
+  it('initializes the same single Firebase app without connecting Emulators', () => {
+    const env: RawFirebaseEnv = {
+      MODE: 'production',
+      PROD: true,
+      VITE_FIREBASE_PROJECT_ID: 'peecare-production',
+      VITE_FIREBASE_API_KEY: 'production-api-key',
+    }
+
+    const first = getFirebaseServices(env)
+    const second = getFirebaseServices(env)
+
+    expect(first).toBe(second)
+    expect(mocks.initializeApp).toHaveBeenCalledOnce()
+    expect(mocks.initializeApp).toHaveBeenCalledWith({
+      projectId: 'peecare-production',
+      apiKey: 'production-api-key',
+    })
+    expect(mocks.connectAuthEmulator).not.toHaveBeenCalled()
+    expect(mocks.connectFirestoreEmulator).not.toHaveBeenCalled()
+  })
 })

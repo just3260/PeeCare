@@ -9,7 +9,7 @@
 import { readonly, ref, type DeepReadonly, type Ref } from 'vue'
 import { onAuthStateChanged, type User } from 'firebase/auth'
 
-import { getLocalFirebaseServices } from '@/platform/firebase/client'
+import { getFirebaseServices } from '@/platform/firebase/client'
 import {
   createProtectedResourceRegistry,
   type ProtectedResourceRegistry,
@@ -56,7 +56,7 @@ function toSessionUser(user: User): SessionUser {
 export function createFirebaseAuthObserver(): AuthObserver {
   return {
     subscribe(onUser: (user: SessionUser | null) => void): () => void {
-      const { auth } = getLocalFirebaseServices()
+      const { auth } = getFirebaseServices()
       return onAuthStateChanged(auth, (user) => {
         onUser(user ? toSessionUser(user) : null)
       })

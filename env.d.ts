@@ -12,4 +12,5 @@ interface ImportMetaEnv {
   readonly VITE_FIREBASE_AUTH_EMULATOR_PORT?: string
   readonly VITE_FIREBASE_FIRESTORE_EMULATOR_HOST?: string
   readonly VITE_FIREBASE_FIRESTORE_EMULATOR_PORT?: string
+  readonly VITE_MEMBER_API_URL?: string
 }

@@ -13,6 +13,8 @@ export interface OwnedDevice {
   readonly ownerUid: string
   readonly productModel: string
   readonly ingestionStatus: string
+  /** Canonical shared name, or null when the Firestore field is absent. */
+  readonly customName: string | null
 }
 
 /** Stable machine codes for structural defects in a device registry document. */
@@ -20,6 +22,7 @@ export type OwnedDeviceDataIntegrityCode =
   | 'device_id_mismatch'
   | 'invalid_product_model'
   | 'invalid_ingestion_status'
+  | 'invalid_custom_name'
 
 /**
  * Raised when a device registry document is structurally malformed — a defect
@@ -57,6 +60,46 @@ export interface ParseOwnedDeviceInput {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0
+}
+
+const MAX_CUSTOM_NAME_CODE_POINTS = 30
+const FORBIDDEN_CUSTOM_NAME_CHARACTERS = /[\p{Cc}\p{Zl}\p{Zp}]/u
+
+export type CustomNameDraftValidation =
+  | { readonly valid: true; readonly value: string | null }
+  | { readonly valid: false }
+
+/** Normalize an editor draft using the same canonical rules as stored names. */
+export function normalizeCustomNameDraft(value: string): CustomNameDraftValidation {
+  if (FORBIDDEN_CUSTOM_NAME_CHARACTERS.test(value)) return { valid: false }
+  const normalized = value.trim()
+  if (normalized.length === 0) return { valid: true, value: null }
+  if (Array.from(normalized).length > MAX_CUSTOM_NAME_CODE_POINTS) return { valid: false }
+  return { valid: true, value: normalized }
+}
+
+/** True only for the canonical custom-name form shared by stored and API models. */
+export function isCanonicalCustomName(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const validation = normalizeCustomNameDraft(value)
+  return validation.valid && validation.value !== null && validation.value === value
+}
+
+function parseCustomName(record: Record<string, unknown>, documentId: string): string | null {
+  if (!Object.prototype.hasOwnProperty.call(record, 'customName')) {
+    return null
+  }
+
+  const value = record.customName
+  if (!isCanonicalCustomName(value)) {
+    throw new OwnedDeviceDataIntegrityError(
+      'invalid_custom_name',
+      documentId,
+      `Device document "${documentId}" has an invalid customName.`,
+    )
+  }
+
+  return value
 }
 
 /**
@@ -97,6 +140,8 @@ export function parseOwnedDevice(input: ParseOwnedDeviceInput): OwnedDevice | nu
     )
   }
 
+  const customName = parseCustomName(record, documentId)
+
   // Fail-closed ownership gate: only a non-empty owner that matches the caller.
   if (!isNonEmptyString(record.ownerUid) || record.ownerUid !== authenticatedUid) {
     return null
@@ -107,5 +152,6 @@ export function parseOwnedDevice(input: ParseOwnedDeviceInput): OwnedDevice | nu
     ownerUid: record.ownerUid,
     productModel: record.productModel,
     ingestionStatus: record.ingestionStatus,
+    customName,
   }
 }

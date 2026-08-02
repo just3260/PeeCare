@@ -4,6 +4,7 @@
 // single listener. When the member owns a single device the parent omits this
 // control entirely.
 import type { OwnedDevice } from '@/features/devices/owned-device-model'
+import { resolveDeviceDisplayName } from '@/features/devices/device-display-name'
 
 defineProps<{
   devices: readonly OwnedDevice[]
@@ -35,7 +36,7 @@ function handleChange(event: Event): void {
           :key="deviceOption.deviceId"
           :value="deviceOption.deviceId"
         >
-          {{ deviceOption.deviceId }}
+          {{ resolveDeviceDisplayName(deviceOption) }}
         </option>
       </select>
       <span class="device-selector__chevron" aria-hidden="true">▾</span>
