@@ -199,9 +199,10 @@
     <div id="device-list" class="device-list"></div>
   </section>
 
-  <!-- ① 健康檢查 -->
+  <!-- ① 健康檢查：ingestion-api（MQTT 轉發） -->
   <details class="card">
-    <summary><h2>① 健康檢查 <span class="ep">GET /healthz</span></h2></summary>
+    <summary><h2>① 健康檢查 · ingestion-api <span class="ep">GET /healthz</span></h2></summary>
+    <p class="hint" style="margin:0 0 10px">檢查接收 EMQX 轉發事件的 ingestion-api 是否運行中（Base URL 取自共用設定）。</p>
     <div class="actions">
       <button class="ghost" onclick="preview('health')">預覽 curl</button>
       <button onclick="run('health')">送出</button>
@@ -213,9 +214,24 @@
     <div class="result" id="res-health"></div>
   </details>
 
-  <!-- ② 建立 device -->
+  <!-- ② 健康檢查：Member API -->
   <details class="card">
-    <summary><h2>② 建立 / 更新 device <span class="ep">PATCH Firestore REST</span></h2></summary>
+    <summary><h2>② 健康檢查 · Member API <span class="ep">GET /healthz</span></h2></summary>
+    <p class="hint" style="margin:0 0 10px">檢查提供 Web App 使用的 Member API 是否運行中（Base URL 取自共用設定，預設 <code>http://127.0.0.1:8087</code>）。</p>
+    <div class="actions">
+      <button class="ghost" onclick="preview('healthMember')">預覽 curl</button>
+      <button onclick="run('healthMember')">送出</button>
+    </div>
+    <details class="curl-box" id="curlbox-healthMember">
+      <summary>curl 指令</summary>
+      <pre class="curl" id="curl-healthMember"></pre>
+    </details>
+    <div class="result" id="res-healthMember"></div>
+  </details>
+
+  <!-- ③ 建立 device -->
+  <details class="card">
+    <summary><h2>③ 建立 / 更新 device <span class="ep">PATCH Firestore REST</span></h2></summary>
     <div class="grid">
       <div><label>ingestionStatus</label>
         <select id="dev-status"><option value="enabled" selected>enabled</option><option value="disabled">disabled</option></select>
@@ -233,9 +249,9 @@
     <div class="result" id="res-device"></div>
   </details>
 
-  <!-- ③ 排尿事件 -->
+  <!-- ④ 排尿事件 -->
   <details class="card">
-    <summary><h2>③ 排尿事件 <span class="ep">POST /v1/emqx/events</span></h2></summary>
+    <summary><h2>④ 排尿事件 <span class="ep">POST /v1/emqx/events</span></h2></summary>
     <div class="grid">
       <div><label>flushDurationMs</label><input id="ur-flush" type="number" value="3000" /></div>
       <div><label>pumpDurationMs</label><input id="ur-pump" type="number" value="5000" /></div>
@@ -252,9 +268,9 @@
     <div class="result" id="res-urination"></div>
   </details>
 
-  <!-- ④ 電量事件 -->
+  <!-- ⑤ 電量事件 -->
   <details class="card">
-    <summary><h2>④ 電量事件 <span class="ep">POST /v1/emqx/events</span></h2></summary>
+    <summary><h2>⑤ 電量事件 <span class="ep">POST /v1/emqx/events</span></h2></summary>
     <div class="grid">
       <div><label>batteryLevelPercent</label>
         <select id="bt-level"><option>0</option><option>25</option><option>50</option><option selected>75</option><option>100</option></select>
@@ -290,6 +306,7 @@
     <div class="shared">
       <div class="grid">
         <div><label>ingestion-api Base URL</label><input id="ingestionBase" value="http://127.0.0.1:8086" /></div>
+        <div><label>Member API Base URL</label><input id="memberApiBase" value="http://127.0.0.1:8087" /></div>
         <div><label>Firestore Emulator Base URL</label><input id="firestoreBase" value="http://127.0.0.1:8085" /></div>
         <div><label>Firebase Project ID</label><input id="projectId" value="demo-peecare" /></div>
         <div><label>Webhook Secret（EMQX_WEBHOOK_SECRET_CURRENT）</label><input id="secret" value="local-dev-secret" /></div>
@@ -412,6 +429,7 @@ function shared(deviceIdOverride) {
   const sequence = Number(val('seq'));
   return {
     ingestionBase: val('ingestionBase').replace(/\/+$/, ''),
+    memberApiBase: val('memberApiBase').replace(/\/+$/, ''),
     firestoreBase: val('firestoreBase').replace(/\/+$/, ''),
     projectId: val('projectId'),
     secret: val('secret'),
@@ -480,6 +498,10 @@ const builders = {
   health() {
     const s = shared();
     return { method: 'GET', url: `${s.ingestionBase}/healthz`, headers: {} };
+  },
+  healthMember() {
+    const s = shared();
+    return { method: 'GET', url: `${s.memberApiBase}/healthz`, headers: {} };
   },
   device() {
     const s = shared();
