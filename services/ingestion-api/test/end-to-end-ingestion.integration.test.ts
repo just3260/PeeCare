@@ -64,19 +64,19 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('EMQX request to Firestore
 
     expect(response.statusCode).toBe(201);
     expect((await firestore.doc(`devices/${DEVICE_ID}/events/evt-000001`).get()).data()).toMatchObject({
-      eventType: 'urination', flushDurationMs: 3000, pumpDurationMs: 5000, estimatedUrineMl: 200,
+      eventType: 'urination', flushDurationMs: 3000, pumpDurationMs: 5000, estimatedUrineMl: 20,
       estimationStatus: 'estimated', receivedAtMs: RECEIVED_FIRST, createdAtMs: RECEIVED_FIRST,
     });
     const device = (await firestore.doc(`devices/${DEVICE_ID}`).get()).data() ?? {};
     expect(device).toMatchObject({
       latestUrinationEventId: 'evt-000001', lastReportedAtMs: RECEIVED_FIRST,
-      latestUrinationEstimatedUrineMl: 200, latestUrinationEstimationStatus: 'estimated',
+      latestUrinationEstimatedUrineMl: 20, latestUrinationEstimationStatus: 'estimated',
     });
     expect(Object.keys(device).some(key => /battery/i.test(key))).toBe(false);
     const dailyDocs = await firestore.collection(`devices/${DEVICE_ID}/dailyStats`).listDocuments();
     expect(dailyDocs.length).toBe(1);
     expect((await dailyDocs[0].get()).data()).toEqual({
-      date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: 1, estimatedUrineTotalMl: 200,
+      date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: 1, estimatedUrineTotalMl: 20,
       lastEventAtMs: 1785168000000, updatedAtMs: RECEIVED_FIRST,
     });
   }, 30_000);
@@ -91,7 +91,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('EMQX request to Firestore
     await second.close();
 
     const daily = (await firestore.doc(`devices/${DEVICE_ID}/dailyStats/2026-07-28`).get()).data() ?? {};
-    expect(daily).toMatchObject({ urinationCount: 2, estimatedUrineTotalMl: 300 });
+    expect(daily).toMatchObject({ urinationCount: 2, estimatedUrineTotalMl: 30 });
     for (const legacy of ['volumeStatus', 'estimatedUrineAverageMl', 'estimatedUrineMinMl', 'estimatedUrineMaxMl']) {
       expect(daily).not.toHaveProperty(legacy);
     }

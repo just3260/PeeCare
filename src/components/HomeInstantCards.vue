@@ -5,7 +5,8 @@
 // day-over-day comparison footers have no data behind them yet and render an
 // explicit "N/A" placeholder rather than a fabricated value. The
 // latest-urination card is filled from the validated projection when the tuple
-// is present.
+// is present. The status card leads with the device's battery level and keeps
+// the connection state in its footer.
 import { computed } from 'vue'
 
 import {
@@ -42,6 +43,11 @@ const latestTime = computed(() =>
 const statusLabel = computed(() =>
   props.projection.lastReportedAtMs !== null ? '連線中' : '待機中',
 )
+
+const batteryLevel = computed(() => {
+  const battery = props.projection.battery
+  return battery ? String(battery.levelPercent) : NOT_AVAILABLE
+})
 </script>
 
 <template>
@@ -74,10 +80,10 @@ const statusLabel = computed(() =>
 
     <article class="instant-card">
       <p class="instant-card__label">目前狀態</p>
-      <p class="instant-card__value instant-card__value--text" data-test="card-status">
-        {{ statusLabel }}
+      <p class="instant-card__value" data-test="card-battery">
+        {{ batteryLevel }} <span class="instant-card__unit">%</span>
       </p>
-      <p class="instant-card__footer">Wi-Fi {{ NOT_AVAILABLE }}</p>
+      <p class="instant-card__footer" data-test="card-status">Wi-Fi {{ statusLabel }}</p>
     </article>
   </div>
 </template>
@@ -108,10 +114,6 @@ const statusLabel = computed(() =>
   font-size: 28px;
   font-weight: 700;
   color: var(--color-ink);
-}
-
-.instant-card__value--text {
-  font-size: 24px;
 }
 
 .instant-card__unit {

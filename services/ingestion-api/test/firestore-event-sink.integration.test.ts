@@ -101,8 +101,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Firestore event sink', ()
     await firestore.doc('devices/PC-000001').set(enabled);
     const sink = new FirestoreEventSink(firestore);
     await expect(sink.accept(makeEvent(), { requestId: 'r' })).resolves.toBe('stored');
-    expect((await firestore.doc('devices/PC-000001/events/evt-000001').get()).data()).toMatchObject({ estimatedUrineMl: 200, estimationStatus: 'estimated' });
-    expect((await firestore.doc('devices/PC-000001').get()).data()).toMatchObject({ latestUrinationEventId: 'evt-000001', lastReportedAtMs: 2100, latestUrinationEstimatedUrineMl: 200, latestUrinationEstimationStatus: 'estimated' });
+    expect((await firestore.doc('devices/PC-000001/events/evt-000001').get()).data()).toMatchObject({ estimatedUrineMl: 20, estimationStatus: 'estimated' });
+    expect((await firestore.doc('devices/PC-000001').get()).data()).toMatchObject({ latestUrinationEventId: 'evt-000001', lastReportedAtMs: 2100, latestUrinationEstimatedUrineMl: 20, latestUrinationEstimationStatus: 'estimated' });
   }, 20_000);
 
   it('dispatches an eligible battery event through the shared device gate and transaction', async () => {
@@ -228,7 +228,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Firestore event sink', ()
     await expect(sink.accept({ ...makeEvent(), effectiveAtMs: JUL28_START, receivedAtMs: JUL28_LATER }, { requestId: 'first' })).resolves.toBe('stored');
     expect((await firestore.doc('devices/PC-000001/events/evt-000001').get()).exists).toBe(true);
     expect((await dailyDoc(firestore, '2026-07-28').get()).data()).toEqual({
-      date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: 1, estimatedUrineTotalMl: 200,
+      date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: 1, estimatedUrineTotalMl: 20,
       lastEventAtMs: JUL28_START, updatedAtMs: JUL28_LATER,
     });
   }, 20_000);
@@ -248,7 +248,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Firestore event sink', ()
     expect((await dailyDoc(firestore, '2026-07-28').get()).get('urinationCount')).toBe(1);
     await sink.accept({ ...makeEvent({ eventId: 'evt-000002' }), effectiveAtMs: JUL28_LATER, receivedAtMs: JUL28_LATER }, { requestId: 'two' });
     expect((await dailyDoc(firestore, '2026-07-28').get()).data()).toMatchObject({
-      urinationCount: 2, estimatedUrineTotalMl: 400,
+      urinationCount: 2, estimatedUrineTotalMl: 40,
       lastEventAtMs: JUL28_LATER, updatedAtMs: JUL28_LATER,
     });
   }, 20_000);
@@ -339,7 +339,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Firestore event sink', ()
       todayDate: daily.date, todayUrinationCount: daily.urinationCount, todayEstimatedUrineTotalMl: daily.estimatedUrineTotalMl,
     });
     expect((await firestore.doc('devices/PC-000001').get()).data()).toMatchObject({
-      todayDate: '2026-07-28', todayUrinationCount: 2, todayEstimatedUrineTotalMl: 400,
+      todayDate: '2026-07-28', todayUrinationCount: 2, todayEstimatedUrineTotalMl: 40,
     });
   }, 20_000);
 
@@ -369,7 +369,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Firestore event sink', ()
     await sink.accept({ ...makeEvent({ eventId: 'evt-000002' }), effectiveAtMs: LATE_EFFECTIVE, receivedAtMs: LATE_RECEIVED }, { requestId: 'late' });
     expect((await dailyDoc(firestore, '2026-07-27').get()).get('urinationCount')).toBe(1);
     expect((await firestore.doc('devices/PC-000001').get()).data()).toMatchObject({
-      todayDate: '2026-07-28', todayUrinationCount: 1, todayEstimatedUrineTotalMl: 200,
+      todayDate: '2026-07-28', todayUrinationCount: 1, todayEstimatedUrineTotalMl: 20,
     });
   }, 20_000);
 

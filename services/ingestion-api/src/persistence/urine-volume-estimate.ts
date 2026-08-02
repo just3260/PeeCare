@@ -4,10 +4,10 @@
  * pump time, where net time is the pump duration minus the flush duration that
  * pushes clean water rather than urine.
  *
- * Base formula: estimatedUrineMl = (pumpDurationMs - flushDurationMs) / 100 * 10
+ * Base formula: estimatedUrineMl = (pumpDurationMs - flushDurationMs) / 100 * 1
  */
 const PUMP_UNIT_MS = 100
-const PUMP_ML_PER_UNIT = 10
+const PUMP_ML_PER_UNIT = 1
 
 /**
  * Upper plausibility bound, in millilitres, for a single urination event. A

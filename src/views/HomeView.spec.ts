@@ -116,8 +116,10 @@ describe('HomeView overview states', () => {
 
     // The latest-urination card is filled from the validated projection tuple.
     expect(wrapper.get('[data-test="card-latest-volume"]').text()).toContain('120')
-    // A reporting device reads as connected.
-    expect(wrapper.get('[data-test="card-status"]').text()).toBe('連線中')
+    // The status card leads with the battery level from the validated tuple.
+    expect(wrapper.get('[data-test="card-battery"]').text()).toContain('50')
+    // A reporting device reads as connected in the card footer.
+    expect(wrapper.get('[data-test="card-status"]').text()).toBe('Wi-Fi 連線中')
     // Today's totals come from the registry projection for the current day.
     expect(wrapper.get('[data-test="card-today-volume"]').text()).toContain('550')
     expect(wrapper.get('[data-test="card-today-count"]').text()).toContain('3')
@@ -153,8 +155,10 @@ describe('HomeView overview states', () => {
     expect(wrapper.get('[data-test="card-today-count"]').text()).toContain('N/A')
     expect(wrapper.get('[data-test="hero-title"]').text()).toContain('N/A')
     expect(wrapper.get('[data-test="hero-today-volume"]').text()).toContain('N/A')
+    // A device with no battery tuple shows an explicit unknown, not zero.
+    expect(wrapper.get('[data-test="card-battery"]').text()).toContain('N/A')
     // Without any report instant the device is not claimed to be online.
-    expect(wrapper.get('[data-test="card-status"]').text()).toBe('待機中')
+    expect(wrapper.get('[data-test="card-status"]').text()).toBe('Wi-Fi 待機中')
     expect(wrapper.get('[data-test="hero-status"]').text()).toContain('待機中')
   })
 
