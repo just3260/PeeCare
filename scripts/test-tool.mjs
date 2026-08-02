@@ -12,6 +12,8 @@ import { readFileSync } from 'node:fs';
 
 const PORT = process.env.TOOL_PORT ? Number(process.env.TOOL_PORT) : 5055;
 const HTML = readFileSync(new URL('./test-tool.html', import.meta.url), 'utf8');
+// 裝置模擬器的排尿事件按鈕圖示；隨工具一起送出，頁面才不需外部資源。
+const MACHINE_PNG = readFileSync(new URL('./machine.png', import.meta.url));
 
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
 
@@ -44,6 +46,12 @@ const server = createServer(async (req, res) => {
   if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(HTML);
+    return;
+  }
+
+  if (req.method === 'GET' && req.url === '/machine.png') {
+    res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-cache' });
+    res.end(MACHINE_PNG);
     return;
   }
 

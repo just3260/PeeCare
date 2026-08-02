@@ -29,10 +29,48 @@
     gap: 16px; margin-bottom: 4px;
   }
   .settings-header { justify-content: flex-start; margin-bottom: 16px; }
-  .card, .shared {
+  .card, .shared, .panel {
     background: #fff; border: 1px solid #e3e5e8; border-radius: 12px;
     padding: 18px; margin-bottom: 16px;
   }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+  .panel-head h2 { margin: 0; }
+  /* 裝置模擬器：一台裝置一張卡 */
+  .device-list { display: flex; flex-direction: column; gap: 12px; }
+  .device-card { border: 1px solid #e3e5e8; border-radius: 10px; padding: 12px; }
+  .device-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .device-card-name {
+    flex: 1; min-width: 0;
+    font-size: 14px; font-weight: 600; font-family: ui-monospace, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .device-card-head .icon-button { width: 32px; height: 32px; }
+  .device-card-head .icon-button svg { width: 17px; height: 17px; }
+  .device-card-head .icon-button .glyph { font-size: 17px; line-height: 1; }
+  /* 排尿按鈕在左、回應在右 */
+  .device-card-body { display: flex; align-items: stretch; gap: 12px; margin-top: 10px; }
+  button.sim-button {
+    display: block; flex: 0 0 220px; padding: 6px;
+    background: #f4f5f7; color: #4f5661; border: 1px solid #d3d6da;
+  }
+  button.sim-button img { display: block; width: 100%; height: auto; }
+  button[data-event]:disabled { opacity: .5; cursor: progress; }
+  .device-card-body .result { flex: 1; margin-top: 0; overflow: auto; }
+  button.danger { background: #c53434; }
+  /* 四張 API 卡片預設收合，只留標題那一行 */
+  details.card > summary {
+    display: flex; align-items: center; gap: 8px; cursor: pointer;
+    list-style: none; user-select: none; border-radius: 6px;
+  }
+  details.card > summary::-webkit-details-marker { display: none; }
+  details.card > summary::before {
+    content: '▸'; display: inline-block; color: #8a9099; font-size: 12px;
+    transition: transform .15s ease;
+  }
+  details.card[open] > summary { margin-bottom: 12px; }
+  details.card[open] > summary::before { transform: rotate(90deg); }
+  details.card > summary h2 { margin: 0; }
+  details.card > summary:focus-visible { outline: 3px solid #7aa7ff; outline-offset: 3px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
   label { display: block; font-size: 12px; color: #6b7178; margin-bottom: 4px; }
   input, select {
@@ -66,8 +104,21 @@
   pre.curl {
     background: #0e1013; color: #cbd2da; padding: 12px; border-radius: 8px;
     font-size: 12px; font-family: ui-monospace, "SF Mono", monospace;
-    overflow-x: auto; white-space: pre; margin: 12px 0 0;
+    overflow-x: auto; white-space: pre; margin: 8px 0 0;
   }
+  details.curl-box { margin-top: 12px; }
+  details.curl-box > summary {
+    display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+    font-size: 12px; color: #6b7178; padding: 2px 0;
+    list-style: none; user-select: none;
+  }
+  details.curl-box > summary::-webkit-details-marker { display: none; }
+  details.curl-box > summary::before {
+    content: '▸'; display: inline-block; font-size: 11px; transition: transform .15s ease;
+  }
+  details.curl-box[open] > summary::before { transform: rotate(90deg); }
+  details.curl-box > summary:hover { color: #2f6fed; }
+  details.curl-box > summary:focus-visible { outline: 3px solid #7aa7ff; outline-offset: 2px; border-radius: 4px; }
   .result {
     margin-top: 10px; padding: 10px 12px; border-radius: 8px; font-size: 12.5px;
     font-family: ui-monospace, monospace; white-space: pre-wrap; word-break: break-word;
@@ -82,9 +133,14 @@
     .result.ok{background:#12331f;color:#7ee2a3}.result.warn{background:#3a2c10;color:#f1c27a}
     .result.err{background:#3a1616;color:#f19a9a}.result.pending{background:#22262d;color:#9aa1ab}
     button.icon-button { color: #d5dae1; border-color: #4b515c; }
+    .panel { background: #1f2228 !important; border-color: #30343c !important; }
+    .device-card { border-color: #30343c; }
+    button.sim-button { background: #262a31; color: #d5dae1; border-color: #4b515c; }
   }
   @media (max-width: 600px) {
     body { padding: 16px; }
+    .device-card-body { flex-direction: column; }
+    button.sim-button { flex: 0 0 auto; }
   }
 </style>
 </head>
@@ -117,20 +173,37 @@
     <code>409 event_id_conflict</code>（payload 完全相同時為 <code>200 duplicate</code>），兩者皆零寫入。
   </p>
 
+  <!-- 裝置模擬器：一個 deviceId 一張卡，兩顆按鈕直接送出事件 -->
+  <section class="panel" id="device-sim">
+    <header class="panel-head">
+      <h2>裝置模擬器</h2>
+      <button type="button" class="ghost" id="add-device">＋ 新增裝置</button>
+    </header>
+    <p class="hint" style="margin:0 0 12px">
+      每張卡片是一台裝置，deviceId 與排尿／電量參數各自獨立；
+      其餘欄位（base URL、secret、productModel、bootId、sequence、firmwareVersion、時間…）皆取自共用設定。
+      送出後 sequence 依共用設定的「自動 +1」規則前進。
+    </p>
+    <div id="device-list" class="device-list"></div>
+  </section>
+
   <!-- ① 健康檢查 -->
-  <div class="card">
-    <h2>① 健康檢查 <span class="ep">GET /healthz</span></h2>
+  <details class="card">
+    <summary><h2>① 健康檢查 <span class="ep">GET /healthz</span></h2></summary>
     <div class="actions">
       <button class="ghost" onclick="preview('health')">預覽 curl</button>
       <button onclick="run('health')">送出</button>
     </div>
-    <pre class="curl" id="curl-health"></pre>
+    <details class="curl-box" id="curlbox-health">
+      <summary>curl 指令</summary>
+      <pre class="curl" id="curl-health"></pre>
+    </details>
     <div class="result" id="res-health"></div>
-  </div>
+  </details>
 
   <!-- ② 建立 device -->
-  <div class="card">
-    <h2>② 建立 / 更新 device <span class="ep">PATCH Firestore REST</span></h2>
+  <details class="card">
+    <summary><h2>② 建立 / 更新 device <span class="ep">PATCH Firestore REST</span></h2></summary>
     <div class="grid">
       <div><label>ingestionStatus</label>
         <select id="dev-status"><option value="enabled" selected>enabled</option><option value="disabled">disabled</option></select>
@@ -141,13 +214,16 @@
       <button class="ghost" onclick="preview('device')">預覽 curl</button>
       <button onclick="run('device')">送出</button>
     </div>
-    <pre class="curl" id="curl-device"></pre>
+    <details class="curl-box" id="curlbox-device">
+      <summary>curl 指令</summary>
+      <pre class="curl" id="curl-device"></pre>
+    </details>
     <div class="result" id="res-device"></div>
-  </div>
+  </details>
 
   <!-- ③ 排尿事件 -->
-  <div class="card">
-    <h2>③ 排尿事件 <span class="ep">POST /v1/emqx/events</span></h2>
+  <details class="card">
+    <summary><h2>③ 排尿事件 <span class="ep">POST /v1/emqx/events</span></h2></summary>
     <div class="grid">
       <div><label>flushDurationMs</label><input id="ur-flush" type="number" value="3000" /></div>
       <div><label>pumpDurationMs</label><input id="ur-pump" type="number" value="5000" /></div>
@@ -157,13 +233,16 @@
       <button class="ghost" onclick="preview('urination')">預覽 curl</button>
       <button onclick="run('urination')">送出</button>
     </div>
-    <pre class="curl" id="curl-urination"></pre>
+    <details class="curl-box" id="curlbox-urination">
+      <summary>curl 指令</summary>
+      <pre class="curl" id="curl-urination"></pre>
+    </details>
     <div class="result" id="res-urination"></div>
-  </div>
+  </details>
 
   <!-- ④ 電量事件 -->
-  <div class="card">
-    <h2>④ 電量事件 <span class="ep">POST /v1/emqx/events</span></h2>
+  <details class="card">
+    <summary><h2>④ 電量事件 <span class="ep">POST /v1/emqx/events</span></h2></summary>
     <div class="grid">
       <div><label>batteryLevelPercent</label>
         <select id="bt-level"><option>0</option><option>25</option><option>50</option><option selected>75</option><option>100</option></select>
@@ -179,9 +258,12 @@
       <button class="ghost" onclick="preview('battery')">預覽 curl</button>
       <button onclick="run('battery')">送出</button>
     </div>
-    <pre class="curl" id="curl-battery"></pre>
+    <details class="curl-box" id="curlbox-battery">
+      <summary>curl 指令</summary>
+      <pre class="curl" id="curl-battery"></pre>
+    </details>
     <div class="result" id="res-battery"></div>
-  </div>
+  </details>
   </section>
 
   <section id="settings-view" hidden>
@@ -247,6 +329,37 @@
       </div>
     </div>
   </section>
+
+  <section id="device-view" hidden>
+    <header class="page-header settings-header">
+      <button type="button" class="back-button" id="close-device" aria-label="返回測試工具">
+        <span aria-hidden="true">←</span>
+        返回
+      </button>
+      <h1 id="device-view-title">裝置設定</h1>
+    </header>
+
+    <div class="shared">
+      <div class="grid">
+        <div><label>deviceId</label><input id="unit-deviceId" /></div>
+        <div><label>flushDurationMs</label><input id="unit-flush" type="number" min="0" /></div>
+        <div><label>pumpDurationMs</label><input id="unit-pump" type="number" min="0" /></div>
+        <div><label>batteryLevelPercent</label><input id="unit-battery-level" type="number" min="0" max="100" /></div>
+        <div>
+          <label>batteryVoltageMv（選填）</label>
+          <input id="unit-battery-voltage" type="number" min="0" />
+          <div class="cb"><input type="checkbox" id="unit-voltageOn" /> 帶入 batteryVoltageMv</div>
+        </div>
+      </div>
+      <p class="hint" style="margin:10px 0 0">
+        只有這幾個欄位屬於本裝置；其餘參數共用頁面的「共用設定」。
+        送出事件時 <code>clientId</code> 會自動等於本裝置的 deviceId（ingestion-api 要求兩者一致）。
+      </p>
+      <div class="actions">
+        <button class="danger" id="delete-device">刪除此裝置</button>
+      </div>
+    </div>
+  </section>
 </div>
 
 <script>
@@ -278,8 +391,11 @@ function resolveEventId(deviceId, bootId, sequence) {
 
 // 真實韌體只有一個裝置層級的 sequence 計數器，排尿與電量共用；每發布一筆遞增一次。
 // 若兩種事件重用同一個 sequence，組出的 eventId 會相同而互撞（兩者共用 events collection）。
-function shared() {
-  const deviceId = val('deviceId');
+//
+// deviceIdOverride 供裝置模擬器使用：該台裝置的 deviceId 取代共用設定，
+// clientId 也必須跟著改（ingestion-api 要求 clientId === deviceId），其餘欄位維持共用。
+function shared(deviceIdOverride) {
+  const deviceId = deviceIdOverride ?? val('deviceId');
   const bootId = val('bootId');
   const sequence = Number(val('seq'));
   return {
@@ -291,7 +407,7 @@ function shared() {
     deviceId,
     bootId,
     ownerUid: val('ownerUid'),
-    clientId: val('clientId') || deviceId,
+    clientId: deviceIdOverride ?? (val('clientId') || deviceId),
     username: val('username') || deviceId,
     qos: Number(val('qos')),
     sequence,
@@ -312,6 +428,42 @@ function advanceSequence() {
 function eventUrl(s) { return `${s.ingestionBase}/v1/emqx/events`; }
 function eventHeaders(s) { return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${s.secret}` }; }
 
+/** 事件 payload 的共同欄位；排尿與電量只差在各自的量測值。 */
+function eventPayload(s, eventType) {
+  return {
+    schemaVersion: 1, eventId: s.eventId, eventType, deviceId: s.deviceId, sequence: s.sequence,
+    recordedAtMs: s.recordedAtMs,
+    firmwareVersion: s.firmwareVersion,
+  };
+}
+
+function eventRequest(s, topic, payload) {
+  const envelope = {
+    topic,
+    clientId: s.clientId, username: s.username, qos: s.qos, retained: false,
+    brokerReceivedAtMs: s.brokerReceivedAtMs,
+    payload,
+  };
+  return { method: 'POST', url: eventUrl(s), headers: eventHeaders(s), body: JSON.stringify(envelope) };
+}
+
+/** @param {{ flushDurationMs: number, pumpDurationMs: number }} unit */
+function urinationRequest(s, unit) {
+  const payload = {
+    ...eventPayload(s, 'urination'),
+    flushDurationMs: unit.flushDurationMs,
+    pumpDurationMs: unit.pumpDurationMs,
+  };
+  return eventRequest(s, `products/${s.productModel}/devices/${s.deviceId}/events/urination`, payload);
+}
+
+/** @param {{ batteryLevelPercent: number, batteryVoltageMv: number, batteryVoltageEnabled: boolean }} unit */
+function batteryRequest(s, unit) {
+  const payload = { ...eventPayload(s, 'battery'), batteryLevelPercent: unit.batteryLevelPercent };
+  if (unit.batteryVoltageEnabled) payload.batteryVoltageMv = unit.batteryVoltageMv;
+  return eventRequest(s, `products/${s.productModel}/devices/${s.deviceId}/status/battery`, payload);
+}
+
 const builders = {
   health() {
     const s = shared();
@@ -331,38 +483,17 @@ const builders = {
     return { method: 'PATCH', url, headers: { Authorization: 'Bearer owner', 'Content-Type': 'application/json' }, body };
   },
   urination() {
-    const s = shared();
-    const payload = {
-      schemaVersion: 1, eventId: s.eventId, eventType: 'urination', deviceId: s.deviceId, sequence: s.sequence,
-      recordedAtMs: s.recordedAtMs,
-      firmwareVersion: s.firmwareVersion,
+    return urinationRequest(shared(), {
       flushDurationMs: Number(val('ur-flush')),
       pumpDurationMs: Number(val('ur-pump')),
-    };
-    const envelope = {
-      topic: `products/${s.productModel}/devices/${s.deviceId}/events/urination`,
-      clientId: s.clientId, username: s.username, qos: s.qos, retained: false,
-      brokerReceivedAtMs: s.brokerReceivedAtMs,
-      payload,
-    };
-    return { method: 'POST', url: eventUrl(s), headers: eventHeaders(s), body: JSON.stringify(envelope) };
+    });
   },
   battery() {
-    const s = shared();
-    const payload = {
-      schemaVersion: 1, eventId: s.eventId, eventType: 'battery', deviceId: s.deviceId, sequence: s.sequence,
-      recordedAtMs: s.recordedAtMs,
-      firmwareVersion: s.firmwareVersion,
+    return batteryRequest(shared(), {
       batteryLevelPercent: Number(val('bt-level')),
-    };
-    if ($('bt-voltageOn').checked) payload.batteryVoltageMv = Number(val('bt-voltage'));
-    const envelope = {
-      topic: `products/${s.productModel}/devices/${s.deviceId}/status/battery`,
-      clientId: s.clientId, username: s.username, qos: s.qos, retained: false,
-      brokerReceivedAtMs: s.brokerReceivedAtMs,
-      payload,
-    };
-    return { method: 'POST', url: eventUrl(s), headers: eventHeaders(s), body: JSON.stringify(envelope) };
+      batteryVoltageMv: Number(val('bt-voltage')),
+      batteryVoltageEnabled: $('bt-voltageOn').checked,
+    });
   },
 };
 
@@ -380,14 +511,23 @@ function toCurl(req) {
   return parts.join(' \\\n');
 }
 
-function preview(step) {
+function renderCurl(step) {
   $(`curl-${step}`).textContent = toCurl(builders[step]());
 }
 
-async function run(step) {
-  const req = builders[step]();
-  $(`curl-${step}`).textContent = toCurl(req);
-  const box = $(`res-${step}`);
+function preview(step) {
+  renderCurl(step);
+  $(`curlbox-${step}`).open = true;
+}
+
+// curl 區塊預設收合；展開的當下才依目前設定重新產生，避免顯示過期內容。
+for (const step of Object.keys(builders)) {
+  const box = $(`curlbox-${step}`);
+  box.addEventListener('toggle', () => { if (box.open) renderCurl(step); });
+}
+
+/** 透過本工具後端代送單一請求，並把結果渲染到指定的 .result 區塊。 */
+async function sendRequest(req, box) {
   box.className = 'result show pending';
   box.textContent = '送出中…';
   let data;
@@ -409,8 +549,16 @@ async function run(step) {
   let body = data.body;
   try { body = JSON.stringify(JSON.parse(data.body), null, 2); } catch {}
   box.textContent = `HTTP ${data.status} ${data.statusText} · ${data.elapsedMs}ms\n\n${body}`;
-  // 韌體在訊息送出後就推進計數器，與伺服器回應的狀態碼無關。
-  if (EVENT_STEPS.has(step)) advanceSequence();
+  return data;
+}
+
+async function run(step) {
+  const req = builders[step]();
+  $(`curl-${step}`).textContent = toCurl(req);
+  const data = await sendRequest(req, $(`res-${step}`));
+  // 韌體在訊息送出後就推進計數器，與伺服器回應的狀態碼（200 / 409）無關；
+  // 但代送本身失敗（訊息根本沒送出）時不推進。
+  if (data && EVENT_STEPS.has(step)) advanceSequence();
   return data;
 }
 
@@ -422,15 +570,21 @@ async function runAll() {
 }
 $('runAll').addEventListener('click', runAll);
 
-// 主測試流程與共用設定保留在同一份 DOM，只切換可見畫面，避免設定值被重建或遺失。
+// 主測試流程、共用設定與單一裝置設定保留在同一份 DOM，只切換可見畫面，避免設定值被重建或遺失。
 const mainView = $('main-view');
 const settingsView = $('settings-view');
+const deviceView = $('device-view');
 const openSettingsButton = $('open-settings');
 const closeSettingsButton = $('close-settings');
 
+function showView(name) {
+  mainView.hidden = name !== 'main';
+  settingsView.hidden = name !== 'settings';
+  deviceView.hidden = name !== 'device';
+}
+
 function showSettings(open) {
-  settingsView.hidden = !open;
-  mainView.hidden = open;
+  showView(open ? 'settings' : 'main');
   (open ? closeSettingsButton : openSettingsButton).focus();
 }
 
@@ -450,8 +604,199 @@ $('evt-auto').addEventListener('change', syncEventId);
 $('brokerAuto').addEventListener('change', (e) => { $('broker').disabled = e.target.checked; });
 $('bt-voltageOn').addEventListener('change', (e) => { $('bt-voltage').disabled = !e.target.checked; });
 
+// ── 裝置模擬器 ──────────────────────────────────────────────────────────────
+// 一個 deviceId 一台裝置：只保留該裝置專屬的欄位，其餘全部沿用共用設定。
+const DEVICE_STORAGE_KEY = 'peecare.test-tool.devices';
+const DEVICE_DEFAULTS = {
+  flushDurationMs: 3000,
+  pumpDurationMs: 5000,
+  batteryLevelPercent: 75,
+  batteryVoltageMv: 3975,
+  batteryVoltageEnabled: true,
+};
+
+const deviceList = $('device-list');
+const addDeviceButton = $('add-device');
+const deleteDeviceButton = $('delete-device');
+const closeDeviceButton = $('close-device');
+
+let uidSeed = 0;
+const nextUid = () => `unit-${Date.now().toString(36)}-${uidSeed++}`;
+
+function createDevice(deviceId) {
+  return { uid: nextUid(), deviceId, ...DEVICE_DEFAULTS };
+}
+
+/** 只信任已知欄位，其餘一律回退到預設值，避免舊版或手改過的 localStorage 內容炸掉 UI。 */
+function normalizeDevice(raw) {
+  const fallback = createDevice(val('deviceId'));
+  if (!raw || typeof raw !== 'object') return fallback;
+  const toNumber = (value, initial) => (Number.isFinite(Number(value)) ? Number(value) : initial);
+  return {
+    uid: typeof raw.uid === 'string' && raw.uid !== '' ? raw.uid : fallback.uid,
+    deviceId: typeof raw.deviceId === 'string' && raw.deviceId !== '' ? raw.deviceId : fallback.deviceId,
+    flushDurationMs: toNumber(raw.flushDurationMs, DEVICE_DEFAULTS.flushDurationMs),
+    pumpDurationMs: toNumber(raw.pumpDurationMs, DEVICE_DEFAULTS.pumpDurationMs),
+    batteryLevelPercent: toNumber(raw.batteryLevelPercent, DEVICE_DEFAULTS.batteryLevelPercent),
+    batteryVoltageMv: toNumber(raw.batteryVoltageMv, DEVICE_DEFAULTS.batteryVoltageMv),
+    batteryVoltageEnabled: raw.batteryVoltageEnabled !== false,
+  };
+}
+
+function loadDevices() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(DEVICE_STORAGE_KEY) ?? 'null');
+    if (Array.isArray(parsed) && parsed.length > 0) return parsed.map(normalizeDevice);
+  } catch {}
+  return [createDevice(val('deviceId'))];
+}
+
+function saveDevices() {
+  try { localStorage.setItem(DEVICE_STORAGE_KEY, JSON.stringify(devices)); } catch {}
+}
+
+/** PC-000001 → PC-000002：沿用結尾數字的位數，讓新增出來的裝置維持既有命名。 */
+function nextDeviceId(deviceId) {
+  const match = /^(.*?)(\d+)$/.exec(deviceId ?? '');
+  if (!match) return `${deviceId || 'PC'}-2`;
+  const [, prefix, digits] = match;
+  return prefix + String(Number(digits) + 1).padStart(digits.length, '0');
+}
+
+let devices = loadDevices();
+let editingUid = null;
+let deviceReturnFocus = null;
+
+const deviceOf = (uid) => devices.find((device) => device.uid === uid);
+const cardOf = (uid) => deviceList.querySelector(`.device-card[data-uid="${uid}"]`);
+
+const GEAR_SVG = $('open-settings').querySelector('svg').outerHTML;
+
+function applyDeviceLabels(card, unit) {
+  card.querySelector('.device-card-name').textContent = unit.deviceId;
+  card.querySelector('.device-settings').setAttribute('aria-label', `${unit.deviceId} 裝置設定`);
+  card.querySelector('[data-event="urination"]').setAttribute('aria-label', `${unit.deviceId} 送出排尿事件`);
+  card.querySelector('[data-event="battery"]').setAttribute('aria-label', `${unit.deviceId} 送出電量事件`);
+}
+
+function deviceCardElement(unit) {
+  const card = document.createElement('div');
+  card.className = 'device-card';
+  card.dataset.uid = unit.uid;
+  card.innerHTML = `
+    <div class="device-card-head">
+      <span class="device-card-name"></span>
+      <button type="button" class="icon-button" data-event="battery" title="送出電量事件">
+        <span class="glyph" aria-hidden="true">🔋</span>
+      </button>
+      <button type="button" class="icon-button device-settings" title="裝置設定">${GEAR_SVG}</button>
+    </div>
+    <div class="device-card-body">
+      <button type="button" class="sim-button" data-event="urination" title="送出排尿事件">
+        <img src="/machine.png" alt="" />
+      </button>
+      <div class="result"></div>
+    </div>`;
+  applyDeviceLabels(card, unit);
+
+  const gear = card.querySelector('.device-settings');
+  gear.addEventListener('click', () => openDeviceSettings(unit.uid, gear));
+  for (const button of card.querySelectorAll('button[data-event]')) {
+    button.addEventListener('click', () => runDeviceEvent(unit.uid, button.dataset.event));
+  }
+  return card;
+}
+
+function renderDevices() {
+  deviceList.replaceChildren(...devices.map(deviceCardElement));
+}
+
+/** 以不可變更新取代原地修改，並即時同步卡片標題與 localStorage。 */
+function updateEditingDevice(patch) {
+  if (editingUid === null) return;
+  devices = devices.map((device) => (device.uid === editingUid ? { ...device, ...patch } : device));
+  saveDevices();
+  const unit = deviceOf(editingUid);
+  const card = cardOf(editingUid);
+  if (card) applyDeviceLabels(card, unit);
+  $('device-view-title').textContent = `${unit.deviceId} 裝置設定`;
+}
+
+function openDeviceSettings(uid, opener) {
+  const unit = deviceOf(uid);
+  if (!unit) return;
+  editingUid = uid;
+  deviceReturnFocus = opener;
+  $('device-view-title').textContent = `${unit.deviceId} 裝置設定`;
+  $('unit-deviceId').value = unit.deviceId;
+  $('unit-flush').value = String(unit.flushDurationMs);
+  $('unit-pump').value = String(unit.pumpDurationMs);
+  $('unit-battery-level').value = String(unit.batteryLevelPercent);
+  $('unit-battery-voltage').value = String(unit.batteryVoltageMv);
+  $('unit-battery-voltage').disabled = !unit.batteryVoltageEnabled;
+  $('unit-voltageOn').checked = unit.batteryVoltageEnabled;
+  showView('device');
+  closeDeviceButton.focus();
+}
+
+function closeDeviceSettings() {
+  const opener = deviceReturnFocus;
+  editingUid = null;
+  deviceReturnFocus = null;
+  showView('main');
+  (opener?.isConnected ? opener : addDeviceButton).focus();
+}
+
+async function runDeviceEvent(uid, eventType) {
+  const unit = deviceOf(uid);
+  const card = cardOf(uid);
+  if (!unit || !card) return null;
+  const s = shared(unit.deviceId);
+  const req = eventType === 'urination' ? urinationRequest(s, unit) : batteryRequest(s, unit);
+  const buttons = [...card.querySelectorAll('button[data-event]')];
+  for (const button of buttons) button.disabled = true;
+  let data;
+  try {
+    data = await sendRequest(req, card.querySelector('.result'));
+  } finally {
+    for (const button of buttons) button.disabled = false;
+  }
+  // 與上方單筆測試相同：訊息送出後計數器就前進，代送失敗時不前進。
+  if (data) advanceSequence();
+  return data;
+}
+
+addDeviceButton.addEventListener('click', () => {
+  const last = devices[devices.length - 1];
+  devices = [...devices, createDevice(nextDeviceId(last ? last.deviceId : val('deviceId')))];
+  saveDevices();
+  renderDevices();
+});
+
+deleteDeviceButton.addEventListener('click', () => {
+  if (editingUid === null) return;
+  devices = devices.filter((device) => device.uid !== editingUid);
+  if (devices.length === 0) devices = [createDevice(val('deviceId'))];
+  saveDevices();
+  renderDevices();
+  closeDeviceSettings();
+});
+
+closeDeviceButton.addEventListener('click', closeDeviceSettings);
+
+$('unit-deviceId').addEventListener('input', (e) => updateEditingDevice({ deviceId: e.target.value.trim() }));
+$('unit-flush').addEventListener('input', (e) => updateEditingDevice({ flushDurationMs: Number(e.target.value) }));
+$('unit-pump').addEventListener('input', (e) => updateEditingDevice({ pumpDurationMs: Number(e.target.value) }));
+$('unit-battery-level').addEventListener('input', (e) => updateEditingDevice({ batteryLevelPercent: Number(e.target.value) }));
+$('unit-battery-voltage').addEventListener('input', (e) => updateEditingDevice({ batteryVoltageMv: Number(e.target.value) }));
+$('unit-voltageOn').addEventListener('change', (e) => {
+  $('unit-battery-voltage').disabled = !e.target.checked;
+  updateEditingDevice({ batteryVoltageEnabled: e.target.checked });
+});
+
 // 初始化
 syncEventId();
+renderDevices();
 </script>
 </body>
 </html>

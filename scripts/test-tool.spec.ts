@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { JSDOM } from 'jsdom'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const DEVICE_STORAGE_KEY = 'peecare.test-tool.devices'
 
 const html = readFileSync(resolve(process.cwd(), 'scripts/test-tool.html'), 'utf8')
 const openDocuments: JSDOM[] = []
@@ -21,9 +23,23 @@ function element<T extends HTMLElement>(document: Document, id: string) {
   return result as T
 }
 
+function deviceCards(document: Document) {
+  return [...document.querySelectorAll<HTMLElement>('#device-list .device-card')]
+}
+
+function storedDevices(document: Document) {
+  const raw = document.defaultView?.localStorage.getItem(DEVICE_STORAGE_KEY)
+  return raw === null || raw === undefined ? [] : JSON.parse(raw)
+}
+
 afterEach(() => {
   for (const dom of openDocuments.splice(0)) dom.window.close()
 })
+
+/** 讓頁面內尚未完成的送出流程跑完，避免 JSDOM 被關掉後才收到回應。 */
+function flushPending() {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
 
 describe('local test tool settings navigation', () => {
   it('opens on the main view with an accessible gear button', () => {
@@ -76,7 +92,7 @@ describe('local test tool settings navigation', () => {
     }
   })
 
-  it('preserves edited settings and uses them when previewing after a round trip', () => {
+  it('preserves edited settings and uses them when previewing after a round trip', async () => {
     const document = loadTool()
     const settingsButton = element<HTMLButtonElement>(document, 'open-settings')
     const backButton = element<HTMLButtonElement>(document, 'close-settings')
@@ -95,9 +111,143 @@ describe('local test tool settings navigation', () => {
     backButton.click()
     const healthPreview = document.querySelector<HTMLButtonElement>('#main-view .card button.ghost')
     healthPreview?.click()
+    // curl 區塊展開會非同步觸發 toggle，等它跑完再結束，才不會在 DOM 關閉後才重繪。
+    await flushPending()
 
     expect(element<HTMLElement>(document, 'curl-health').textContent).toContain(
       "http://127.0.0.1:9090/healthz",
     )
+  })
+})
+
+describe('local test tool device simulator', () => {
+  it('seeds one device unit with a full-width machine button and a battery icon beside the gear', () => {
+    const document = loadTool()
+    const cards = deviceCards(document)
+
+    expect(cards).toHaveLength(1)
+    expect(cards[0].querySelector('.device-card-name')?.textContent).toBe('PC-000001')
+
+    const urination = cards[0].querySelector<HTMLButtonElement>('.device-card-body button[data-event="urination"]')
+    const battery = cards[0].querySelector<HTMLButtonElement>('.device-card-head button[data-event="battery"]')
+
+    expect(urination?.querySelector('img')?.getAttribute('src')).toBe('/machine.png')
+    expect(urination?.getAttribute('aria-label')).toContain('排尿事件')
+    expect(battery?.getAttribute('aria-label')).toContain('電量事件')
+    // 兩顆按鈕都不再帶文字標籤，電池與齒輪同為 icon-button
+    expect(urination?.textContent?.trim()).toBe('')
+    expect(battery?.textContent?.trim()).toBe('🔋')
+    expect(battery?.className).toBe('icon-button')
+    expect(battery?.nextElementSibling?.className).toContain('device-settings')
+    // 回應區塊緊接在排尿按鈕右邊
+    expect(urination?.nextElementSibling?.className).toContain('result')
+  })
+
+  it('adds a unit and stores every unit in localStorage', () => {
+    const document = loadTool()
+
+    element<HTMLButtonElement>(document, 'add-device').click()
+
+    expect(deviceCards(document)).toHaveLength(2)
+    expect(storedDevices(document)).toHaveLength(2)
+  })
+
+  it('edits a unit in its own settings view and returns focus to the opening control', () => {
+    const document = loadTool()
+    const mainView = element<HTMLElement>(document, 'main-view')
+    const deviceView = element<HTMLElement>(document, 'device-view')
+    const gear = deviceCards(document)[0].querySelector<HTMLButtonElement>('button.device-settings')
+
+    gear?.focus()
+    gear?.click()
+
+    expect(mainView.hidden).toBe(true)
+    expect(deviceView.hidden).toBe(false)
+    expect(element<HTMLInputElement>(document, 'unit-deviceId').value).toBe('PC-000001')
+    expect(element<HTMLInputElement>(document, 'unit-flush').value).toBe('3000')
+    expect(element<HTMLInputElement>(document, 'unit-pump').value).toBe('5000')
+    expect(element<HTMLInputElement>(document, 'unit-battery-level').value).toBe('75')
+    expect(element<HTMLInputElement>(document, 'unit-battery-voltage').value).toBe('3975')
+
+    const deviceId = element<HTMLInputElement>(document, 'unit-deviceId')
+    deviceId.value = 'PC-000009'
+    deviceId.dispatchEvent(new (document.defaultView as Window & typeof globalThis).Event('input'))
+
+    expect(deviceCards(document)[0].querySelector('.device-card-name')?.textContent).toBe('PC-000009')
+    expect(storedDevices(document)[0].deviceId).toBe('PC-000009')
+
+    element<HTMLButtonElement>(document, 'close-device').click()
+
+    expect(mainView.hidden).toBe(false)
+    expect(deviceView.hidden).toBe(true)
+    expect(document.activeElement?.getAttribute('aria-label')).toContain('PC-000009')
+  })
+
+  it('deletes a unit from its settings view', () => {
+    const document = loadTool()
+
+    element<HTMLButtonElement>(document, 'add-device').click()
+    deviceCards(document)[1].querySelector<HTMLButtonElement>('button.device-settings')?.click()
+    element<HTMLButtonElement>(document, 'delete-device').click()
+
+    expect(element<HTMLElement>(document, 'main-view').hidden).toBe(false)
+    expect(deviceCards(document)).toHaveLength(1)
+    expect(storedDevices(document)).toHaveLength(1)
+  })
+
+  it('sends a urination event built from the unit fields and the shared settings', async () => {
+    const document = loadTool()
+    const view = document.defaultView as Window & typeof globalThis
+    const sendRequest = vi.fn(async () => ({
+      json: async () => ({ ok: true, status: 200, statusText: 'OK', elapsedMs: 1, body: '{}' }),
+    }))
+    view.fetch = sendRequest as unknown as typeof fetch
+
+    element<HTMLInputElement>(document, 'seq').value = '7'
+    deviceCards(document)[0].querySelector<HTMLButtonElement>('button[data-event="urination"]')?.click()
+    await flushPending()
+
+    expect(sendRequest).toHaveBeenCalledTimes(1)
+    const [url, init] = sendRequest.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('/api/send')
+
+    const proxied = JSON.parse(String(init.body))
+    expect(proxied.url).toBe('http://127.0.0.1:8086/v1/emqx/events')
+    const envelope = JSON.parse(proxied.body)
+    expect(envelope.topic).toBe('products/pc-mini/devices/PC-000001/events/urination')
+    expect(envelope.clientId).toBe('PC-000001')
+    expect(envelope.payload).toMatchObject({
+      eventType: 'urination',
+      deviceId: 'PC-000001',
+      eventId: 'PC-000001:1:7',
+      sequence: 7,
+      flushDurationMs: 3000,
+      pumpDurationMs: 5000,
+    })
+  })
+
+  it('sends a battery event and honours the optional voltage toggle', async () => {
+    const document = loadTool()
+    const view = document.defaultView as Window & typeof globalThis
+    const sendRequest = vi.fn(async () => ({
+      json: async () => ({ ok: true, status: 200, statusText: 'OK', elapsedMs: 1, body: '{}' }),
+    }))
+    view.fetch = sendRequest as unknown as typeof fetch
+
+    deviceCards(document)[0].querySelector<HTMLButtonElement>('button.device-settings')?.click()
+    const voltageToggle = element<HTMLInputElement>(document, 'unit-voltageOn')
+    voltageToggle.checked = false
+    voltageToggle.dispatchEvent(new view.Event('change'))
+    element<HTMLButtonElement>(document, 'close-device').click()
+
+    deviceCards(document)[0].querySelector<HTMLButtonElement>('button[data-event="battery"]')?.click()
+    await flushPending()
+
+    const [, init] = sendRequest.mock.calls[0] as unknown as [string, RequestInit]
+    const envelope = JSON.parse(JSON.parse(String(init.body)).body)
+
+    expect(envelope.topic).toBe('products/pc-mini/devices/PC-000001/status/battery')
+    expect(envelope.payload).toMatchObject({ eventType: 'battery', batteryLevelPercent: 75 })
+    expect(envelope.payload.batteryVoltageMv).toBeUndefined()
   })
 })
