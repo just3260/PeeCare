@@ -7,6 +7,7 @@
 <style>
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body {
     font-family: -apple-system, "Noto Sans TC", "PingFang TC", system-ui, sans-serif;
     margin: 0; padding: 24px; line-height: 1.5;
@@ -18,11 +19,16 @@
     input, select { background: #14161a !important; color: #e6e8eb !important; border-color: #3a3f48 !important; }
     pre.curl { background: #0e1013 !important; color: #cbd2da !important; }
   }
-  h1 { font-size: 20px; margin: 0 0 4px; }
+  h1 { font-size: 20px; margin: 0; }
   h2 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
   h2 .ep { font-size: 12px; font-weight: 500; color: #8a9099; font-family: ui-monospace, monospace; }
   .hint { color: #8a9099; font-size: 13px; margin: 0 0 20px; }
   .wrap { max-width: 920px; margin: 0 auto; }
+  .page-header {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px; margin-bottom: 4px;
+  }
+  .settings-header { justify-content: flex-start; margin-bottom: 16px; }
   .card, .shared {
     background: #fff; border: 1px solid #e3e5e8; border-radius: 12px;
     padding: 18px; margin-bottom: 16px;
@@ -45,7 +51,18 @@
   }
   button.ghost { background: transparent; color: #2f6fed; border: 1px solid #2f6fed; }
   button.big { background: #12a150; }
+  button.icon-button {
+    display: inline-grid; place-items: center; flex: 0 0 auto;
+    width: 40px; height: 40px; padding: 0;
+    color: #4f5661; background: transparent; border: 1px solid #d3d6da;
+  }
+  button.icon-button svg { width: 21px; height: 21px; }
+  button.back-button {
+    display: inline-flex; align-items: center; gap: 6px; padding: 7px 11px;
+    color: #2f6fed; background: transparent; border: 1px solid #2f6fed;
+  }
   button:hover { filter: brightness(1.05); }
+  button:focus-visible { outline: 3px solid #7aa7ff; outline-offset: 2px; }
   pre.curl {
     background: #0e1013; color: #cbd2da; padding: 12px; border-radius: 8px;
     font-size: 12px; font-family: ui-monospace, "SF Mono", monospace;
@@ -64,12 +81,31 @@
   @media (prefers-color-scheme: dark) {
     .result.ok{background:#12331f;color:#7ee2a3}.result.warn{background:#3a2c10;color:#f1c27a}
     .result.err{background:#3a1616;color:#f19a9a}.result.pending{background:#22262d;color:#9aa1ab}
+    button.icon-button { color: #d5dae1; border-color: #4b515c; }
+  }
+  @media (max-width: 600px) {
+    body { padding: 16px; }
   }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>PeeCare 本地測試工具</h1>
+  <section id="main-view">
+  <header class="page-header">
+    <h1>PeeCare 本地測試工具</h1>
+    <button
+      type="button"
+      class="icon-button"
+      id="open-settings"
+      aria-label="開啟共用設定"
+      title="共用設定"
+    >
+      <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+        <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4v-.08A1.7 1.7 0 0 0 8.94 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.53-1H3v-4h.08A1.7 1.7 0 0 0 4.6 8.94a1.7 1.7 0 0 0-.34-1.88L4.2 7l2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3.08V3h4v.08A1.7 1.7 0 0 0 15.06 4.6a1.7 1.7 0 0 0 1.88-.34L17 4.2 19.83 7l-.06.06a1.7 1.7 0 0 0-.34 1.88A1.7 1.7 0 0 0 20.92 10H21v4h-.08A1.7 1.7 0 0 0 19.4 15Z" />
+      </svg>
+    </button>
+  </header>
   <p class="hint">
     透過本工具的後端代送請求（避開 CORS）。使用前請先啟動 Firebase Emulator 與 ingestion-api。
     時間欄位可選「現在」自動帶入當下毫秒。
@@ -80,62 +116,6 @@
     若把 bootId 保持不變而重用舊 sequence，則會撞到既有文件並得到
     <code>409 event_id_conflict</code>（payload 完全相同時為 <code>200 duplicate</code>），兩者皆零寫入。
   </p>
-
-  <!-- 共用設定 -->
-  <div class="shared">
-    <h2>共用設定</h2>
-    <div class="grid">
-      <div><label>ingestion-api Base URL</label><input id="ingestionBase" value="http://127.0.0.1:8086" /></div>
-      <div><label>Firestore Emulator Base URL</label><input id="firestoreBase" value="http://127.0.0.1:8085" /></div>
-      <div><label>Firebase Project ID</label><input id="projectId" value="demo-peecare" /></div>
-      <div><label>Webhook Secret（EMQX_WEBHOOK_SECRET_CURRENT）</label><input id="secret" value="local-dev-secret" /></div>
-      <div><label>productModel</label><input id="productModel" value="pc-mini" /></div>
-      <div><label>deviceId</label><input id="deviceId" value="PC-000001" /></div>
-      <div>
-        <label>bootId（開機計數器）</label>
-        <input id="bootId" type="number" min="0" value="1" />
-      </div>
-      <div><label>ownerUid（Web 端讀取用）</label><input id="ownerUid" value="test-user-uid" /></div>
-      <div><label>clientId（須等於 deviceId）</label><input id="clientId" value="PC-000001" /></div>
-      <div><label>username</label><input id="username" value="Andrew" /></div>
-      <div><label>qos</label>
-        <select id="qos"><option>0</option><option selected>1</option><option>2</option></select>
-      </div>
-      <div>
-        <label>sequence</label>
-        <input id="seq" type="number" min="0" value="1" />
-        <div class="cb"><input type="checkbox" id="seqAuto" checked /> 送出後自動 +1</div>
-      </div>
-      <div>
-        <label>eventId</label>
-        <input id="eventId" value="PC-000001:1:1" />
-        <div class="cb"><input type="checkbox" id="evt-auto" checked /> 自動用 deviceId:bootId:sequence</div>
-      </div>
-      <div><label>firmwareVersion</label><input id="fw" value="1.0.0" /></div>
-      <div>
-        <label>recordedAtMs</label>
-        <select id="timeMode">
-          <option value="now" selected>現在（自動帶入）</option>
-          <option value="null">null（無可信時間）</option>
-          <option value="custom">自訂</option>
-        </select>
-        <input id="recorded" type="number" placeholder="自訂毫秒" style="margin-top:6px" />
-      </div>
-      <div>
-        <label>brokerReceivedAtMs</label>
-        <input id="broker" type="number" placeholder="現在" disabled />
-        <div class="cb"><input type="checkbox" id="brokerAuto" checked /> 現在（自動帶入）</div>
-      </div>
-    </div>
-    <p class="hint" style="margin:10px 0 0">
-      <code>sequence</code> 是裝置層級的單一計數器，排尿與電量共用；每送出一筆就遞增，
-      兩種事件因此不會產生相同的 eventId。要測重送冪等（<code>200 duplicate</code>）或
-      撞號（<code>409 event_id_conflict</code>）時，取消「送出後自動 +1」再送第二次即可。
-    </p>
-    <div class="actions">
-      <button class="big" id="runAll">依序執行：建立裝置 → 排尿 → 電量</button>
-    </div>
-  </div>
 
   <!-- ① 健康檢查 -->
   <div class="card">
@@ -202,6 +182,71 @@
     <pre class="curl" id="curl-battery"></pre>
     <div class="result" id="res-battery"></div>
   </div>
+  </section>
+
+  <section id="settings-view" hidden>
+    <header class="page-header settings-header">
+      <button type="button" class="back-button" id="close-settings" aria-label="返回測試工具">
+        <span aria-hidden="true">←</span>
+        返回
+      </button>
+      <h1>共用設定</h1>
+    </header>
+
+    <div class="shared">
+      <div class="grid">
+        <div><label>ingestion-api Base URL</label><input id="ingestionBase" value="http://127.0.0.1:8086" /></div>
+        <div><label>Firestore Emulator Base URL</label><input id="firestoreBase" value="http://127.0.0.1:8085" /></div>
+        <div><label>Firebase Project ID</label><input id="projectId" value="demo-peecare" /></div>
+        <div><label>Webhook Secret（EMQX_WEBHOOK_SECRET_CURRENT）</label><input id="secret" value="local-dev-secret" /></div>
+        <div><label>productModel</label><input id="productModel" value="pc-mini" /></div>
+        <div><label>deviceId</label><input id="deviceId" value="PC-000001" /></div>
+        <div>
+          <label>bootId（開機計數器）</label>
+          <input id="bootId" type="number" min="0" value="1" />
+        </div>
+        <div><label>ownerUid（Web 端讀取用）</label><input id="ownerUid" value="test-user-uid" /></div>
+        <div><label>clientId（須等於 deviceId）</label><input id="clientId" value="PC-000001" /></div>
+        <div><label>username</label><input id="username" value="Andrew" /></div>
+        <div><label>qos</label>
+          <select id="qos"><option>0</option><option selected>1</option><option>2</option></select>
+        </div>
+        <div>
+          <label>sequence</label>
+          <input id="seq" type="number" min="0" value="1" />
+          <div class="cb"><input type="checkbox" id="seqAuto" checked /> 送出後自動 +1</div>
+        </div>
+        <div>
+          <label>eventId</label>
+          <input id="eventId" value="PC-000001:1:1" />
+          <div class="cb"><input type="checkbox" id="evt-auto" checked /> 自動用 deviceId:bootId:sequence</div>
+        </div>
+        <div><label>firmwareVersion</label><input id="fw" value="1.0.0" /></div>
+        <div>
+          <label>recordedAtMs</label>
+          <select id="timeMode">
+            <option value="now" selected>現在（自動帶入）</option>
+            <option value="null">null（無可信時間）</option>
+            <option value="custom">自訂</option>
+          </select>
+          <input id="recorded" type="number" placeholder="自訂毫秒" style="margin-top:6px" />
+        </div>
+        <div>
+          <label>brokerReceivedAtMs</label>
+          <input id="broker" type="number" placeholder="現在" disabled />
+          <div class="cb"><input type="checkbox" id="brokerAuto" checked /> 現在（自動帶入）</div>
+        </div>
+      </div>
+      <p class="hint" style="margin:10px 0 0">
+        <code>sequence</code> 是裝置層級的單一計數器，排尿與電量共用；每送出一筆就遞增，
+        兩種事件因此不會產生相同的 eventId。要測重送冪等（<code>200 duplicate</code>）或
+        撞號（<code>409 event_id_conflict</code>）時，取消「送出後自動 +1」再送第二次即可。
+      </p>
+      <div class="actions">
+        <button class="big" id="runAll">依序執行：建立裝置 → 排尿 → 電量</button>
+      </div>
+    </div>
+  </section>
 </div>
 
 <script>
@@ -376,6 +421,21 @@ async function runAll() {
   }
 }
 $('runAll').addEventListener('click', runAll);
+
+// 主測試流程與共用設定保留在同一份 DOM，只切換可見畫面，避免設定值被重建或遺失。
+const mainView = $('main-view');
+const settingsView = $('settings-view');
+const openSettingsButton = $('open-settings');
+const closeSettingsButton = $('close-settings');
+
+function showSettings(open) {
+  settingsView.hidden = !open;
+  mainView.hidden = open;
+  (open ? closeSettingsButton : openSettingsButton).focus();
+}
+
+openSettingsButton.addEventListener('click', () => showSettings(true));
+closeSettingsButton.addEventListener('click', () => showSettings(false));
 
 // eventId 欄位在「自動」開啟時鎖定，並隨 deviceId / bootId / sequence 即時更新
 function syncEventId() {
