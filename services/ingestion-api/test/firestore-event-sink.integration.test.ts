@@ -316,6 +316,50 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Firestore event sink', ()
     expect((await dailyDoc(firestore, '2026-07-28').get()).data()).toEqual(corrupt);
   }, 20_000);
 
+  it('mirrors the daily aggregate onto the device today projection', async () => {
+    await firestore.doc('devices/PC-000001').set(enabled);
+    const sink = new FirestoreEventSink(firestore);
+    await sink.accept({ ...makeEvent({ eventId: 'evt-000001' }), effectiveAtMs: JUL28_START, receivedAtMs: JUL28_START }, { requestId: 'one' });
+    await sink.accept({ ...makeEvent({ eventId: 'evt-000002' }), effectiveAtMs: JUL28_LATER, receivedAtMs: JUL28_LATER }, { requestId: 'two' });
+    const daily = (await dailyDoc(firestore, '2026-07-28').get()).data() ?? {};
+    expect((await firestore.doc('devices/PC-000001').get()).data()).toMatchObject({
+      todayDate: daily.date, todayUrinationCount: daily.urinationCount, todayEstimatedUrineTotalMl: daily.estimatedUrineTotalMl,
+    });
+    expect((await firestore.doc('devices/PC-000001').get()).data()).toMatchObject({
+      todayDate: '2026-07-28', todayUrinationCount: 2, todayEstimatedUrineTotalMl: 400,
+    });
+  }, 20_000);
+
+  it('never writes the today projection for a battery event', async () => {
+    await firestore.doc('devices/PC-000001').set(enabled);
+    const sink = new FirestoreEventSink(firestore);
+    await sink.accept({ ...makeBatteryEvent(), effectiveAtMs: JUL28_START, receivedAtMs: JUL28_START }, { requestId: 'battery' });
+    const device = (await firestore.doc('devices/PC-000001').get()).data() ?? {};
+    expect(device).not.toHaveProperty('todayDate');
+    expect(device).not.toHaveProperty('todayUrinationCount');
+    expect(device).not.toHaveProperty('todayEstimatedUrineTotalMl');
+  }, 20_000);
+
+  it('leaves the today projection unchanged for a duplicate delivery', async () => {
+    await firestore.doc('devices/PC-000001').set(enabled);
+    const sink = new FirestoreEventSink(firestore);
+    await sink.accept({ ...makeEvent(), effectiveAtMs: JUL28_START, receivedAtMs: JUL28_START }, { requestId: 'first' });
+    const original = (await firestore.doc('devices/PC-000001').get()).data();
+    expect(await sink.accept({ ...makeEvent(), effectiveAtMs: JUL28_START, receivedAtMs: JUL28_START }, { requestId: 'dup' })).toBe('duplicate');
+    expect((await firestore.doc('devices/PC-000001').get()).data()).toEqual(original);
+  }, 20_000);
+
+  it('keeps the today projection on its later day when a late event lands on an earlier day', async () => {
+    await firestore.doc('devices/PC-000001').set(enabled);
+    const sink = new FirestoreEventSink(firestore);
+    await sink.accept({ ...makeEvent({ eventId: 'evt-000001' }), effectiveAtMs: JUL28_LATER, receivedAtMs: JUL28_LATER }, { requestId: 'today' });
+    await sink.accept({ ...makeEvent({ eventId: 'evt-000002' }), effectiveAtMs: LATE_EFFECTIVE, receivedAtMs: LATE_RECEIVED }, { requestId: 'late' });
+    expect((await dailyDoc(firestore, '2026-07-27').get()).get('urinationCount')).toBe(1);
+    expect((await firestore.doc('devices/PC-000001').get()).data()).toMatchObject({
+      todayDate: '2026-07-28', todayUrinationCount: 1, todayEstimatedUrineTotalMl: 200,
+    });
+  }, 20_000);
+
   it('attributes a late cross-midnight event to its effective day and advances only updatedAtMs', async () => {
     await firestore.doc('devices/PC-000001').set(enabled);
     const sink = new FirestoreEventSink(firestore);

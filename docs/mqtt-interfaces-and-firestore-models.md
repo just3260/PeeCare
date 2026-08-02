@@ -204,8 +204,19 @@ ingestion 讀取校驗欄位（`ownerUid`、`ingestionStatus`、`productModel`�
 | `latestBatteryReceivedAtMs` | 最新電量 `receivedAtMs` |
 | `latestBatteryFirmwareVersion` | 最新電量韌體版本 |
 | `latestBatteryVoltageMv` | 最新電壓；缺值時以 `FieldValue.delete()` 移除 |
+| `todayDate` | 今日投影所屬日期，字串 `yyyy-MM-dd`（Asia/Taipei） |
+| `todayUrinationCount` | 該日排尿次數，取自同一 transaction 的每日文件 |
+| `todayEstimatedUrineTotalMl` | 該日累加尿量（mL），取自同一 transaction 的每日文件 |
 
 最新性以三元組 `[effectiveAtMs, receivedAtMs, eventId]` 字典序比較，避免亂序處理將 metadata 倒退。
+
+**今日投影**（`aggregation/today-urination-projection.ts`）
+
+`todayDate`、`todayUrinationCount`、`todayEstimatedUrineTotalMl` 三個欄位構成一組必須完整的 tuple，**僅排尿事件**寫入，且一律取自同一 transaction 剛算出的每日文件，不獨立累加，因此不會與 `dailyStats` 漂移。電量事件不寫這三個欄位；`duplicate`、`unknown_device`、`device_disabled`、`product_model_mismatch` 這些零寫入結果也不改動投影。
+
+遲到事件不得讓投影倒退：只有當事件的 `dayKey` 不早於現有 `todayDate`（或現有 `todayDate` 不存在）時才覆寫三個欄位；`dayKey` 較早的事件只遞增該日的 `dailyStats`，投影原封不動。`yyyy-MM-dd` 固定寬度且為 Latin 數字，字典序即時間序。
+
+跨日過期由讀取端判定：投影本身不會在午夜自動歸零（沒有事件時 ingestion 不會被喚醒），讀取端以當下的 Asia/Taipei 日期比對 `todayDate`，不相等時解讀為今日 0 次 0 mL。
 
 ### 2.2 `devices/{deviceId}/events/{eventId}` — 事件明細
 
@@ -266,19 +277,17 @@ ingestion 讀取校驗欄位（`ownerUid`、`ingestionStatus`、`productModel`�
 | `date` | 字串 `dayKey`（Asia/Taipei 當地日期） |
 | `timeZone` | `'Asia/Taipei'` |
 | `urinationCount` | 整數，首筆為 `1`，之後 +1（溢位丟 `AggregationIntegrityError`） |
-| `volumeStatus` | `'pending_calibration'` |
-| `estimatedUrineTotalMl` | `null` |
-| `estimatedUrineAverageMl` | `null` |
-| `estimatedUrineMinMl` | `null` |
-| `estimatedUrineMaxMl` | `null` |
+| `estimatedUrineTotalMl` | 非負有限數，該日每筆事件校正尿量的加總（mL） |
 | `lastEventAtMs` | `max(現值, effectiveAtMs)` |
 | `updatedAtMs` | `max(現值, receivedAtMs)` |
+
+舊 shape（`volumeStatus: 'pending_calibration'` 加上四個恆為 `null` 的 `estimatedUrine*Ml`）的每日文件在現行契約下會被 `assertValidDailyDocument` 判定為 `aggregation_integrity_error`，該日後續事件一律寫不進去，前端統計頁也會拒絕解析。**不提供回填**：開發環境的處置是清除 `dailyStats` 子集合（`npm run emulators:reset`）後由新事件重建；正式環境尚未部署過帶資料的版本，沒有回填對象。
 
 ---
 
 ## 三、備註
 
-- 所有尿量欄位（event 的 `estimatedUrineMl`、daily 的四個 `estimatedUrine*Ml`）目前固定為 `null` 並標記 `pending_calibration`，因為校正公式尚未實作——刻意讓讀取端能區分「尚未校正」與「數值為 0」。
+- 事件層級的 `estimatedUrineMl` / `estimationStatus` 兩列（§2.2）仍描述 `pending_calibration` 舊行為，與現行實作不符，屬於獨立待修的文件債。每日彙總與裝置投影的尿量欄位以本文件 §2.1、§2.3 的敘述為準。
 - 事件寫入、裝置投影更新、每日彙總遞增皆在**同一個 Firestore transaction** 中完成，確保去重與計數一致性。
 
 ## 四、對應原始碼
@@ -295,4 +304,5 @@ ingestion 讀取校驗欄位（`ownerUid`、`ingestionStatus`、`productModel`�
 | 排尿事件 record | `services/ingestion-api/src/persistence/urination-event-record.ts` |
 | 電量事件 record | `services/ingestion-api/src/persistence/battery-event-record.ts` |
 | 每日彙總 record | `services/ingestion-api/src/aggregation/daily-urination-record.ts` |
+| 今日投影規則 | `services/ingestion-api/src/aggregation/today-urination-projection.ts` |
 | Security Rules | `firestore.rules` |

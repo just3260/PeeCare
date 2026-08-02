@@ -4,6 +4,7 @@ import {
   DeviceOverviewIntegrityError,
   formatTaipeiTimestamp,
   parseDeviceOverview,
+  resolveTodayTotals,
 } from './device-overview-model'
 
 // A complete, valid latest projection as ingestion leaves it: both tuples plus
@@ -24,6 +25,9 @@ const completeProjection = {
   latestBatteryReceivedAtMs: 1_700_000_000_300,
   latestBatteryVoltageMv: 3840,
   lastReportedAtMs: 1_700_000_000_400,
+  todayDate: '2026-07-28',
+  todayUrinationCount: 3,
+  todayEstimatedUrineTotalMl: 550,
 }
 
 describe('parseDeviceOverview', () => {
@@ -44,6 +48,11 @@ describe('parseDeviceOverview', () => {
         atMs: 1_700_000_000_200,
         receivedAtMs: 1_700_000_000_300,
         voltageMv: 3840,
+      },
+      today: {
+        date: '2026-07-28',
+        urinationCount: 3,
+        estimatedUrineTotalMl: 550,
       },
       lastReportedAtMs: 1_700_000_000_400,
     })
@@ -69,7 +78,55 @@ describe('parseDeviceOverview', () => {
       },
     })
 
-    expect(overview).toEqual({ urination: null, battery: null, lastReportedAtMs: null })
+    expect(overview).toEqual({ urination: null, battery: null, today: null, lastReportedAtMs: null })
+  })
+
+  // Spec example: a device carrying none of the three today fields has simply
+  // never stored a urination event — missing data, never a zero.
+  it('treats an absent today tuple as missing data', () => {
+    const { todayDate: _d, todayUrinationCount: _c, todayEstimatedUrineTotalMl: _t, ...noToday } =
+      completeProjection
+
+    const overview = parseDeviceOverview({ deviceId: 'PC-000001', data: noToday })
+
+    expect(overview.today).toBeNull()
+  })
+
+  // Spec example: a count without its owning date and total is a partial tuple.
+  it('rejects a partial today tuple (count without date or total)', () => {
+    const partial = {
+      deviceId: 'PC-000001',
+      ownerUid: 'member-001',
+      productModel: 'pc-mini',
+      ingestionStatus: 'enabled',
+      todayUrinationCount: 3,
+    }
+
+    try {
+      parseDeviceOverview({ deviceId: 'PC-000001', data: partial })
+      expect.unreachable('expected a data-integrity error')
+    } catch (error) {
+      expect(error).toBeInstanceOf(DeviceOverviewIntegrityError)
+      expect((error as DeviceOverviewIntegrityError).code).toBe('partial_today_tuple')
+    }
+  })
+
+  it.each([
+    ['missing today total', { ...completeProjection, todayEstimatedUrineTotalMl: undefined }, 'partial_today_tuple'],
+    ['negative today count', { ...completeProjection, todayUrinationCount: -1 }, 'invalid_today_totals'],
+    ['fractional today count', { ...completeProjection, todayUrinationCount: 2.5 }, 'invalid_today_totals'],
+    ['non-numeric today total', { ...completeProjection, todayEstimatedUrineTotalMl: '550' }, 'invalid_today_totals'],
+    ['negative today total', { ...completeProjection, todayEstimatedUrineTotalMl: -5 }, 'invalid_today_totals'],
+    ['unpadded today date', { ...completeProjection, todayDate: '2026-7-28' }, 'invalid_today_totals'],
+  ])('raises a typed integrity error for %s', (_label, data, expectedCode) => {
+    try {
+      parseDeviceOverview({ deviceId: 'PC-000001', data })
+      expect.unreachable('expected a data-integrity error')
+    } catch (error) {
+      expect(error).toBeInstanceOf(DeviceOverviewIntegrityError)
+      expect((error as DeviceOverviewIntegrityError).code).toBe(expectedCode)
+      expect((error as DeviceOverviewIntegrityError).deviceId).toBe('PC-000001')
+    }
   })
 
   it('accepts an optional battery tuple with no voltage', () => {
@@ -132,6 +189,37 @@ describe('parseDeviceOverview', () => {
       expect((error as DeviceOverviewIntegrityError).code).toBe(expectedCode)
       expect((error as DeviceOverviewIntegrityError).deviceId).toBe('PC-000001')
     }
+  })
+})
+
+// Staleness is decided by the reader, because ingestion is never woken up by the
+// absence of events and therefore cannot zero a projection at midnight itself.
+describe('resolveTodayTotals', () => {
+  const projection = { date: '2026-07-28', urinationCount: 3, estimatedUrineTotalMl: 550 }
+
+  // Spec example: 2026-07-28T15:59:59.999Z is still 2026-07-28 in Asia/Taipei.
+  it('uses the projected totals while the instant is on the projected day', () => {
+    const totals = resolveTodayTotals(projection, Date.parse('2026-07-28T15:59:59.999Z'))
+
+    expect(totals).toEqual({ urinationCount: 3, estimatedUrineTotalMl: 550 })
+  })
+
+  // Spec example: 2026-07-28T16:00:00.000Z has already rolled over to 2026-07-29
+  // in Asia/Taipei, so the projection describes yesterday.
+  it('reads a projection left on an earlier day as zero for today', () => {
+    const totals = resolveTodayTotals(projection, Date.parse('2026-07-28T16:00:00.000Z'))
+
+    expect(totals).toEqual({ urinationCount: 0, estimatedUrineTotalMl: 0 })
+  })
+
+  it('keeps a missing tuple unknown instead of reporting zero', () => {
+    expect(resolveTodayTotals(null, Date.parse('2026-07-28T16:00:00.000Z'))).toBeNull()
+  })
+
+  it('uses the projected totals from the first instant of the projected Taipei day', () => {
+    const totals = resolveTodayTotals(projection, Date.parse('2026-07-27T16:00:00.000Z'))
+
+    expect(totals).toEqual({ urinationCount: 3, estimatedUrineTotalMl: 550 })
   })
 })
 

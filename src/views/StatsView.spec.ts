@@ -85,7 +85,9 @@ describe('StatsView', () => {
     expect(render({ status: 'error' }).find('[data-test="stats-error"]').exists()).toBe(true)
   })
 
-  it('renders an accessible count chart and a semantic table from exactly the same series', () => {
+  // The chart keeps the conventional left-to-right time axis; the table lists the
+  // same days newest first, because a reader scanning a list wants today on top.
+  it('renders the chart oldest-first and the table newest-first from the same series', () => {
     const wrapper = mount(StatsView, { props: { series } })
 
     const chartPoints = wrapper.findAll('[data-test="daily-count-chart"] [data-test="daily-count-bar"]')
@@ -102,10 +104,17 @@ describe('StatsView', () => {
       { date: '2026-07-17', count: '2' },
     ])
     expect(tableRows).toEqual([
-      { date: '2026-07-15', count: '1 次' },
-      { date: '2026-07-16', count: '0 次' },
       { date: '2026-07-17', count: '2 次' },
+      { date: '2026-07-16', count: '0 次' },
+      { date: '2026-07-15', count: '1 次' },
     ])
+  })
+
+  it('does not mutate the series it was given when reversing the table', () => {
+    const source: DailyCountPoint[] = [...series]
+    mount(StatsView, { props: { series: source } })
+
+    expect(source.map((point) => point.date)).toEqual(['2026-07-15', '2026-07-16', '2026-07-17'])
   })
 
   it('uses a semantic table with date and count headers', () => {

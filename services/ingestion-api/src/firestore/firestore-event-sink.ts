@@ -11,6 +11,7 @@ import {
   buildInitialDailyRecord,
   type DailyUrinationRecord,
 } from '../aggregation/daily-urination-record.js';
+import { buildTodayUrinationProjection } from '../aggregation/today-urination-projection.js';
 import { AggregationIntegrityError } from '../aggregation/aggregation-error.js';
 import type { EventSink, SinkOutcome } from '../sinks/event-sink.js';
 
@@ -19,6 +20,7 @@ type DeviceRegistry = {
   latestUrinationAtMs?: unknown; latestUrinationReceivedAtMs?: unknown; latestUrinationEventId?: unknown;
   latestBatteryAtMs?: unknown; latestBatteryReceivedAtMs?: unknown; latestBatteryEventId?: unknown;
   lastReportedAtMs?: unknown;
+  todayDate?: unknown;
 };
 type EventPayload = { eventId?: unknown; firmwareVersion?: unknown; batteryLevelPercent?: unknown; batteryVoltageMv?: unknown; flushDurationMs?: unknown; pumpDurationMs?: unknown };
 
@@ -68,7 +70,7 @@ function batteryProjection(event: ValidatedDeviceEvent, device: DeviceRegistry, 
   return projection;
 }
 
-function urinationProjection(event: ValidatedDeviceEvent, device: DeviceRegistry, eventId: string): Record<string, string | number | FieldValue> {
+function urinationProjection(event: ValidatedDeviceEvent, device: DeviceRegistry, eventId: string, daily: DailyUrinationRecord): Record<string, string | number | FieldValue> {
   const payload = event.payload as EventPayload;
   const currentTuple = latestTuple(device, 'Urination');
   const nextTuple: [number, number, string] = [event.effectiveAtMs, event.receivedAtMs, eventId];
@@ -80,6 +82,9 @@ function urinationProjection(event: ValidatedDeviceEvent, device: DeviceRegistry
     latestUrinationEstimatedUrineMl: volume.estimatedUrineMl, latestUrinationEstimationStatus: volume.estimationStatus,
     ...(typeof payload.firmwareVersion === 'string' ? { latestUrinationFirmwareVersion: payload.firmwareVersion } : {}),
   });
+  // Mirrors the daily aggregate written in this same transaction, unless a late
+  // event would roll the projection back to an earlier day.
+  Object.assign(projection, buildTodayUrinationProjection(device.todayDate, daily));
   return projection;
 }
 
@@ -105,6 +110,7 @@ export class FirestoreEventSink implements EventSink {
         // Only a first-time urination event reads and writes the daily aggregate;
         // the read happens before any write so the increment is transactional.
         let dailyWrite: { ref: DocumentReference; record: DailyUrinationRecord } | undefined;
+        let projection: Record<string, string | number | FieldValue>;
         if (event.eventType === 'urination') {
           const payload = event.payload as EventPayload;
           const { estimatedUrineMl } = estimateUrineVolume(
@@ -118,11 +124,11 @@ export class FirestoreEventSink implements EventSink {
             ? buildDailyIncrement(assertValidDailyDocument(dailySnapshot.data(), dayKey), event.effectiveAtMs, event.receivedAtMs, estimatedUrineMl)
             : buildInitialDailyRecord(dayKey, event.effectiveAtMs, event.receivedAtMs, estimatedUrineMl);
           dailyWrite = { ref: dailyRef, record };
+          projection = urinationProjection(event, device, eventId, record);
+        } else {
+          projection = batteryProjection(event, device, eventId);
         }
 
-        const projection = event.eventType === 'battery'
-          ? batteryProjection(event, device, eventId)
-          : urinationProjection(event, device, eventId);
         transaction.create(eventRef, buildEventRecord(event, canonicalHash));
         transaction.update(deviceRef, projection);
         if (dailyWrite) transaction.set(dailyWrite.ref, dailyWrite.record);

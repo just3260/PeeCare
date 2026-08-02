@@ -81,6 +81,41 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('EMQX request to Firestore
     });
   }, 30_000);
 
+  it('sums the daily volume across events and carries none of the superseded pending-calibration fields', async () => {
+    const first = buildApp({ currentSecret: 'current-secret', now: () => RECEIVED_FIRST, sink });
+    expect((await first.inject(request(envelope()))).statusCode).toBe(201);
+    await first.close();
+
+    const second = buildApp({ currentSecret: 'current-secret', now: () => RECEIVED_REDELIVERY, sink });
+    expect((await second.inject(request(envelope({ eventId: 'evt-000002', pumpDurationMs: 4000 })))).statusCode).toBe(201);
+    await second.close();
+
+    const daily = (await firestore.doc(`devices/${DEVICE_ID}/dailyStats/2026-07-28`).get()).data() ?? {};
+    expect(daily).toMatchObject({ urinationCount: 2, estimatedUrineTotalMl: 300 });
+    for (const legacy of ['volumeStatus', 'estimatedUrineAverageMl', 'estimatedUrineMinMl', 'estimatedUrineMaxMl']) {
+      expect(daily).not.toHaveProperty(legacy);
+    }
+  }, 30_000);
+
+  it('rejects a superseded pending-calibration daily document with zero writes', async () => {
+    const legacyShape = {
+      date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: 1,
+      volumeStatus: 'pending_calibration', estimatedUrineTotalMl: null,
+      estimatedUrineAverageMl: null, estimatedUrineMinMl: null, estimatedUrineMaxMl: null,
+      lastEventAtMs: 1, updatedAtMs: 1,
+    };
+    await firestore.doc(`devices/${DEVICE_ID}/dailyStats/2026-07-28`).set(legacyShape);
+    const app = buildApp({ currentSecret: 'current-secret', now: () => RECEIVED_FIRST, sink });
+    const response = await app.inject(request(envelope()));
+    await app.close();
+
+    expect(response.statusCode).toBe(500);
+    expect(response.json().error.code).toBe('aggregation_integrity_error');
+    expect((await firestore.doc(`devices/${DEVICE_ID}/events/evt-000001`).get()).exists).toBe(false);
+    expect((await firestore.doc(`devices/${DEVICE_ID}/dailyStats/2026-07-28`).get()).data()).toEqual(legacyShape);
+    expect((await firestore.doc(`devices/${DEVICE_ID}`).get()).data()).toEqual(enabled);
+  }, 30_000);
+
   it('maps a corrupt daily document to a sanitized 500 without any partial event or count write', async () => {
     const corrupt = {
       date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: -1, estimatedUrineTotalMl: 200,

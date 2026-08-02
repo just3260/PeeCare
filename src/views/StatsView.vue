@@ -21,6 +21,11 @@ const deviceStore = inject(DEVICE_OVERVIEW_STORE_KEY, null)
 const authStore = inject(AUTH_STORE_KEY, null)
 const { devices, selectedDeviceId, hasMultipleDevices, selectDevice } = useDeviceSelection()
 const series = computed(() => dailyStatsStore?.series.value ?? props.series)
+
+// The chart keeps the conventional oldest-to-newest time axis; the table reads
+// as a log, so it lists the most recent day first. `slice()` keeps the source
+// series untouched — `reverse()` would otherwise mutate the store's array.
+const recentFirstSeries = computed(() => series.value.slice().reverse())
 const state = computed<DailyStatsState>(() => {
   if (deviceStore?.state?.value.status === 'error') return { status: 'error' }
   return dailyStatsStore?.state.value
@@ -70,7 +75,7 @@ watch(() => authStore?.state.value.status, () => { void syncDevice() })
           </tr>
         </thead>
         <tbody>
-          <tr v-for="point in series" :key="point.date">
+          <tr v-for="point in recentFirstSeries" :key="point.date">
             <td><time :datetime="point.date" data-test="daily-count-date">{{ point.date }}</time></td>
             <td data-test="daily-count-value">{{ point.urinationCount }} 次</td>
           </tr>

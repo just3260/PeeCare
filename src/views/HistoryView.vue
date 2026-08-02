@@ -70,7 +70,7 @@ watch(() => deviceStore?.selectedDeviceId.value, syncDevice)
         <button v-if="state.status === 'ready'" type="button" class="history-action" data-test="history-load-more" @click="loadMore">
           載入更多
         </button>
-        <p v-else-if="state.status === 'end'" class="history-notice" data-test="history-end">已顯示全部紀錄</p>
+        <p v-else-if="state.status === 'end'" class="history-notice history-notice--end" data-test="history-end">已顯示全部紀錄</p>
         <div v-else-if="state.status === 'error'" class="history-notice" data-test="history-error">
           <p>無法載入排尿歷史</p>
           <button type="button" class="history-action" data-test="history-retry" @click="retry">重試</button>
@@ -95,6 +95,13 @@ watch(() => deviceStore?.selectedDeviceId.value, syncDevice)
 .history-notice {
   color: var(--color-muted);
   font-size: 14px;
+}
+
+/* The end-of-list line closes the list rather than labelling a row, so it is
+   centred and kept clear of the last item's bottom rule. */
+.history-notice--end {
+  margin-top: 16px;
+  text-align: center;
 }
 
 .history-item {

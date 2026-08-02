@@ -1,14 +1,15 @@
 <script setup lang="ts">
 // The green overview hero at the top of the home page. It summarises the
 // selected device at a glance: an online/idle status line and three quick
-// pills. Metrics that the backend does not yet compute (today's count and
-// today's total volume) render an explicit "N/A" placeholder rather than a
-// fabricated zero; the last-urination volume is shown when the validated
-// projection carries it.
+// pills. Today's count and total volume come from the registry today projection,
+// resolved against the current Asia/Taipei day; a device with no projection at
+// all renders an explicit "N/A" placeholder rather than a fabricated zero. The
+// last-urination volume is shown when the validated projection carries it.
 import { computed } from 'vue'
 
 import {
   formatTaipeiTimestamp,
+  resolveTodayTotals,
   type DeviceOverviewProjection,
 } from '@/features/devices/device-overview-model'
 
@@ -28,11 +29,15 @@ const lastUpdated = computed(() =>
     : NOT_AVAILABLE,
 )
 
-// Today's toilet count is not computed yet — placeholder until implemented.
-const todayCount = computed(() => NOT_AVAILABLE)
+const todayTotals = computed(() => resolveTodayTotals(props.projection.today, Date.now()))
 
-// Today's total volume is not computed yet — placeholder until implemented.
-const todayVolume = computed(() => NOT_AVAILABLE)
+const todayCount = computed(() =>
+  todayTotals.value ? String(todayTotals.value.urinationCount) : NOT_AVAILABLE,
+)
+
+const todayVolume = computed(() =>
+  todayTotals.value ? String(todayTotals.value.estimatedUrineTotalMl) : NOT_AVAILABLE,
+)
 
 const latestVolume = computed(() => {
   const urination = props.projection.urination

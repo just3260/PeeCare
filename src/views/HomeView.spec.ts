@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { afterEach, describe, it, expect, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { ref } from 'vue'
@@ -19,6 +19,18 @@ function device(deviceId: string): OwnedDevice {
   return { deviceId, ownerUid: 'member-001', productModel: 'pc-mini', ingestionStatus: 'enabled' }
 }
 
+// 2026-07-28T02:00:00.000Z is 2026-07-28 10:00 in Asia/Taipei, so a projection
+// dated 2026-07-28 is current and one dated 2026-07-27 has gone stale.
+const NOW_MS = Date.parse('2026-07-28T02:00:00.000Z')
+
+function freezeNow(): void {
+  vi.spyOn(Date, 'now').mockReturnValue(NOW_MS)
+}
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
+
 const readyProjection: DeviceOverviewProjection = {
   urination: {
     eventId: 'evt-u',
@@ -34,6 +46,7 @@ const readyProjection: DeviceOverviewProjection = {
     receivedAtMs: 1_700_000_000_300,
     voltageMv: 3840,
   },
+  today: { date: '2026-07-28', urinationCount: 3, estimatedUrineTotalMl: 550 },
   lastReportedAtMs: 1_700_000_000_400,
 }
 
@@ -92,6 +105,7 @@ describe('HomeView overview states', () => {
   })
 
   it('renders the ready state with status cards and no fabricated measurements', () => {
+    freezeNow()
     const wrapper = mountHomeView(
       makeDeviceStore({
         state: { status: 'ready', projection: readyProjection },
@@ -104,9 +118,14 @@ describe('HomeView overview states', () => {
     expect(wrapper.get('[data-test="card-latest-volume"]').text()).toContain('120')
     // A reporting device reads as connected.
     expect(wrapper.get('[data-test="card-status"]').text()).toBe('連線中')
-    // Not-yet-computed metrics are explicit placeholders, never fabricated.
-    expect(wrapper.get('[data-test="card-today-volume"]').text()).toContain('N/A')
-    expect(wrapper.get('[data-test="card-today-count"]').text()).toContain('N/A')
+    // Today's totals come from the registry projection for the current day.
+    expect(wrapper.get('[data-test="card-today-volume"]').text()).toContain('550')
+    expect(wrapper.get('[data-test="card-today-count"]').text()).toContain('3')
+    expect(wrapper.get('[data-test="hero-title"]').text()).toContain('3')
+    expect(wrapper.get('[data-test="hero-today-volume"]').text()).toContain('550')
+    // The comparison footers still have no data behind them.
+    expect(wrapper.get('[data-test="card-today-volume-footer"]').text()).toContain('N/A')
+    expect(wrapper.get('[data-test="card-today-count-footer"]').text()).toContain('N/A')
     // A single-device member sees no switcher.
     expect(wrapper.find('.device-selector').exists()).toBe(false)
     const text = wrapper.text()
@@ -115,11 +134,12 @@ describe('HomeView overview states', () => {
   })
 
   it('renders the missing-data state as explicit unknown values, not zero', () => {
+    freezeNow()
     const wrapper = mountHomeView(
       makeDeviceStore({
         state: {
           status: 'ready',
-          projection: { urination: null, battery: null, lastReportedAtMs: null },
+          projection: { urination: null, battery: null, today: null, lastReportedAtMs: null },
         },
         devices: [device('PC-000001')],
         selectedDeviceId: 'PC-000001',
@@ -128,9 +148,40 @@ describe('HomeView overview states', () => {
 
     expect(wrapper.get('[data-test="card-latest-volume"]').text()).toContain('N/A')
     expect(wrapper.get('[data-test="card-latest-time"]').text()).toBe('--:--')
+    // A device that has never stored a urination event has unknown totals, not zero.
+    expect(wrapper.get('[data-test="card-today-volume"]').text()).toContain('N/A')
+    expect(wrapper.get('[data-test="card-today-count"]').text()).toContain('N/A')
+    expect(wrapper.get('[data-test="hero-title"]').text()).toContain('N/A')
+    expect(wrapper.get('[data-test="hero-today-volume"]').text()).toContain('N/A')
     // Without any report instant the device is not claimed to be online.
     expect(wrapper.get('[data-test="card-status"]').text()).toBe('待機中')
     expect(wrapper.get('[data-test="hero-status"]').text()).toContain('待機中')
+  })
+
+  // Spec: ingestion updates the projection on every stored urination event, so a
+  // projection left on an earlier day means nothing has been recorded today.
+  it('renders a projection left on the previous day as zero for today', () => {
+    freezeNow()
+    const wrapper = mountHomeView(
+      makeDeviceStore({
+        state: {
+          status: 'ready',
+          projection: {
+            ...readyProjection,
+            today: { date: '2026-07-27', urinationCount: 3, estimatedUrineTotalMl: 550 },
+          },
+        },
+        devices: [device('PC-000001')],
+        selectedDeviceId: 'PC-000001',
+      }),
+    )
+
+    expect(wrapper.get('[data-test="card-today-volume"]').text()).toContain('0')
+    expect(wrapper.get('[data-test="card-today-count"]').text()).toContain('0')
+    expect(wrapper.get('[data-test="hero-title"]').text()).toContain('0')
+    expect(wrapper.get('[data-test="hero-today-volume"]').text()).toContain('0')
+    expect(wrapper.get('[data-test="card-today-volume"]').text()).not.toContain('550')
+    expect(wrapper.get('[data-test="card-today-count"]').text()).not.toContain('3')
   })
 
   it('shows the device selector when the member owns more than one device', () => {

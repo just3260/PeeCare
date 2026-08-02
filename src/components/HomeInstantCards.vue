@@ -1,13 +1,16 @@
 <script setup lang="ts">
 // The 2x2 grid of "instant cards" below the device selector. Each card shows a
-// headline metric with a muted footer. Metrics the backend does not yet compute
-// (today's volume, today's count, and their comparisons) render an explicit
-// "N/A" placeholder rather than a fabricated value; the latest-urination card is
-// filled from the validated projection when the tuple is present.
+// headline metric with a muted footer. Today's volume and count come from the
+// registry today projection, resolved against the current Asia/Taipei day; the
+// day-over-day comparison footers have no data behind them yet and render an
+// explicit "N/A" placeholder rather than a fabricated value. The
+// latest-urination card is filled from the validated projection when the tuple
+// is present.
 import { computed } from 'vue'
 
 import {
   formatTaipeiClock,
+  resolveTodayTotals,
   type DeviceOverviewProjection,
 } from '@/features/devices/device-overview-model'
 
@@ -15,6 +18,16 @@ const props = defineProps<{ projection: DeviceOverviewProjection }>()
 
 const NOT_AVAILABLE = 'N/A'
 const NO_TIME = '--:--'
+
+const todayTotals = computed(() => resolveTodayTotals(props.projection.today, Date.now()))
+
+const todayVolume = computed(() =>
+  todayTotals.value ? String(todayTotals.value.estimatedUrineTotalMl) : NOT_AVAILABLE,
+)
+
+const todayCount = computed(() =>
+  todayTotals.value ? String(todayTotals.value.urinationCount) : NOT_AVAILABLE,
+)
 
 const latestVolume = computed(() => {
   const urination = props.projection.urination
@@ -36,17 +49,19 @@ const statusLabel = computed(() =>
     <article class="instant-card">
       <p class="instant-card__label">今日尿量</p>
       <p class="instant-card__value" data-test="card-today-volume">
-        {{ NOT_AVAILABLE }} <span class="instant-card__unit">mL</span>
+        {{ todayVolume }} <span class="instant-card__unit">mL</span>
       </p>
-      <p class="instant-card__footer">比昨天 {{ NOT_AVAILABLE }}</p>
+      <p class="instant-card__footer" data-test="card-today-volume-footer">
+        比昨天 {{ NOT_AVAILABLE }}
+      </p>
     </article>
 
     <article class="instant-card">
       <p class="instant-card__label">今日次數</p>
       <p class="instant-card__value" data-test="card-today-count">
-        {{ NOT_AVAILABLE }} <span class="instant-card__unit">次</span>
+        {{ todayCount }} <span class="instant-card__unit">次</span>
       </p>
-      <p class="instant-card__footer">{{ NOT_AVAILABLE }}</p>
+      <p class="instant-card__footer" data-test="card-today-count-footer">{{ NOT_AVAILABLE }}</p>
     </article>
 
     <article class="instant-card">

@@ -45,6 +45,18 @@ export interface BatteryProjection {
 }
 
 /**
+ * A complete today-totals projection tuple, mirrored by ingestion from the
+ * device's `dailyStats` document for the day the mirrored events belong to.
+ * `date` is the Asia/Taipei calendar day the totals were accumulated on; it is
+ * required so a reader can tell whether the totals still describe today.
+ */
+export interface TodayTotalsProjection {
+  readonly date: string
+  readonly urinationCount: number
+  readonly estimatedUrineTotalMl: number
+}
+
+/**
  * The validated latest overview for one device. Each latest tuple is either a
  * complete projection or `null` (explicit unknown); `lastReportedAtMs` is the
  * device's last report instant, or `null` when unknown.
@@ -52,6 +64,7 @@ export interface BatteryProjection {
 export interface DeviceOverviewProjection {
   readonly urination: UrinationProjection | null
   readonly battery: BatteryProjection | null
+  readonly today: TodayTotalsProjection | null
   readonly lastReportedAtMs: number | null
 }
 
@@ -64,6 +77,8 @@ export type DeviceOverviewIntegrityCode =
   | 'invalid_battery_voltage'
   | 'invalid_timestamp'
   | 'invalid_last_reported'
+  | 'partial_today_tuple'
+  | 'invalid_today_totals'
 
 /**
  * Raised when a device's latest projection is structurally inconsistent — a
@@ -230,6 +245,53 @@ function parseBattery(deviceId: string, record: Record<string, unknown>): Batter
   return { eventId, levelPercent, atMs, receivedAtMs, voltageMv: voltage }
 }
 
+/** A strict `yyyy-MM-dd` calendar day, zero-padded so it sorts chronologically. */
+const CALENDAR_DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+
+function isCalendarDay(value: unknown): value is string {
+  return typeof value === 'string' && CALENDAR_DAY_PATTERN.test(value)
+}
+
+function isNonNegativeFinite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
+/**
+ * Validate the today-totals tuple. All three fields absent means the device has
+ * never stored a urination event (→ `null`, an explicit unknown); any partial
+ * or malformed combination is a data-integrity defect, so a half-populated
+ * today card can never render as ready.
+ */
+function parseToday(deviceId: string, record: Record<string, unknown>): TodayTotalsProjection | null {
+  const date = record.todayDate
+  const urinationCount = record.todayUrinationCount
+  const estimatedUrineTotalMl = record.todayEstimatedUrineTotalMl
+
+  const presentCount = [date, urinationCount, estimatedUrineTotalMl].filter(isPresent).length
+  if (presentCount === 0) {
+    return null
+  }
+  if (presentCount < 3) {
+    throw new DeviceOverviewIntegrityError(
+      'partial_today_tuple',
+      deviceId,
+      `Device "${deviceId}" has an incomplete today totals projection.`,
+    )
+  }
+  if (
+    !isCalendarDay(date) ||
+    !isNonNegativeInteger(urinationCount) ||
+    !isNonNegativeFinite(estimatedUrineTotalMl)
+  ) {
+    throw new DeviceOverviewIntegrityError(
+      'invalid_today_totals',
+      deviceId,
+      `Device "${deviceId}" has a malformed today totals projection.`,
+    )
+  }
+  return { date, urinationCount, estimatedUrineTotalMl }
+}
+
 function parseLastReported(deviceId: string, record: Record<string, unknown>): number | null {
   const lastReportedAtMs = record.lastReportedAtMs
   if (!isPresent(lastReportedAtMs)) {
@@ -260,6 +322,7 @@ export function parseDeviceOverview(input: ParseDeviceOverviewInput): DeviceOver
   return {
     urination: parseUrination(deviceId, record),
     battery: parseBattery(deviceId, record),
+    today: parseToday(deviceId, record),
     lastReportedAtMs: parseLastReported(deviceId, record),
   }
 }
@@ -286,6 +349,48 @@ const taipeiFormatter = new Intl.DateTimeFormat(OVERVIEW_LOCALE, {
  */
 export function formatTaipeiTimestamp(epochMs: number): string {
   return taipeiFormatter.format(new Date(epochMs))
+}
+
+// `en-CA` renders a Gregorian date as `yyyy-MM-dd`, matching the day key format
+// ingestion writes, so the two can be compared as plain strings.
+const taipeiDayFormatter = new Intl.DateTimeFormat('en-CA', {
+  timeZone: OVERVIEW_TIME_ZONE,
+  calendar: 'gregory',
+  numberingSystem: 'latn',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+})
+
+/** The resolved today figures the overview should display. */
+export interface TodayTotals {
+  readonly urinationCount: number
+  readonly estimatedUrineTotalMl: number
+}
+
+/**
+ * Resolve the today totals to display for an instant, given the device's
+ * projection. The instant is a parameter rather than `Date.now()` so the
+ * midnight rollover is testable.
+ *
+ * A missing projection is an explicit unknown — the device has never stored a
+ * urination event, and the view must show a placeholder rather than a zero. A
+ * projection left on an earlier Asia/Taipei day resolves to zero instead:
+ * ingestion updates the projection on every stored urination event, so a stale
+ * day means nothing has been recorded today. The comparison is always made in
+ * the fixed `Asia/Taipei` timezone, independent of the browser's own zone.
+ */
+export function resolveTodayTotals(
+  today: TodayTotalsProjection | null,
+  nowMs: number,
+): TodayTotals | null {
+  if (today === null) {
+    return null
+  }
+  if (today.date !== taipeiDayFormatter.format(new Date(nowMs))) {
+    return { urinationCount: 0, estimatedUrineTotalMl: 0 }
+  }
+  return { urinationCount: today.urinationCount, estimatedUrineTotalMl: today.estimatedUrineTotalMl }
 }
 
 const taipeiClockFormatter = new Intl.DateTimeFormat(OVERVIEW_LOCALE, {

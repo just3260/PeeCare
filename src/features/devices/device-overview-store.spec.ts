@@ -218,6 +218,7 @@ describe('device overview store: snapshot states', () => {
           receivedAtMs: 1_700_000_000_300,
           voltageMv: null,
         },
+        today: null,
         lastReportedAtMs: 1_700_000_000_400,
       },
     })
