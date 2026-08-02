@@ -57,7 +57,7 @@ Web client
 | 欄位 | 型別與規則 |
 |---|---|
 | `schemaVersion` | 整數，固定為 `1` |
-| `eventId` | 字串，符合 `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`；跨重送的冪等識別，可安全作為 Firestore Document ID |
+| `eventId` | 字串，符合 `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`；跨重送的冪等識別，可安全作為 Firestore Document ID。組成規則見 1.5 |
 | `eventType` | 字串，`urination` 或 `battery` |
 | `deviceId` | 字串，符合 Topic segment 格式 `[A-Za-z0-9][A-Za-z0-9_-]{0,63}` |
 | `sequence` | 整數 0–4294967295；用於排序與漏訊診斷，**不**作為去重鍵 |
@@ -71,7 +71,7 @@ Topic：`products/{productModel}/devices/{deviceId}/events/urination`
 ```json
 {
   "schemaVersion": 1,
-  "eventId": "PC-000001:42",
+  "eventId": "PC-000001:000007:42",
   "eventType": "urination",
   "deviceId": "PC-000001",
   "sequence": 42,
@@ -92,7 +92,7 @@ Topic：`products/{productModel}/devices/{deviceId}/status/battery`
 ```json
 {
   "schemaVersion": 1,
-  "eventId": "PC-000001:43",
+  "eventId": "PC-000001:000007:43",
   "eventType": "battery",
   "deviceId": "PC-000001",
   "sequence": 43,
@@ -106,7 +106,19 @@ Topic：`products/{productModel}/devices/{deviceId}/status/battery`
 - `batteryLevelPercent`：只接受 `0`、`25`、`50`、`75`、`100`。
 - `batteryVoltageMv`：選填，存在時為 0–20000 的整數。硬體未提供原始電壓時**省略**此欄位，不得以 `null` 或 `0` 表示未知。
 
-### 1.5 重送與時間語義
+### 1.5 eventId 組成、重送與時間語義
+
+**eventId 組成規則**
+
+`eventId` 直接作為 Firestore Document ID（`devices/{deviceId}/events/{eventId}`），而排尿與電量事件**共用同一個 collection**。因此：
+
+- eventId 必須在**裝置的整個生命週期**內唯一 —— 跨電源循環、跨韌體更新、跨計數器循環皆不得重複，且唯一性範圍涵蓋兩種事件類型。
+- **禁止使用 `{deviceId}:{sequence}`**。`deviceId` 燒錄於韌體、`sequence` 重開機後歸零，組合起來會與先前事件碰撞。碰撞的兩種結果都是**零寫入的靜默資料遺失**：payload 有差異 → `409 event_id_conflict`；payload 逐欄位相同 → `200 duplicate`（裝置收到成功回應但事件從未寫入）。
+- **建議組法 `{deviceId}:{bootId}:{sequence}`**，例如 `PC-000001:000007:42`。`bootId` 為存放於 NVS／flash 的開機計數器，每次開機遞增並寫回一次（非每筆事件寫一次）；`sequence` 維持在同一 boot session 內遞增，漏訊診斷能力完整保留。建議 `bootId` 固定寬度零填充，使字典序與時間順序一致。長度上 `deviceId`(≤64) + `:` + `bootId`(≤10) + `:` + `sequence`(≤10) ≤ 86 字元，未超過 128 上限。
+- **替代組法**：`{deviceId}:{≥128-bit 隨機值}`，不需 NVS，但重送時必須在 RAM 保留原 eventId 與完整 payload。
+- **不可**以 `recordedAtMs` 為基礎組成 —— 契約允許 `recordedAtMs` 為 `null`，不能假設事件產生時有可信時間。
+
+**重送與時間語義**
 
 - **重送冪等**：`eventId` 是跨重送的冪等識別。重送同一事件必須重用相同 Topic、`eventId` 與完整 payload，逐欄位不變；否則 `retry_mismatch`。`sequence` 永不取代 `eventId` 作為去重鍵。
 - **時間來源**（`lib/effective-time.mjs`）：

@@ -106,12 +106,17 @@ export class FirestoreEventSink implements EventSink {
         // the read happens before any write so the increment is transactional.
         let dailyWrite: { ref: DocumentReference; record: DailyUrinationRecord } | undefined;
         if (event.eventType === 'urination') {
+          const payload = event.payload as EventPayload;
+          const { estimatedUrineMl } = estimateUrineVolume(
+            payload.flushDurationMs as number,
+            payload.pumpDurationMs as number,
+          );
           const dayKey = toAsiaTaipeiDayKey(event.effectiveAtMs);
           const dailyRef = deviceRef.collection('dailyStats').doc(dayKey);
           const dailySnapshot = await transaction.get(dailyRef);
           const record = dailySnapshot.exists
-            ? buildDailyIncrement(assertValidDailyDocument(dailySnapshot.data(), dayKey), event.effectiveAtMs, event.receivedAtMs)
-            : buildInitialDailyRecord(dayKey, event.effectiveAtMs, event.receivedAtMs);
+            ? buildDailyIncrement(assertValidDailyDocument(dailySnapshot.data(), dayKey), event.effectiveAtMs, event.receivedAtMs, estimatedUrineMl)
+            : buildInitialDailyRecord(dayKey, event.effectiveAtMs, event.receivedAtMs, estimatedUrineMl);
           dailyWrite = { ref: dailyRef, record };
         }
 

@@ -20,7 +20,13 @@ function device(deviceId: string): OwnedDevice {
 }
 
 const readyProjection: DeviceOverviewProjection = {
-  urination: { eventId: 'evt-u', atMs: 1_700_000_000_000, receivedAtMs: 1_700_000_000_100 },
+  urination: {
+    eventId: 'evt-u',
+    atMs: 1_700_000_000_000,
+    receivedAtMs: 1_700_000_000_100,
+    estimatedUrineMl: 120,
+    estimationStatus: 'estimated',
+  },
   battery: {
     eventId: 'evt-b',
     levelPercent: 50,
@@ -94,7 +100,13 @@ describe('HomeView overview states', () => {
       }),
     )
 
-    expect(wrapper.get('[data-test="battery-level"]').text()).toBe('50%')
+    // The latest-urination card is filled from the validated projection tuple.
+    expect(wrapper.get('[data-test="card-latest-volume"]').text()).toContain('120')
+    // A reporting device reads as connected.
+    expect(wrapper.get('[data-test="card-status"]').text()).toBe('連線中')
+    // Not-yet-computed metrics are explicit placeholders, never fabricated.
+    expect(wrapper.get('[data-test="card-today-volume"]').text()).toContain('N/A')
+    expect(wrapper.get('[data-test="card-today-count"]').text()).toContain('N/A')
     // A single-device member sees no switcher.
     expect(wrapper.find('.device-selector').exists()).toBe(false)
     const text = wrapper.text()
@@ -114,8 +126,11 @@ describe('HomeView overview states', () => {
       }),
     )
 
-    expect(wrapper.get('[data-test="battery-level"]').text()).toBe('尚無資料')
-    expect(wrapper.get('[data-test="urination-time"]').text()).toBe('尚無資料')
+    expect(wrapper.get('[data-test="card-latest-volume"]').text()).toContain('N/A')
+    expect(wrapper.get('[data-test="card-latest-time"]').text()).toBe('--:--')
+    // Without any report instant the device is not claimed to be online.
+    expect(wrapper.get('[data-test="card-status"]').text()).toBe('待機中')
+    expect(wrapper.get('[data-test="hero-status"]').text()).toContain('待機中')
   })
 
   it('shows the device selector when the member owns more than one device', () => {

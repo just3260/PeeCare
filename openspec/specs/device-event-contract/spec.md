@@ -117,6 +117,27 @@ A version 1 battery event SHALL set `eventType` to `battery` and SHALL contain `
 - **THEN** the contract validator SHALL reject the payload with error code `schema_validation`
 
 ---
+### Requirement: Event identity construction
+
+A publisher SHALL construct `eventId` so that it is unique across the entire lifetime of the device, including across power cycles, firmware updates, and counter wraparound. The uniqueness scope SHALL span both event types, because urination and battery events share the `devices/{deviceId}/events` collection and `eventId` is the Firestore document identifier. A publisher SHALL NOT construct `eventId` as `{deviceId}:{sequence}` alone, because `sequence` restarts after a power cycle and the resulting identifier collides with an earlier event. A publisher SHOULD construct `eventId` as `{deviceId}:{bootId}:{sequence}`, where `bootId` is a boot counter held in non-volatile storage and incremented once per boot. A publisher MAY instead construct `eventId` from a random value of at least 128 bits. A publisher SHALL NOT derive `eventId` from `recordedAtMs`, because the contract permits `recordedAtMs` to be null when the device clock is unsynchronised.
+
+#### Scenario: Reject a colliding identity after a power cycle
+
+- **WHEN** a device restarts, resets `sequence` to its initial value, and republishes with an `eventId` equal to one already stored
+- **THEN** the ingestion service SHALL NOT create a second event document, and the delivery SHALL resolve as `event_id_conflict` when the payload differs or as `duplicate` when every payload field is identical
+
+##### Example: Boot-scoped identity survives a restart
+
+- **GIVEN** a device publishes `PC-000001:000007:42` during boot 7
+- **WHEN** the device restarts, increments `bootId` to 8, and resets `sequence` to 1
+- **THEN** the next event uses `PC-000001:000008:1` and SHALL be stored as a distinct event
+
+#### Scenario: Preserve gap diagnosis within a boot session
+
+- **WHEN** a publisher uses a boot-scoped identity and `sequence` increases monotonically within one boot session
+- **THEN** a missing `sequence` value within that session SHALL remain detectable as a delivery gap
+
+---
 ### Requirement: Stable retry identity
 
 A publisher retrying an event SHALL reuse the original Topic, `eventId`, and complete payload without changing any field. The `eventId` SHALL be the idempotency identity. The `sequence` SHALL support ordering and gap diagnosis and SHALL NOT replace `eventId` as the idempotency identity.

@@ -57,7 +57,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('EMQX request to Firestore
   beforeEach(async () => { await purgeDevice(firestore); await firestore.doc(`devices/${DEVICE_ID}`).set(enabled); });
   afterEach(async () => { await purgeDevice(firestore); });
 
-  it('stores an immutable urination event and its single pending-calibration daily count without a battery projection', async () => {
+  it('stores an immutable urination event and its estimated daily volume without a battery projection', async () => {
     const app = buildApp({ currentSecret: 'current-secret', now: () => RECEIVED_FIRST, sink });
     const response = await app.inject(request(envelope()));
     await app.close();
@@ -76,16 +76,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('EMQX request to Firestore
     const dailyDocs = await firestore.collection(`devices/${DEVICE_ID}/dailyStats`).listDocuments();
     expect(dailyDocs.length).toBe(1);
     expect((await dailyDocs[0].get()).data()).toEqual({
-      date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: 1, volumeStatus: 'pending_calibration',
-      estimatedUrineTotalMl: null, estimatedUrineAverageMl: null, estimatedUrineMinMl: null, estimatedUrineMaxMl: null,
+      date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: 1, estimatedUrineTotalMl: 200,
       lastEventAtMs: 1785168000000, updatedAtMs: RECEIVED_FIRST,
     });
   }, 30_000);
 
   it('maps a corrupt daily document to a sanitized 500 without any partial event or count write', async () => {
     const corrupt = {
-      date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: -1, volumeStatus: 'pending_calibration',
-      estimatedUrineTotalMl: null, estimatedUrineAverageMl: null, estimatedUrineMinMl: null, estimatedUrineMaxMl: null,
+      date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: -1, estimatedUrineTotalMl: 200,
       lastEventAtMs: 1, updatedAtMs: 1,
     };
     await firestore.doc(`devices/${DEVICE_ID}/dailyStats/2026-07-28`).set(corrupt);

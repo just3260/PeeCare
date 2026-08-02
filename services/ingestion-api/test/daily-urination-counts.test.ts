@@ -36,64 +36,54 @@ describe('Fixed Asia Taipei day key', () => {
   );
 });
 
-describe('Pending calibration daily record shape', () => {
-  it('creates a first-event record with count 1 and four null volume fields', () => {
-    expect(buildInitialDailyRecord('2026-07-28', 1785168000000, 1785168060000)).toEqual({
+describe('Estimated-volume daily record shape', () => {
+  it('creates a first-event record with count 1 and the event volume', () => {
+    expect(buildInitialDailyRecord('2026-07-28', 1785168000000, 1785168060000, 200)).toEqual({
       date: '2026-07-28',
       timeZone: 'Asia/Taipei',
       urinationCount: 1,
-      volumeStatus: 'pending_calibration',
-      estimatedUrineTotalMl: null,
-      estimatedUrineAverageMl: null,
-      estimatedUrineMinMl: null,
-      estimatedUrineMaxMl: null,
+      estimatedUrineTotalMl: 200,
       lastEventAtMs: 1785168000000,
       updatedAtMs: 1785168060000,
     });
   });
 
-  it('never derives a numeric volume from durations', () => {
-    const record = buildInitialDailyRecord('2026-07-28', 1785168000000, 1785168060000);
-    for (const field of ['estimatedUrineTotalMl', 'estimatedUrineAverageMl', 'estimatedUrineMinMl', 'estimatedUrineMaxMl'] as const) {
-      expect(record[field]).toBeNull();
-    }
-    expect(record.volumeStatus).toBe('pending_calibration');
+  it('rejects an invalid event volume', () => {
+    expect(() => buildInitialDailyRecord('2026-07-28', 1785168000000, 1785168060000, Number.NaN)).toThrow(AggregationIntegrityError);
   });
 });
 
 describe('Monotonic daily metadata', () => {
   const base: DailyUrinationRecord = {
-    date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: 1, volumeStatus: 'pending_calibration',
-    estimatedUrineTotalMl: null, estimatedUrineAverageMl: null, estimatedUrineMinMl: null, estimatedUrineMaxMl: null,
+    date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: 1, estimatedUrineTotalMl: 100,
     lastEventAtMs: 1000, updatedAtMs: 2000,
   };
 
   it('advances both timestamps for an in-order event', () => {
-    expect(buildDailyIncrement(base, 1500, 2500)).toMatchObject({ urinationCount: 2, lastEventAtMs: 1500, updatedAtMs: 2500 });
+    expect(buildDailyIncrement(base, 1500, 2500, 50)).toMatchObject({ urinationCount: 2, estimatedUrineTotalMl: 150, lastEventAtMs: 1500, updatedAtMs: 2500 });
   });
 
   it('keeps lastEventAtMs for a late effective time but still increments the count', () => {
-    expect(buildDailyIncrement(base, 900, 3000)).toMatchObject({ urinationCount: 2, lastEventAtMs: 1000, updatedAtMs: 3000 });
+    expect(buildDailyIncrement(base, 900, 3000, 50)).toMatchObject({ urinationCount: 2, estimatedUrineTotalMl: 150, lastEventAtMs: 1000, updatedAtMs: 3000 });
   });
 
   it('advances updatedAtMs to the later receive time while lastEventAtMs holds', () => {
-    expect(buildDailyIncrement(base, 800, 2500)).toMatchObject({ lastEventAtMs: 1000, updatedAtMs: 2500 });
+    expect(buildDailyIncrement(base, 800, 2500, 50)).toMatchObject({ estimatedUrineTotalMl: 150, lastEventAtMs: 1000, updatedAtMs: 2500 });
   });
 
   it('increments a count one below the maximum safe integer', () => {
-    const record = buildDailyIncrement({ ...base, urinationCount: Number.MAX_SAFE_INTEGER - 1 }, 1500, 2500);
+    const record = buildDailyIncrement({ ...base, urinationCount: Number.MAX_SAFE_INTEGER - 1 }, 1500, 2500, 0);
     expect(record.urinationCount).toBe(Number.MAX_SAFE_INTEGER);
   });
 
   it('rejects an increment that would overflow the safe integer range', () => {
-    expect(() => buildDailyIncrement({ ...base, urinationCount: Number.MAX_SAFE_INTEGER }, 1500, 2500)).toThrow(AggregationIntegrityError);
+    expect(() => buildDailyIncrement({ ...base, urinationCount: Number.MAX_SAFE_INTEGER }, 1500, 2500, 0)).toThrow(AggregationIntegrityError);
   });
 });
 
 describe('Daily document integrity guard', () => {
   const valid: DailyUrinationRecord = {
-    date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: 3, volumeStatus: 'pending_calibration',
-    estimatedUrineTotalMl: null, estimatedUrineAverageMl: null, estimatedUrineMinMl: null, estimatedUrineMaxMl: null,
+    date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: 3, estimatedUrineTotalMl: 350,
     lastEventAtMs: 1000, updatedAtMs: 2000,
   };
 
@@ -109,11 +99,8 @@ describe('Daily document integrity guard', () => {
     ['non-integer count', { ...valid, urinationCount: 2.5 }],
     ['count at the maximum safe integer', { ...valid, urinationCount: Number.MAX_SAFE_INTEGER }],
     ['non-numeric count', { ...valid, urinationCount: '3' }],
-    ['wrong volume status', { ...valid, volumeStatus: 'calibrated' }],
-    ['non-null total', { ...valid, estimatedUrineTotalMl: 0 }],
-    ['non-null average', { ...valid, estimatedUrineAverageMl: 0 }],
-    ['non-null min', { ...valid, estimatedUrineMinMl: 0 }],
-    ['non-null max', { ...valid, estimatedUrineMaxMl: 0 }],
+    ['negative total', { ...valid, estimatedUrineTotalMl: -1 }],
+    ['non-finite total', { ...valid, estimatedUrineTotalMl: Number.POSITIVE_INFINITY }],
   ])('reports aggregation_integrity_error for %s', (_label, doc) => {
     expect(() => assertValidDailyDocument(doc, '2026-07-28')).toThrow(AggregationIntegrityError);
   });

@@ -4,7 +4,8 @@ import { RouterLink } from 'vue-router'
 
 import AppHeader from '@/components/AppHeader.vue'
 import DeviceSelector from '@/components/DeviceSelector.vue'
-import DeviceStatusCards from '@/components/DeviceStatusCards.vue'
+import HomeOverviewHero from '@/components/HomeOverviewHero.vue'
+import HomeInstantCards from '@/components/HomeInstantCards.vue'
 import { AUTH_STORE_KEY } from '@/features/auth/auth-store-key'
 import { DEVICE_OVERVIEW_STORE_KEY } from '@/features/devices/device-overview-store-key'
 import { useDeviceSelection } from '@/features/devices/use-device-selection'
@@ -69,13 +70,23 @@ watch(() => authStore?.state.value.status, syncSession)
       </div>
 
       <template v-else>
-        <DeviceSelector
-          v-if="hasMultipleDevices"
-          :devices="devices"
-          :selected-device-id="selectedDeviceId"
-          @select="selectDevice"
-        />
-        <DeviceStatusCards :projection="state.projection" />
+        <HomeOverviewHero :projection="state.projection" />
+
+        <div class="instant-section">
+          <div class="instant-section__header">
+            <h3 class="instant-section__title">即時卡片</h3>
+            <span class="instant-section__hint">最常看資訊</span>
+          </div>
+
+          <DeviceSelector
+            v-if="hasMultipleDevices"
+            :devices="devices"
+            :selected-device-id="selectedDeviceId"
+            @select="selectDevice"
+          />
+
+          <HomeInstantCards :projection="state.projection" />
+        </div>
       </template>
     </section>
   </main>
@@ -84,6 +95,35 @@ watch(() => authStore?.state.value.status, syncSession)
 <style scoped>
 .home-main {
   padding: 0 20px;
+}
+
+.overview {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.instant-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.instant-section__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.instant-section__title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--color-ink);
+}
+
+.instant-section__hint {
+  font-size: 13px;
+  color: var(--color-muted);
 }
 
 .overview__notice {

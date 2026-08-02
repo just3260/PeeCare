@@ -209,14 +209,13 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Firestore event sink', ()
     expect((await firestore.doc('devices/PC-000001').get()).data()).toMatchObject({ latestUrinationEventId: 'evt-z' });
   }, 20_000);
 
-  it('commits a first urination event and its Asia/Taipei daily document with count 1 in one transaction', async () => {
+  it('commits a first urination event and its estimated volume to the Asia/Taipei daily document in one transaction', async () => {
     await firestore.doc('devices/PC-000001').set(enabled);
     const sink = new FirestoreEventSink(firestore);
     await expect(sink.accept({ ...makeEvent(), effectiveAtMs: JUL28_START, receivedAtMs: JUL28_LATER }, { requestId: 'first' })).resolves.toBe('stored');
     expect((await firestore.doc('devices/PC-000001/events/evt-000001').get()).exists).toBe(true);
     expect((await dailyDoc(firestore, '2026-07-28').get()).data()).toEqual({
-      date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: 1, volumeStatus: 'pending_calibration',
-      estimatedUrineTotalMl: null, estimatedUrineAverageMl: null, estimatedUrineMinMl: null, estimatedUrineMaxMl: null,
+      date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: 1, estimatedUrineTotalMl: 200,
       lastEventAtMs: JUL28_START, updatedAtMs: JUL28_LATER,
     });
   }, 20_000);
@@ -229,15 +228,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Firestore event sink', ()
     expect((await dailyDoc(firestore, '2026-07-28').get()).exists).toBe(false);
   }, 20_000);
 
-  it('counts two distinct urination events on the same day from absent to 1 to 2 while volume stays pending', async () => {
+  it('counts and sums two distinct urination events on the same day', async () => {
     await firestore.doc('devices/PC-000001').set(enabled);
     const sink = new FirestoreEventSink(firestore);
     await sink.accept({ ...makeEvent({ eventId: 'evt-000001' }), effectiveAtMs: JUL28_START, receivedAtMs: JUL28_START }, { requestId: 'one' });
     expect((await dailyDoc(firestore, '2026-07-28').get()).get('urinationCount')).toBe(1);
     await sink.accept({ ...makeEvent({ eventId: 'evt-000002' }), effectiveAtMs: JUL28_LATER, receivedAtMs: JUL28_LATER }, { requestId: 'two' });
     expect((await dailyDoc(firestore, '2026-07-28').get()).data()).toMatchObject({
-      urinationCount: 2, volumeStatus: 'pending_calibration',
-      estimatedUrineTotalMl: null, estimatedUrineAverageMl: null, estimatedUrineMinMl: null, estimatedUrineMaxMl: null,
+      urinationCount: 2, estimatedUrineTotalMl: 400,
       lastEventAtMs: JUL28_LATER, updatedAtMs: JUL28_LATER,
     });
   }, 20_000);
@@ -308,8 +306,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('Firestore event sink', ()
   it('aborts with an integrity error and zero writes when the existing daily document is corrupt', async () => {
     await firestore.doc('devices/PC-000001').set(enabled);
     const corrupt = {
-      date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: -1, volumeStatus: 'pending_calibration',
-      estimatedUrineTotalMl: null, estimatedUrineAverageMl: null, estimatedUrineMinMl: null, estimatedUrineMaxMl: null,
+      date: '2026-07-28', timeZone: 'Asia/Taipei', urinationCount: -1, estimatedUrineTotalMl: 200,
       lastEventAtMs: 1, updatedAtMs: 1,
     };
     await dailyDoc(firestore, '2026-07-28').set(corrupt);

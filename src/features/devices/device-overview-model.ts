@@ -287,3 +287,19 @@ const taipeiFormatter = new Intl.DateTimeFormat(OVERVIEW_LOCALE, {
 export function formatTaipeiTimestamp(epochMs: number): string {
   return taipeiFormatter.format(new Date(epochMs))
 }
+
+const taipeiClockFormatter = new Intl.DateTimeFormat(OVERVIEW_LOCALE, {
+  timeZone: OVERVIEW_TIME_ZONE,
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+})
+
+/**
+ * Format an epoch-millisecond instant as an `HH:MM` clock time in the fixed
+ * `Asia/Taipei` timezone. Used by the compact instant cards where the day is
+ * implied and only the time-of-day matters.
+ */
+export function formatTaipeiClock(epochMs: number): string {
+  return taipeiClockFormatter.format(new Date(epochMs))
+}

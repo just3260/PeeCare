@@ -74,20 +74,30 @@
     透過本工具的後端代送請求（避開 CORS）。使用前請先啟動 Firebase Emulator 與 ingestion-api。
     時間欄位可選「現在」自動帶入當下毫秒。
   </p>
+  <p class="hint">
+    <strong>模擬裝置重開機：</strong>把 <code>bootId</code> 加 1、sequence 歸回起始值。
+    eventId 會變成新的一組，事件仍會被視為全新事件寫入；
+    若把 bootId 保持不變而重用舊 sequence，則會撞到既有文件並得到
+    <code>409 event_id_conflict</code>（payload 完全相同時為 <code>200 duplicate</code>），兩者皆零寫入。
+  </p>
 
   <!-- 共用設定 -->
   <div class="shared">
     <h2>共用設定</h2>
     <div class="grid">
-      <div><label>ingestion-api Base URL</label><input id="ingestionBase" value="http://127.0.0.1:8080" /></div>
+      <div><label>ingestion-api Base URL</label><input id="ingestionBase" value="http://127.0.0.1:8086" /></div>
       <div><label>Firestore Emulator Base URL</label><input id="firestoreBase" value="http://127.0.0.1:8085" /></div>
       <div><label>Firebase Project ID</label><input id="projectId" value="demo-peecare" /></div>
       <div><label>Webhook Secret（EMQX_WEBHOOK_SECRET_CURRENT）</label><input id="secret" value="local-dev-secret" /></div>
       <div><label>productModel</label><input id="productModel" value="pc-mini" /></div>
       <div><label>deviceId</label><input id="deviceId" value="PC-000001" /></div>
+      <div>
+        <label>bootId（開機計數器）</label>
+        <input id="bootId" type="number" min="0" value="1" />
+      </div>
       <div><label>ownerUid（Web 端讀取用）</label><input id="ownerUid" value="test-user-uid" /></div>
       <div><label>clientId（須等於 deviceId）</label><input id="clientId" value="PC-000001" /></div>
-      <div><label>username</label><input id="username" value="PC-000001" /></div>
+      <div><label>username</label><input id="username" value="Andrew" /></div>
       <div><label>qos</label>
         <select id="qos"><option>0</option><option selected>1</option><option>2</option></select>
       </div>
@@ -129,11 +139,11 @@
   <div class="card">
     <h2>③ 排尿事件 <span class="ep">POST /v1/emqx/events</span></h2>
     <div class="grid">
-      <div><label>sequence</label><input id="ur-seq" type="number" value="42" /></div>
+      <div><label>sequence</label><input id="ur-seq" type="number" value="1" /></div>
       <div>
         <label>eventId</label>
-        <input id="ur-eventId" value="PC-000001:42" />
-        <div class="cb"><input type="checkbox" id="ur-auto" checked /> 自動用 deviceId:sequence</div>
+        <input id="ur-eventId" value="PC-000001:1:1" />
+        <div class="cb"><input type="checkbox" id="ur-auto" checked /> 自動用 deviceId:bootId:sequence</div>
       </div>
       <div>
         <label>recordedAtMs</label>
@@ -144,7 +154,7 @@
         </select>
         <input id="ur-recorded" type="number" placeholder="自訂毫秒" style="margin-top:6px" />
       </div>
-      <div><label>firmwareVersion</label><input id="ur-fw" value="1.2.0" /></div>
+      <div><label>firmwareVersion</label><input id="ur-fw" value="1.0.0" /></div>
       <div><label>flushDurationMs</label><input id="ur-flush" type="number" value="3000" /></div>
       <div><label>pumpDurationMs</label><input id="ur-pump" type="number" value="5000" /></div>
       <div>
@@ -165,11 +175,11 @@
   <div class="card">
     <h2>④ 電量事件 <span class="ep">POST /v1/emqx/events</span></h2>
     <div class="grid">
-      <div><label>sequence</label><input id="bt-seq" type="number" value="43" /></div>
+      <div><label>sequence</label><input id="bt-seq" type="number" value="2" /></div>
       <div>
         <label>eventId</label>
-        <input id="bt-eventId" value="PC-000001:43" />
-        <div class="cb"><input type="checkbox" id="bt-auto" checked /> 自動用 deviceId:sequence</div>
+        <input id="bt-eventId" value="PC-000001:1:2" />
+        <div class="cb"><input type="checkbox" id="bt-auto" checked /> 自動用 deviceId:bootId:sequence</div>
       </div>
       <div>
         <label>recordedAtMs</label>
@@ -180,7 +190,7 @@
         </select>
         <input id="bt-recorded" type="number" placeholder="自訂毫秒" style="margin-top:6px" />
       </div>
-      <div><label>firmwareVersion</label><input id="bt-fw" value="1.2.0" /></div>
+      <div><label>firmwareVersion</label><input id="bt-fw" value="1.0.0" /></div>
       <div><label>batteryLevelPercent</label>
         <select id="bt-level"><option>0</option><option>25</option><option>50</option><option selected>75</option><option>100</option></select>
       </div>
@@ -218,6 +228,7 @@ function shared() {
     secret: val('secret'),
     productModel: val('productModel'),
     deviceId,
+    bootId: val('bootId'),
     ownerUid: val('ownerUid'),
     clientId: val('clientId') || deviceId,
     username: val('username') || deviceId,
@@ -232,9 +243,15 @@ function resolveTime(mode, customId) {
   return raw === '' ? null : Number(raw);
 }
 
-function resolveEventId(autoId, fieldId, deviceId, sequence) {
+// eventId 必須跨電源循環唯一。裝置重開機後 sequence 會歸零，因此組法必須帶入
+// 開機計數器（bootId），否則新事件會撞到既有文件而被拒（409 / 靜默 duplicate）。
+function buildEventId(deviceId, bootId, sequence) {
+  return `${deviceId}:${bootId}:${sequence}`;
+}
+
+function resolveEventId(autoId, fieldId, deviceId, bootId, sequence) {
   if ($(autoId).checked) {
-    const derived = `${deviceId}:${sequence}`;
+    const derived = buildEventId(deviceId, bootId, sequence);
     $(fieldId).value = derived;
     return derived;
   }
@@ -265,7 +282,7 @@ const builders = {
   urination() {
     const s = shared();
     const sequence = Number(val('ur-seq'));
-    const eventId = resolveEventId('ur-auto', 'ur-eventId', s.deviceId, sequence);
+    const eventId = resolveEventId('ur-auto', 'ur-eventId', s.deviceId, s.bootId, sequence);
     const payload = {
       schemaVersion: 1, eventId, eventType: 'urination', deviceId: s.deviceId, sequence,
       recordedAtMs: resolveTime(val('ur-timeMode'), 'ur-recorded'),
@@ -284,7 +301,7 @@ const builders = {
   battery() {
     const s = shared();
     const sequence = Number(val('bt-seq'));
-    const eventId = resolveEventId('bt-auto', 'bt-eventId', s.deviceId, sequence);
+    const eventId = resolveEventId('bt-auto', 'bt-eventId', s.deviceId, s.bootId, sequence);
     const payload = {
       schemaVersion: 1, eventId, eventType: 'battery', deviceId: s.deviceId, sequence,
       recordedAtMs: resolveTime(val('bt-timeMode'), 'bt-recorded'),
@@ -353,13 +370,13 @@ async function runAll() {
 }
 $('runAll').addEventListener('click', runAll);
 
-// eventId 欄位在「自動」開啟時鎖定，並隨 deviceId / sequence 即時更新
+// eventId 欄位在「自動」開啟時鎖定，並隨 deviceId / bootId / sequence 即時更新
 function syncAuto(autoId, fieldId, seqId) {
   const auto = $(autoId).checked;
   $(fieldId).disabled = auto;
-  if (auto) $(fieldId).value = `${val('deviceId')}:${val(seqId)}`;
+  if (auto) $(fieldId).value = buildEventId(val('deviceId'), val('bootId'), val(seqId));
 }
-['ur-auto', 'bt-auto', 'ur-seq', 'bt-seq', 'deviceId'].forEach((id) =>
+['ur-auto', 'bt-auto', 'ur-seq', 'bt-seq', 'deviceId', 'bootId'].forEach((id) =>
   $(id).addEventListener('input', () => {
     syncAuto('ur-auto', 'ur-eventId', 'ur-seq');
     syncAuto('bt-auto', 'bt-eventId', 'bt-seq');
