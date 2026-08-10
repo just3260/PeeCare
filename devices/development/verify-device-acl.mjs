@@ -185,10 +185,19 @@ function connectPacket({ deviceId, username, password }) {
   return packet(0x10, body)
 }
 
-function publishPacket({ topic, qos, retained }) {
+function publishPacket({ topic, qos, retained, payload }) {
   if (qos !== 1) fail('mqtt_probe_policy_invalid', 'ACL publish probes require QoS 1')
+  let payloadBytes
+  try {
+    payloadBytes = Buffer.from(payload === undefined ? '{}' : JSON.stringify(payload), 'utf8')
+  } catch {
+    fail('mqtt_probe_policy_invalid', 'MQTT probe payload must be JSON serializable')
+  }
+  if (payloadBytes.length > 65_536) {
+    fail('mqtt_probe_policy_invalid', 'MQTT probe payload exceeds the ingestion boundary')
+  }
   const packetId = Buffer.from([0x00, 0x01])
-  const body = Buffer.concat([encodeUtf8(topic), packetId, Buffer.from([0x00]), Buffer.from('{}')])
+  const body = Buffer.concat([encodeUtf8(topic), packetId, Buffer.from([0x00]), payloadBytes])
   return packet(0x30 | 0x02 | (retained ? 0x01 : 0x00), body)
 }
 

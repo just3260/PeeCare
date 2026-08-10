@@ -1,0 +1,61 @@
+{
+  "rule": {
+    "id": "peecare_development_telemetry",
+    "name": "peecare_development_telemetry",
+    "description": "Forward canonical PeeCare development telemetry to the ingestion webhook.",
+    "enable": true,
+    "sql": "SELECT\n  topic,\n  clientid AS clientId,\n  username,\n  qos,\n  flags.retain AS retained,\n  publish_received_at AS brokerReceivedAtMs,\n  json_decode(payload) AS payload\nFROM \"products/+/devices/+/events/urination\",\n  \"products/+/devices/+/status/battery\"",
+    "actions": [
+      "http:peecare_development_ingestion"
+    ]
+  },
+  "connector": {
+    "type": "http",
+    "name": "peecare_development_ingestion",
+    "description": "Connect to the approved development Cloud Run ingestion origin.",
+    "enable": true,
+    "url": "{{PEECARE_DEVELOPMENT_INGESTION_ORIGIN}}",
+    "connect_timeout": "10s",
+    "pool_size": 2,
+    "enable_pipelining": 1,
+    "ssl": {
+      "enable": true,
+      "verify": "verify_peer"
+    }
+  },
+  "action": {
+    "type": "http",
+    "name": "peecare_development_ingestion",
+    "connector": "peecare_development_ingestion",
+    "description": "POST the fixed PeeCare event envelope to development Cloud Run.",
+    "enable": true,
+    "parameters": {
+      "method": "post",
+      "path": "/v1/emqx/events",
+      "headers": {
+        "authorization": "Bearer {{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}",
+        "content-type": "application/json"
+      },
+      "body": "${.}"
+    },
+    "resource_opts": {
+      "query_mode": "async",
+      "worker_pool_size": 2,
+      "inflight_window": 10,
+      "max_buffer_bytes": "8MB",
+      "request_ttl": "30s",
+      "health_check_interval": "15s"
+    }
+  },
+  "alertThresholds": {
+    "warning": {
+      "retried": 1,
+      "queuingSeconds": 60
+    },
+    "critical": {
+      "failedInFiveMinutes": 3,
+      "dropped": 1,
+      "lateReply": 1
+    }
+  }
+}

@@ -184,6 +184,7 @@ describe('MQTT 5 TLS ACL probe', () => {
         topic: 'products/pc-mini/devices/PC-000001/events/urination',
         qos: 1,
         retained: false,
+        payload: { eventType: 'urination', sequence: 1 },
       }),
     ).resolves.toBe(outcome)
     expect(connectTls).toHaveBeenCalledWith(
@@ -198,6 +199,9 @@ describe('MQTT 5 TLS ACL probe', () => {
     expect(socket.writes[0][0]).toBe(0x10)
     expect(socket.writes[0]).toContain(0x05)
     expect(socket.writes[1][0] & 0xf0).toBe(0x30)
+    expect(socket.writes[1].subarray(-40).toString('utf8')).toContain(
+      '"eventType":"urination"',
+    )
   })
 
   it('classifies a command SUBACK not-authorized reason as denied', async () => {
