@@ -43,6 +43,9 @@ Urination run 記錄觸發前 daily count，要求 first delivery HTTP 201、`de
 - [Risk] 人工 trigger 不穩定 → 明確 operator checkpoints 與 eventId capture，失敗可重跑但不覆蓋 evidence。
 - [Risk] evidence 洩漏敏感資訊 → allowlisted schema 與 final secret/PII scan。
 
-## Open Questions
+## Resolved refinement gates
 
-實機 trigger procedure、diagnostic transport、observation window 與 evidence retention 是 apply 前 refinement gates。
+- 實機 trigger 由 operator 依 `verification/real-device/README.md` 的 checkpoints 人工執行；runner 不控制馬達。
+- eventId 只從核准的裝置 diagnostic transport 擷取，Cloud Run requestId 不得取代 domain identity。
+- observation window 必須由 live adapter 以正整數明確提供；timeout 產生 failed evidence，不得視為成功。
+- evidence 先通過 schema 與 secret/PII scan 才交給 immutable persistence adapter；marker-scoped cleanup 不刪除 evidence。

@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://peecare.dev/schemas/real-device-evidence.schema.json",
+  "title": "PeeCare real-device verification evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "status",
+    "startedAt",
+    "completedAt",
+    "domain",
+    "preflight",
+    "observations",
+    "assertions"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "status": { "enum": ["passed", "failed"] },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "domain": { "$ref": "#/$defs/domain" },
+    "preflight": { "$ref": "#/$defs/preflight" },
+    "observations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/observation" }
+    },
+    "assertions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/assertion" }
+    },
+    "cleanup": { "$ref": "#/$defs/cleanup" },
+    "failure": { "$ref": "#/$defs/failure" }
+  },
+  "$defs": {
+    "safeIdentifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[^\\r\\n\\u0000]+$"
+    },
+    "domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deviceId", "eventId"],
+      "properties": {
+        "deviceId": { "$ref": "#/$defs/safeIdentifier" },
+        "eventId": { "$ref": "#/$defs/safeIdentifier" }
+      }
+    },
+    "preflight": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capturedAt",
+        "deviceInventoryVersion",
+        "emqxRuleVersion",
+        "emqxActionVersion",
+        "cloudRunImageDigest",
+        "firebaseProjectId",
+        "hostingVersion"
+      ],
+      "properties": {
+        "capturedAt": { "type": "string", "format": "date-time" },
+        "deviceInventoryVersion": { "$ref": "#/$defs/safeIdentifier" },
+        "emqxRuleVersion": { "$ref": "#/$defs/safeIdentifier" },
+        "emqxActionVersion": { "$ref": "#/$defs/safeIdentifier" },
+        "cloudRunImageDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "firebaseProjectId": { "$ref": "#/$defs/safeIdentifier" },
+        "hostingVersion": { "$ref": "#/$defs/safeIdentifier" }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layer", "observedAt"],
+      "properties": {
+        "layer": { "$ref": "#/$defs/safeIdentifier" },
+        "observedAt": { "type": "string", "format": "date-time" },
+        "statusCode": { "type": "integer", "minimum": 100, "maximum": 599 },
+        "requestId": { "$ref": "#/$defs/safeIdentifier" },
+        "path": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" }
+      }
+    },
+    "assertion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "passed"],
+      "properties": {
+        "name": { "$ref": "#/$defs/safeIdentifier" },
+        "passed": { "type": "boolean" },
+        "code": { "$ref": "#/$defs/safeIdentifier" }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["marker", "paths", "completed"],
+      "properties": {
+        "marker": { "$ref": "#/$defs/safeIdentifier" },
+        "paths": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 512 } },
+        "completed": { "type": "boolean" }
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code"],
+      "properties": {
+        "code": { "$ref": "#/$defs/safeIdentifier" }
+      }
+    }
+  }
+}

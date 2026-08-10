@@ -32,6 +32,7 @@
     - `verification/real-device/run.spec.ts`
   - Modified:
     - `package.json`
+    - `vitest.config.ts`
   - Removed: none
 - Prerequisites: 第四階段前五個 changes 及所有第二、第三階段 changes。
 - Correlation keys: deviceId + eventId 為 domain identity，Cloud Run requestId 用於 sanitized HTTP/log correlation，但不得取代 eventId。

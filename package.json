@@ -32,6 +32,7 @@
     "device:development:rotate": "node devices/development/provision-device.mjs --rotate --secret-output-tty",
     "device:development:revoke": "node devices/development/provision-device.mjs --revoke",
     "device:development:verify-acl": "node devices/development/verify-device-acl.mjs",
+    "real-device:development:dry-run": "node verification/real-device/run.mjs --dry-run",
     "member:development:deploy": "node deploy/development/deploy-member.mjs",
     "member:development:verify": "node deploy/development/verify-member.mjs",
     "member:development:rollback": "node deploy/development/verify-member.mjs --rollback-dry-run",
