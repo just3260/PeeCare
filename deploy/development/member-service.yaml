@@ -1,0 +1,45 @@
+{
+  "apiVersion": "peecare.dev/v1",
+  "kind": "CloudRunService",
+  "metadata": {
+    "projectId": "petcare-c7483",
+    "region": "asia-east1",
+    "service": "peecare-member-development"
+  },
+  "image": {
+    "digestPattern": "^asia-east1-docker\\.pkg\\.dev/petcare-c7483/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$"
+  },
+  "runtimeIdentity": {
+    "serviceAccount": "peecare-member-runtime@petcare-c7483.iam.gserviceaccount.com",
+    "accountId": "peecare-member-runtime",
+    "displayName": "PeeCare development Member API runtime"
+  },
+  "iam": {
+    "projectRoles": ["roles/datastore.user", "roles/firebaseauth.viewer"]
+  },
+  "resources": {
+    "billing": "request-based",
+    "cpu": "1",
+    "memory": "512Mi",
+    "timeoutSeconds": 60,
+    "concurrency": 20,
+    "minInstances": 0,
+    "maxInstances": 2
+  },
+  "network": {
+    "ingress": "all",
+    "allowUnauthenticated": true,
+    "publicHealthPath": "/health",
+    "protectedMutationPath": "/v1/devices/:deviceId/display-name",
+    "applicationAuth": "firebase-id-token-revoked-aware-owner",
+    "allowedOrigin": "https://petcare-c7483.web.app"
+  },
+  "runtimeEnvironment": {
+    "values": {
+      "NODE_ENV": "production",
+      "GOOGLE_CLOUD_PROJECT": "petcare-c7483",
+      "PEECARE_WEB_ORIGIN": "https://petcare-c7483.web.app"
+    },
+    "platformProvided": ["PORT"]
+  }
+}

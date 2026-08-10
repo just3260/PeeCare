@@ -131,7 +131,9 @@ export function buildApp(options: MemberApiAppOptions): FastifyInstance {
     }
   });
 
-  app.get('/healthz', async () => ({ status: 'ok' }));
+  const healthResponse = async () => ({ status: 'ok' as const });
+  app.get('/health', healthResponse);
+  app.get('/healthz', healthResponse);
 
   app.patch<{
     Params: { deviceId: string };

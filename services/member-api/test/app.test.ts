@@ -43,10 +43,10 @@ describe('Member API application boundary', () => {
     return { app, dependencies };
   }
 
-  it('returns the canonical health response', async () => {
+  it.each(['/health', '/healthz'])('returns the canonical health response at %s', async (url) => {
     const { app } = createApp();
 
-    const response = await app.inject({ method: 'GET', url: '/healthz' });
+    const response = await app.inject({ method: 'GET', url });
 
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ status: 'ok' });

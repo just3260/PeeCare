@@ -77,12 +77,17 @@ function validateEmulatorHost(value: string | undefined, name: string): string |
 }
 
 export function readConfig(env: NodeJS.ProcessEnv = process.env): MemberApiConfig {
+  if (env.GOOGLE_APPLICATION_CREDENTIALS !== undefined) {
+    throw new Error(
+      'Member API must use Application Default Credentials without a service-account key file.',
+    );
+  }
   if (Object.keys(env).some((key) => key.startsWith('EMQX_WEBHOOK_SECRET'))) {
     throw new Error('Member API must not accept ingestion secret configuration.');
   }
 
   const environment = parseEnvironment(env.NODE_ENV);
-  const projectId = parseProjectId(env.GOOGLE_CLOUD_PROJECT ?? env.GCLOUD_PROJECT);
+  const projectId = parseProjectId(env.GOOGLE_CLOUD_PROJECT);
   const allowedOrigin = parseAllowedWebOrigin(
     requireValue(env.PEECARE_WEB_ORIGIN, 'PEECARE_WEB_ORIGIN'),
   );
@@ -109,4 +114,18 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): MemberApiConfi
       ...(firestoreEmulatorHost ? { emulatorHost: firestoreEmulatorHost } : {}),
     },
   };
+}
+
+/** Parse the deployed Cloud Run contract without local-mode fallbacks. */
+export function readProductionConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): MemberApiConfig & { readonly environment: 'production' } {
+  if (env.NODE_ENV !== 'production') {
+    throw new Error('Deployed Member API requires NODE_ENV=production.');
+  }
+  const config = readConfig(env);
+  if (config.environment !== 'production') {
+    throw new Error('Deployed Member API requires NODE_ENV=production.');
+  }
+  return config as MemberApiConfig & { readonly environment: 'production' };
 }

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { MEMBER_API_DEPLOYMENT_CONTRACT, readConfig } from '../src/config.js';
+import {
+  MEMBER_API_DEPLOYMENT_CONTRACT,
+  readConfig,
+  readProductionConfig,
+} from '../src/config.js';
 
 function productionEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
@@ -82,6 +86,44 @@ describe('Member API runtime configuration', () => {
       expect(() => readConfig(productionEnv({ [key]: '' }))).toThrow('ingestion secret');
     },
   );
+
+  it('rejects service-account key configuration so production uses ADC', () => {
+    expect(() =>
+      readConfig(
+        productionEnv({ GOOGLE_APPLICATION_CREDENTIALS: '/run/secrets/key.json' }),
+      ),
+    ).toThrow('Application Default Credentials');
+  });
+
+  it('does not accept the legacy GCLOUD_PROJECT alias', () => {
+    expect(() =>
+      readConfig(
+        productionEnv({
+          GOOGLE_CLOUD_PROJECT: undefined,
+          GCLOUD_PROJECT: 'petcare-c7483',
+        }),
+      ),
+    ).toThrow('GOOGLE_CLOUD_PROJECT');
+  });
+
+  it.each([undefined, 'development', 'test', 'staging'])(
+    'requires NODE_ENV=production at the deployed server boundary: %j',
+    (nodeEnv) => {
+      expect(() =>
+        readProductionConfig(productionEnv({ NODE_ENV: nodeEnv })),
+      ).toThrow('NODE_ENV=production');
+    },
+  );
+
+  it('accepts only the exact production application environment contract', () => {
+    expect(readProductionConfig(productionEnv())).toEqual({
+      environment: 'production',
+      projectId: 'peecare-development',
+      allowedOrigin: 'https://app.peecare.test',
+      port: 8080,
+      firestore: { projectId: 'peecare-development' },
+    });
+  });
 
   it('accepts explicit loopback Emulators only outside production', () => {
     expect(
