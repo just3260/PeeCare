@@ -1,5 +1,6 @@
 {
   "projects": {
-    "default": "demo-peecare"
+    "default": "demo-peecare",
+    "development": "petcare-c7483"
   }
 }

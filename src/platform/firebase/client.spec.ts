@@ -127,14 +127,22 @@ describe('getLocalFirebaseServices', () => {
   )
 })
 
-describe('getFirebaseServices in production', () => {
-  it('initializes the same single Firebase app without connecting Emulators', () => {
-    const env: RawFirebaseEnv = {
+describe('getFirebaseServices in development', () => {
+  function validDevelopmentEnv(): RawFirebaseEnv {
+    return {
       MODE: 'production',
       PROD: true,
-      VITE_FIREBASE_PROJECT_ID: 'peecare-production',
-      VITE_FIREBASE_API_KEY: 'production-api-key',
+      VITE_FIREBASE_ENVIRONMENT: 'development',
+      VITE_FIREBASE_APPROVED_PROJECT_ID: 'peecare-development',
+      VITE_FIREBASE_PROJECT_ID: 'peecare-development',
+      VITE_FIREBASE_API_KEY: 'development-api-key',
+      VITE_FIREBASE_AUTH_DOMAIN: 'peecare-development.firebaseapp.com',
+      VITE_FIREBASE_APP_ID: '1:123456789:web:abcdef',
     }
+  }
+
+  it('initializes the same single Firebase app with complete config and no Emulators', () => {
+    const env = validDevelopmentEnv()
 
     const first = getFirebaseServices(env)
     const second = getFirebaseServices(env)
@@ -142,10 +150,59 @@ describe('getFirebaseServices in production', () => {
     expect(first).toBe(second)
     expect(mocks.initializeApp).toHaveBeenCalledOnce()
     expect(mocks.initializeApp).toHaveBeenCalledWith({
-      projectId: 'peecare-production',
-      apiKey: 'production-api-key',
+      projectId: 'peecare-development',
+      apiKey: 'development-api-key',
+      authDomain: 'peecare-development.firebaseapp.com',
+      appId: '1:123456789:web:abcdef',
     })
     expect(mocks.connectAuthEmulator).not.toHaveBeenCalled()
     expect(mocks.connectFirestoreEmulator).not.toHaveBeenCalled()
   })
+
+  const rejectedDevelopmentCases: ReadonlyArray<{
+    name: string
+    env: RawFirebaseEnv
+    code: string
+  }> = [
+    {
+      name: 'missing discriminator',
+      env: { ...validDevelopmentEnv(), VITE_FIREBASE_ENVIRONMENT: undefined },
+      code: 'invalid_environment',
+    },
+    {
+      name: 'project mismatch',
+      env: { ...validDevelopmentEnv(), VITE_FIREBASE_PROJECT_ID: 'peecare-staging' },
+      code: 'project_mismatch',
+    },
+    {
+      name: 'auth domain mismatch',
+      env: {
+        ...validDevelopmentEnv(),
+        VITE_FIREBASE_AUTH_DOMAIN: 'peecare-staging.firebaseapp.com',
+      },
+      code: 'auth_domain_mismatch',
+    },
+    {
+      name: 'loopback auth domain',
+      env: { ...validDevelopmentEnv(), VITE_FIREBASE_AUTH_DOMAIN: '127.0.0.1' },
+      code: 'auth_domain_mismatch',
+    },
+    {
+      name: 'Emulator flag',
+      env: { ...validDevelopmentEnv(), VITE_FIREBASE_USE_EMULATORS: 'true' },
+      code: 'emulator_enabled_in_development',
+    },
+  ]
+
+  it.each(rejectedDevelopmentCases)(
+    'rejects $name before every Firebase SDK call',
+    ({ env, code }) => {
+      expect(() => getFirebaseServices(env)).toThrowError(expect.objectContaining({ code }))
+      expect(mocks.initializeApp).not.toHaveBeenCalled()
+      expect(mocks.getAuth).not.toHaveBeenCalled()
+      expect(mocks.getFirestore).not.toHaveBeenCalled()
+      expect(mocks.connectAuthEmulator).not.toHaveBeenCalled()
+      expect(mocks.connectFirestoreEmulator).not.toHaveBeenCalled()
+    },
+  )
 })

@@ -8,7 +8,7 @@ local Emulator 通過後仍需要隔離的 development Firebase project 驗證�
 - 建立 Auth、Firestore、Rules、indexes 的 development deployment/check 流程。
 - 建立最小測試會員與 Owner 裝置 seed 的 Admin-only runner。
 - 將 project ID、region、billing 與 Auth provider 列為 apply 前 refinement gates。
-- 新增 cloud Firebase config/client adapter，與既有 `demo-peecare` Emulator adapter 共用相同 service interface，但在 SDK initialization 前完成 environment isolation。
+- 擴充既有 `src/platform/firebase/config.ts` 與 `src/platform/firebase/client.ts`，讓 cloud Firebase config 與 `demo-peecare` Emulator config 共用相同 service interface，並在 SDK initialization 前完成 environment isolation。
 - Development seed 必須以 merge 加入 `ownerUid`，保留第二階段 ingestion registry 與 latest projection 欄位。
 
 ## Capabilities
@@ -30,13 +30,16 @@ local Emulator 通過後仍需要隔離的 development Firebase project 驗證�
     - `firebase/development/preflight.mjs`
     - `firebase/development/seed.mjs`
     - `firebase/development/README.md`
-    - `src/platform/firebase/cloud-config.ts`
-    - `src/platform/firebase/cloud-client.ts`
-    - `src/platform/firebase/services.ts`
   - Modified:
     - `.firebaserc`
+    - `.env.example`
+    - `env.d.ts`
     - `package.json`
     - `.gitignore`
+    - `src/platform/firebase/config.ts`
+    - `src/platform/firebase/config.spec.ts`
+    - `src/platform/firebase/client.ts`
+    - `src/platform/firebase/client.spec.ts`
   - Removed: none
 - Prerequisites: `bootstrap-local-firebase-platform` 與第三階段 Auth/Owner changes。
 - Upstream local contract: `demo-peecare`、Auth `127.0.0.1:9099`、Firestore `127.0.0.1:8085`；cloud mode 絕不可呼叫 Emulator connectors。

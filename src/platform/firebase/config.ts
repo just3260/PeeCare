@@ -18,11 +18,13 @@ export const EMULATOR_HOST = '127.0.0.1'
 
 export type LocalFirebaseConfigErrorCode =
   | 'missing_config'
+  | 'invalid_environment'
   | 'emulator_disabled'
   | 'project_mismatch'
+  | 'auth_domain_mismatch'
   | 'non_loopback_host'
   | 'production_mode'
-  | 'emulator_enabled_in_production'
+  | 'emulator_enabled_in_development'
 
 /** Raised for every invalid local configuration, before any SDK initialization. */
 export class LocalFirebaseConfigurationError extends Error {
@@ -58,9 +60,13 @@ export interface LocalFirebaseConfig {
 export interface RawFirebaseEnv {
   readonly MODE?: string
   readonly PROD?: boolean
+  readonly VITE_FIREBASE_ENVIRONMENT?: string
+  readonly VITE_FIREBASE_APPROVED_PROJECT_ID?: string
   readonly VITE_FIREBASE_USE_EMULATORS?: string
   readonly VITE_FIREBASE_PROJECT_ID?: string
   readonly VITE_FIREBASE_API_KEY?: string
+  readonly VITE_FIREBASE_AUTH_DOMAIN?: string
+  readonly VITE_FIREBASE_APP_ID?: string
   readonly VITE_FIREBASE_AUTH_EMULATOR_HOST?: string
   readonly VITE_FIREBASE_AUTH_EMULATOR_PORT?: string
   readonly VITE_FIREBASE_FIRESTORE_EMULATOR_HOST?: string
@@ -158,21 +164,28 @@ export function parseMemberApiConfig(env: RawFirebaseEnv): MemberApiConfig {
   return { baseUrl: new URL(`${baseUrl.origin}/`) }
 }
 
-export interface ProductionFirebaseConfig {
-  readonly environment: 'production'
+export interface DevelopmentFirebaseConfig {
+  readonly environment: 'development'
   readonly projectId: string
   readonly apiKey: string
+  readonly authDomain: string
+  readonly appId: string
 }
 
 export type FirebaseClientConfig =
-  | ProductionFirebaseConfig
+  | DevelopmentFirebaseConfig
   | (LocalFirebaseConfig & { readonly environment: 'local' })
 
 /** Resolve one Firebase client contract for the active Vite environment. */
 export function parseFirebaseClientConfig(env: RawFirebaseEnv): FirebaseClientConfig {
-  const production = env.PROD === true || env.MODE === 'production'
-  if (!production) {
+  if (env.VITE_FIREBASE_ENVIRONMENT === 'local') {
     return { environment: 'local', ...parseLocalFirebaseConfig(env) }
+  }
+  if (env.VITE_FIREBASE_ENVIRONMENT !== 'development') {
+    throw new LocalFirebaseConfigurationError(
+      'invalid_environment',
+      'VITE_FIREBASE_ENVIRONMENT must explicitly select local or development.',
+    )
   }
 
   if (
@@ -183,15 +196,48 @@ export function parseFirebaseClientConfig(env: RawFirebaseEnv): FirebaseClientCo
     env.VITE_FIREBASE_FIRESTORE_EMULATOR_PORT !== undefined
   ) {
     throw new LocalFirebaseConfigurationError(
-      'emulator_enabled_in_production',
-      'Production Firebase configuration must not include Emulator settings.',
+      'emulator_enabled_in_development',
+      'Development Firebase configuration must not include Emulator settings.',
+    )
+  }
+
+  const approvedProjectId = requireString(
+    env.VITE_FIREBASE_APPROVED_PROJECT_ID,
+    'VITE_FIREBASE_APPROVED_PROJECT_ID',
+  )
+  const projectId = requireString(env.VITE_FIREBASE_PROJECT_ID, 'VITE_FIREBASE_PROJECT_ID')
+  const apiKey = requireString(env.VITE_FIREBASE_API_KEY, 'VITE_FIREBASE_API_KEY')
+  const authDomain = requireString(env.VITE_FIREBASE_AUTH_DOMAIN, 'VITE_FIREBASE_AUTH_DOMAIN')
+  const appId = requireString(env.VITE_FIREBASE_APP_ID, 'VITE_FIREBASE_APP_ID')
+
+  if (
+    projectId !== approvedProjectId ||
+    projectId === DEMO_PROJECT_ID ||
+    /(^|-)(prod|production)(-|$)/i.test(projectId)
+  ) {
+    throw new LocalFirebaseConfigurationError(
+      'project_mismatch',
+      'Development Firebase project must match the approved non-demo, non-production project.',
+    )
+  }
+
+  const allowedAuthDomains = new Set([
+    `${projectId}.firebaseapp.com`,
+    `${projectId}.web.app`,
+  ])
+  if (!allowedAuthDomains.has(authDomain)) {
+    throw new LocalFirebaseConfigurationError(
+      'auth_domain_mismatch',
+      'VITE_FIREBASE_AUTH_DOMAIN must belong to the approved development project.',
     )
   }
 
   return {
-    environment: 'production',
-    projectId: requireString(env.VITE_FIREBASE_PROJECT_ID, 'VITE_FIREBASE_PROJECT_ID'),
-    apiKey: requireString(env.VITE_FIREBASE_API_KEY, 'VITE_FIREBASE_API_KEY'),
+    environment: 'development',
+    projectId,
+    apiKey,
+    authDomain,
+    appId,
   }
 }
 

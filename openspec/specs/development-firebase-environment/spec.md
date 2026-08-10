@@ -1,4 +1,10 @@
-## ADDED Requirements
+# development-firebase-environment Specification
+
+## Purpose
+
+Define the safeguards, configuration, provisioning, seeded test data, and readiness checks required for an isolated Firebase development environment.
+
+## Requirements
 
 ### Requirement: Approved development inventory
 
@@ -18,7 +24,7 @@ Preflight SHALL reject demo, production, or non-allowlisted project IDs and SHAL
 
 ### Requirement: Explicit cloud Firebase adapter
 
-The Web build SHALL use a development Firebase adapter only when the environment explicitly selects the approved project and SHALL NOT fall back from missing configuration.
+The Web build SHALL use a development Firebase adapter only when `VITE_FIREBASE_ENVIRONMENT=development` explicitly selects the approved project and SHALL NOT fall back from a missing or unknown environment discriminator or missing configuration.
 
 #### Scenario: Build with missing cloud config
 - **WHEN** required development Firebase values are absent
@@ -42,7 +48,7 @@ The Admin seed runner SHALL create only marker-scoped test members and domain do
 
 ### Requirement: Pre-initialization environment isolation
 
-The shared Firebase service entry SHALL select local or development mode from an explicit environment discriminator before SDK initialization. Development mode MUST reject `demo-peecare`, loopback hosts, enabled Emulator flags, and project IDs different from the approved inventory. A rejected configuration SHALL call neither Firebase initialization nor Emulator connector functions.
+The shared Firebase service entry SHALL select local or development mode from `VITE_FIREBASE_ENVIRONMENT` before SDK initialization. Development mode MUST reject `demo-peecare`, loopback hosts, any Emulator setting, and project IDs different from the approved inventory. A rejected configuration SHALL call neither Firebase initialization, service factory, nor Emulator connector functions.
 
 #### Scenario: Reject Emulator settings in development mode
 - **WHEN** development mode includes `VITE_FIREBASE_USE_EMULATORS=true`

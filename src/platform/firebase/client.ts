@@ -29,7 +29,16 @@ export type FirebaseServices = LocalFirebaseServices
 let cachedServices: LocalFirebaseServices | null = null
 
 function initializeServices(config: FirebaseClientConfig): FirebaseServices {
-  const app = initializeApp({ projectId: config.projectId, apiKey: config.apiKey })
+  const app = initializeApp(
+    config.environment === 'development'
+      ? {
+          projectId: config.projectId,
+          apiKey: config.apiKey,
+          authDomain: config.authDomain,
+          appId: config.appId,
+        }
+      : { projectId: config.projectId, apiKey: config.apiKey },
+  )
   const auth = getAuth(app)
   const firestore = getFirestore(app)
 
@@ -50,7 +59,7 @@ function initializeServices(config: FirebaseClientConfig): FirebaseServices {
   return cachedServices
 }
 
-/** Return the one Firebase app for either production or local Emulator mode. */
+/** Return the one Firebase app for explicit development or local Emulator mode. */
 export function getFirebaseServices(env: RawFirebaseEnv = import.meta.env): FirebaseServices {
   if (cachedServices) return cachedServices
   return initializeServices(parseFirebaseClientConfig(env))

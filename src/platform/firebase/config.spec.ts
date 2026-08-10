@@ -253,30 +253,101 @@ describe('parseMemberApiConfig', () => {
 })
 
 describe('parseFirebaseClientConfig', () => {
-  it('returns production Firebase config without Emulator endpoints', () => {
+  function validDevelopmentEnv(): RawFirebaseEnv {
+    return {
+      MODE: 'production',
+      PROD: true,
+      VITE_FIREBASE_ENVIRONMENT: 'development',
+      VITE_FIREBASE_APPROVED_PROJECT_ID: 'peecare-development',
+      VITE_FIREBASE_PROJECT_ID: 'peecare-development',
+      VITE_FIREBASE_API_KEY: 'development-api-key',
+      VITE_FIREBASE_AUTH_DOMAIN: 'peecare-development.firebaseapp.com',
+      VITE_FIREBASE_APP_ID: '1:123456789:web:abcdef',
+    }
+  }
+
+  it('returns complete development Firebase config without Emulator endpoints', () => {
     expect(
-      parseFirebaseClientConfig({
-        MODE: 'production',
-        PROD: true,
-        VITE_FIREBASE_PROJECT_ID: 'peecare-production',
-        VITE_FIREBASE_API_KEY: 'production-api-key',
-      }),
+      parseFirebaseClientConfig(validDevelopmentEnv()),
     ).toEqual({
-      environment: 'production',
-      projectId: 'peecare-production',
-      apiKey: 'production-api-key',
+      environment: 'development',
+      projectId: 'peecare-development',
+      apiKey: 'development-api-key',
+      authDomain: 'peecare-development.firebaseapp.com',
+      appId: '1:123456789:web:abcdef',
     })
   })
 
-  it('rejects Emulator configuration in production', () => {
+  it.each([undefined, '', 'staging', 'production'])(
+    'rejects missing or unknown environment discriminator %j',
+    (environment) => {
+      expect(() =>
+        parseFirebaseClientConfig({
+          ...validDevelopmentEnv(),
+          VITE_FIREBASE_ENVIRONMENT: environment,
+        }),
+      ).toThrowError(expect.objectContaining({ code: 'invalid_environment' }))
+    },
+  )
+
+  it.each([
+    'VITE_FIREBASE_APPROVED_PROJECT_ID',
+    'VITE_FIREBASE_PROJECT_ID',
+    'VITE_FIREBASE_API_KEY',
+    'VITE_FIREBASE_AUTH_DOMAIN',
+    'VITE_FIREBASE_APP_ID',
+  ] as const)('rejects missing development field %s', (field) => {
+    expect(() =>
+      parseFirebaseClientConfig({ ...validDevelopmentEnv(), [field]: undefined }),
+    ).toThrowError(expect.objectContaining({ code: 'missing_config' }))
+  })
+
+  it('rejects a project that differs from the approved inventory', () => {
     expect(() =>
       parseFirebaseClientConfig({
-        MODE: 'production',
-        PROD: true,
-        VITE_FIREBASE_PROJECT_ID: 'peecare-production',
-        VITE_FIREBASE_API_KEY: 'production-api-key',
-        VITE_FIREBASE_USE_EMULATORS: 'true',
+        ...validDevelopmentEnv(),
+        VITE_FIREBASE_PROJECT_ID: 'peecare-staging',
       }),
-    ).toThrowError(expect.objectContaining({ code: 'emulator_enabled_in_production' }))
+    ).toThrowError(expect.objectContaining({ code: 'project_mismatch' }))
+  })
+
+  it.each(['demo-peecare', 'peecare-production'])(
+    'rejects forbidden development project %s even when the approved value matches',
+    (projectId) => {
+      expect(() =>
+        parseFirebaseClientConfig({
+          ...validDevelopmentEnv(),
+          VITE_FIREBASE_APPROVED_PROJECT_ID: projectId,
+          VITE_FIREBASE_PROJECT_ID: projectId,
+          VITE_FIREBASE_AUTH_DOMAIN: `${projectId}.firebaseapp.com`,
+        }),
+      ).toThrowError(expect.objectContaining({ code: 'project_mismatch' }))
+    },
+  )
+
+  it.each([
+    'another-project.firebaseapp.com',
+    'localhost',
+    '127.0.0.1',
+    'https://peecare-development.firebaseapp.com',
+  ])('rejects mismatched or loopback auth domain %s', (authDomain) => {
+    expect(() =>
+      parseFirebaseClientConfig({
+        ...validDevelopmentEnv(),
+        VITE_FIREBASE_AUTH_DOMAIN: authDomain,
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'auth_domain_mismatch' }))
+  })
+
+  it.each([
+    'VITE_FIREBASE_USE_EMULATORS',
+    'VITE_FIREBASE_AUTH_EMULATOR_HOST',
+    'VITE_FIREBASE_AUTH_EMULATOR_PORT',
+    'VITE_FIREBASE_FIRESTORE_EMULATOR_HOST',
+    'VITE_FIREBASE_FIRESTORE_EMULATOR_PORT',
+  ] as const)('rejects development config containing Emulator setting %s', (field) => {
+    expect(() =>
+      parseFirebaseClientConfig({ ...validDevelopmentEnv(), [field]: 'false' }),
+    ).toThrowError(expect.objectContaining({ code: 'emulator_enabled_in_development' }))
   })
 })
