@@ -1,0 +1,132 @@
+{
+  "change": "deploy-development-ingestion-api",
+  "projectId": "petcare-c7483",
+  "region": "asia-east1",
+  "prerequisite": {
+    "status": "passed",
+    "principal": "authenticated",
+    "image": "asia-east1-docker.pkg.dev/petcare-c7483/peecare/ingestion-api@sha256:8e414e732bf5cbb78d0936062f2eca523fc60fff23bf23bfaa51eb728e98e02b",
+    "imageArchitecture": "amd64",
+    "budgetRecord": "billingAccounts/01E3EE-F10256-23C6D5/budgets/6696126d-fd4d-4780-b07a-95b72f4033ee",
+    "secretRefs": {
+      "current": "projects/348528459946/secrets/peecare-emqx-webhook-current/versions/1"
+    },
+    "fixture": {
+      "deviceId": "PC-DEV-0001",
+      "ingestionEnabled": true,
+      "urinationEventAbsent": true,
+      "batteryEventAbsent": true
+    },
+    "iamOrCloudRunMutationCommandCount": 0
+  },
+  "dryRun": {
+    "status": "ready",
+    "exitCode": 0,
+    "image": "asia-east1-docker.pkg.dev/petcare-c7483/peecare/ingestion-api@sha256:8e414e732bf5cbb78d0936062f2eca523fc60fff23bf23bfaa51eb728e98e02b",
+    "imageDigest": "sha256:8e414e732bf5cbb78d0936062f2eca523fc60fff23bf23bfaa51eb728e98e02b",
+    "budgetRecord": "billingAccounts/01E3EE-F10256-23C6D5/budgets/6696126d-fd4d-4780-b07a-95b72f4033ee",
+    "secretRefs": {
+      "current": "projects/348528459946/secrets/peecare-emqx-webhook-current/versions/1"
+    },
+    "service": "peecare-ingestion-development",
+    "runtimeIdentity": "peecare-ingestion-runtime@petcare-c7483.iam.gserviceaccount.com",
+    "resources": {
+      "billing": "request-based",
+      "cpu": "1",
+      "memory": "512Mi",
+      "timeoutSeconds": 60,
+      "concurrency": 20,
+      "minInstances": 0,
+      "maxInstances": 2
+    },
+    "runtimeEnvironment": {
+      "NODE_ENV": "production",
+      "GOOGLE_CLOUD_PROJECT": "petcare-c7483",
+      "FIRESTORE_EMULATOR_HOST": "absent"
+    },
+    "publicHealthPath": "/health",
+    "sanitizedOutputScan": "passed"
+  },
+  "rollout": {
+    "status": "healthy",
+    "healthyRecordWritten": true,
+    "emqxIntegrationStarted": false,
+    "active": {
+      "revision": "peecare-ingestion-development-00004-djr",
+      "trafficPercent": 100,
+      "imageDigest": "sha256:8e414e732bf5cbb78d0936062f2eca523fc60fff23bf23bfaa51eb728e98e02b",
+      "runtimeIdentity": "peecare-ingestion-runtime@petcare-c7483.iam.gserviceaccount.com",
+      "resources": {
+        "cpu": "1",
+        "memory": "512Mi",
+        "timeoutSeconds": 60,
+        "concurrency": 20,
+        "minInstances": 0,
+        "maxInstances": 2
+      },
+      "runtimeEnvironment": {
+        "NODE_ENV": "production",
+        "GOOGLE_CLOUD_PROJECT": "petcare-c7483",
+        "EMQX_WEBHOOK_SECRET_CURRENT_VERSION": "1",
+        "FIRESTORE_EMULATOR_HOST": "absent"
+      },
+      "publicHealthPath": "/health",
+      "publicInvoker": true
+    },
+    "verification": {
+      "status": "passed",
+      "health": 200,
+      "unauthenticated": 401,
+      "urination": [
+        201,
+        200
+      ],
+      "battery": [
+        201,
+        200
+      ],
+      "firestore": "verified",
+      "immutableEventCount": 2,
+      "urinationCountDelta": 1,
+      "duplicateWrites": 0,
+      "healthyRecordWritten": true
+    },
+    "healthyReleaseRecord": {
+      "projectId": "petcare-c7483",
+      "region": "asia-east1",
+      "service": "peecare-ingestion-development",
+      "revision": "peecare-ingestion-development-00004-djr",
+      "imageDigest": "sha256:8e414e732bf5cbb78d0936062f2eca523fc60fff23bf23bfaa51eb728e98e02b",
+      "runtimeIdentity": "peecare-ingestion-runtime@petcare-c7483.iam.gserviceaccount.com",
+      "status": "healthy",
+      "sanitizedOutputScan": "passed"
+    },
+    "attempts": [
+      {
+        "revision": "peecare-ingestion-development-00001-pv6",
+        "result": "platform_internal_error"
+      },
+      {
+        "revision": "peecare-ingestion-development-00002-6nv",
+        "result": "image_architecture_mismatch"
+      },
+      {
+        "revision": "peecare-ingestion-development-00003-zx2",
+        "result": "health_path_intercepted",
+        "health": 404,
+        "unauthenticated": 401,
+        "healthyRecordWritten": false,
+        "emqxIntegrationStarted": false
+      }
+    ]
+  },
+  "rollback": {
+    "status": "unavailable",
+    "reason": "no_prior_healthy_revision",
+    "trafficMutationCommandCount": 0,
+    "failedRevisionHealthyRecordCount": 0,
+    "emqxIntegrationStarted": false,
+    "containmentReview": "passed",
+    "sanitizedOutputScan": "passed"
+  }
+}

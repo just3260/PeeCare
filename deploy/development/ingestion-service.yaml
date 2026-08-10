@@ -1,0 +1,48 @@
+{
+  "apiVersion": "peecare.dev/v1",
+  "kind": "CloudRunService",
+  "metadata": {
+    "projectId": "petcare-c7483",
+    "region": "asia-east1",
+    "service": "peecare-ingestion-development"
+  },
+  "image": {
+    "digestPattern": "^asia-east1-docker\\.pkg\\.dev/petcare-c7483/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$"
+  },
+  "runtimeIdentity": {
+    "serviceAccount": "peecare-ingestion-runtime@petcare-c7483.iam.gserviceaccount.com",
+    "accountId": "peecare-ingestion-runtime",
+    "displayName": "PeeCare development ingestion runtime"
+  },
+  "iam": {
+    "projectRoles": ["roles/datastore.user"],
+    "secretAccessorRole": "roles/secretmanager.secretAccessor"
+  },
+  "resources": {
+    "billing": "request-based",
+    "cpu": "1",
+    "memory": "512Mi",
+    "timeoutSeconds": 60,
+    "concurrency": 20,
+    "minInstances": 0,
+    "maxInstances": 2
+  },
+  "network": {
+    "ingress": "all",
+    "allowUnauthenticated": true,
+    "publicHealthPath": "/health",
+    "protectedWebhookPath": "/v1/emqx/events",
+    "applicationAuth": "bearer-current-or-previous"
+  },
+  "runtimeEnvironment": {
+    "values": {
+      "NODE_ENV": "production",
+      "GOOGLE_CLOUD_PROJECT": "petcare-c7483"
+    },
+    "secretNames": [
+      "EMQX_WEBHOOK_SECRET_CURRENT",
+      "EMQX_WEBHOOK_SECRET_PREVIOUS"
+    ],
+    "platformProvided": ["PORT"]
+  }
+}

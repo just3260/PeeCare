@@ -16,6 +16,14 @@ describe('ingestion application', () => {
     await app.close();
   });
 
+  it('exposes a Cloud Run compatible public health path', async () => {
+    const app = buildApp({ currentSecret: 'current-secret' });
+    const response = await app.inject({ method: 'GET', url: '/health' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ status: 'ok' });
+    await app.close();
+  });
+
   it.each(['Bearer current-secret', 'Bearer previous-secret'])('accepts either rotation secret', async (authorization) => {
     const sink: EventSink = { accept: async () => 'stored' };
     const app = buildApp({ currentSecret: 'current-secret', previousSecret: 'previous-secret', sink });
@@ -24,10 +32,12 @@ describe('ingestion application', () => {
   });
 
   it.each([undefined, 'Basic current-secret', 'Bearer wrong-secret', 'Bearer '])('returns the same 401 shape for invalid auth', async (authorization) => {
-    const app = buildApp({ currentSecret: 'current-secret' });
+    let calls = 0;
+    const app = buildApp({ currentSecret: 'current-secret', sink: { accept: async () => { calls++; return 'stored'; } } });
     const response = await app.inject({ ...request(), headers: { 'content-type': 'application/json', ...(authorization ? { authorization } : {}) } });
     expect(response.statusCode).toBe(401);
     expect(response.json().error.code).toBe('unauthorized');
+    expect(calls).toBe(0);
     await app.close();
   });
 

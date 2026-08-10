@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { AppConfig, FirestoreConfig } from './config.js';
 import { parseEnvelope } from './contracts/emqx-webhook-envelope.js';
@@ -17,10 +17,12 @@ export function buildApp(options: Omit<AppConfig, 'firestore'> & { firestore?: F
   app.addHook('onRequest', async (request, reply) => {
     if (request.url === '/v1/emqx/events' && request.method !== 'POST') return fail(reply, 405, 'method_not_allowed');
   });
-  app.get('/healthz', async (request, reply) => {
+  const healthHandler = async (request: FastifyRequest, reply: FastifyReply) => {
     reply.header('x-request-id', request.id);
     return { status: 'ok' };
-  });
+  };
+  app.get('/healthz', healthHandler);
+  app.get('/health', healthHandler);
   app.post('/v1/emqx/events', async (request, reply) => {
     reply.header('x-request-id', request.id);
     const contentType = request.headers['content-type'];

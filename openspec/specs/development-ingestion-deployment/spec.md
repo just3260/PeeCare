@@ -1,0 +1,2045 @@
+# development-ingestion-deployment Specification
+
+## Purpose
+
+Define the immutable, least-privilege, and verifiable deployment workflow required to operate the ingestion API safely on the approved development Cloud Run environment.
+
+## Requirements
+
+### Requirement: Immutable development revision
+
+Deployment SHALL target an approved development Cloud Run service using an immutable image digest and SHALL record that digest in verification output.
+
+#### Scenario: Reject a mutable image
+- **WHEN** deployment input uses a mutable tag without a digest
+- **THEN** preflight exits before deployment
+
+##### Example: Reject latest tag
+- **GIVEN** image `asia-east1-docker.pkg.dev/petcare-c7483/peecare/ingestion-api:latest`
+- **WHEN** the operator requests a deployment dry-run
+- **THEN** preflight exits non-zero and invokes no `gcloud` mutation
+
+
+<!-- @trace
+source: deploy-development-ingestion-api
+updated: 2026-08-10
+code:
+  - scripts/test-tool.html
+  - src/router/index.ts
+  - env.d.ts
+  - services/member-api/vitest.config.ts
+  - firebase/development/readiness.d.mts
+  - services/member-api/src/app.ts
+  - services/member-api/src/security/firebase-id-token-verifier.ts
+  - services/ingestion-api/src/persistence/urination-event-record.ts
+  - src/features/history/device-event-history-store-key.ts
+  - src/views/NotificationsView.vue
+  - deploy/development/verify-ingestion.mjs
+  - firebase/development/readiness.mjs
+  - src/components/DeviceSelector.vue
+  - src/components/OverviewPlaceholder.vue
+  - src/features/auth/return-route.ts
+  - src/features/stats/daily-stats-model.ts
+  - src/views/SignInView.vue
+  - .env.example
+  - services/member-api/src/firestore/firestore-client.ts
+  - src/components/BottomNavigation.vue
+  - src/views/StatsView.vue
+  - src/features/devices/device-overview-model.ts
+  - vitest.config.ts
+  - firebase/development/deploy.mjs
+  - services/member-api/src/server.ts
+  - src/features/auth/auth-provider.ts
+  - src/features/devices/owned-device-repository.ts
+  - firebase/development/environment.d.mts
+  - services/member-api/package.json
+  - src/App.vue
+  - firebase/development/seed.mjs
+  - contracts/device-events/README.md
+  - src/features/history/device-event-history-store.ts
+  - docs/mqtt-interfaces-and-firestore-models.md
+  - services/member-api/src/config.ts
+  - services/member-api/Dockerfile
+  - services/ingestion-api/package.json
+  - scripts/audit-production-dependencies.mjs
+  - services/member-api/src/firestore/device-name-repository.ts
+  - src/features/devices/device-overview-store-key.ts
+  - deploy/development/deploy-ingestion.mjs
+  - firebase/development/preflight.mjs
+  - services/ingestion-api/src/persistence/urine-volume-estimate.ts
+  - src/components/DailyUrinationChart.vue
+  - services/ingestion-api/tsconfig.json
+  - firebase/development/preflight.d.mts
+  - firebase/development/environment.ts
+  - services/ingestion-api/src/aggregation/daily-urination-record.ts
+  - services/member-api/src/http/errors.ts
+  - scripts/check-release.mjs
+  - firebase/development/deploy.d.mts
+  - src/features/devices/device-display-name.ts
+  - firebase/development/seed-admin-adapter.mjs
+  - src/features/devices/use-device-selection.ts
+  - src/features/devices/device-overview-store.ts
+  - scripts/machine.png
+  - firebase/development/environment.mjs
+  - scripts/test-tool.mjs
+  - services/ingestion-api/src/app.ts
+  - src/features/auth/auth-store-key.ts
+  - src/features/devices/member-device-api.ts
+  - firebase/local/fixtures/members-and-devices.ts
+  - src/views/HomeView.vue
+  - src/features/auth/session.ts
+  - scripts/test-firebase.mjs
+  - src/platform/firebase/config.ts
+  - src/features/history/device-event-history-repository.ts
+  - src/features/stats/daily-stats-store.ts
+  - src/features/stats/daily-stats-source.ts
+  - services/ingestion-api/cloudbuild.json
+  - src/main.ts
+  - src/features/auth/protected-resource-registry.ts
+  - src/views/HistoryView.vue
+  - services/member-api/src/devices/device-name-service.ts
+  - firebase/development/verify.mjs
+  - src/components/HomeInstantCards.vue
+  - firebase/development/readiness-admin-adapter.mjs
+  - scripts/install-workspaces.mjs
+  - firebase/development/seed.d.mts
+  - deploy/development/verify-ingestion.d.mts
+  - src/features/stats/daily-stats-repository.ts
+  - services/ingestion-api/src/aggregation/today-urination-projection.ts
+  - services/member-api/src/shutdown.ts
+  - .firebaserc
+  - src/features/stats/daily-stats-store-key.ts
+  - services/member-api/tsconfig.test.json
+  - vitest.firebase.config.ts
+  - src/features/auth/auth-store.ts
+  - src/platform/firebase/client.ts
+  - deploy/development/ingestion-service.yaml
+  - services/member-api/src/devices/custom-name.ts
+  - src/views/SettingsView.vue
+  - package.json
+  - src/features/history/urination-history-model.ts
+  - firestore.rules
+  - src/features/devices/owned-device-model.ts
+  - src/components/HomeOverviewHero.vue
+  - services/ingestion-api/src/firestore/firestore-event-sink.ts
+  - deploy/development/deploy-ingestion.d.mts
+  - scripts/dog.png
+  - firestore.indexes.json
+  - services/member-api/tsconfig.json
+  - firebase/development/README.md
+  - src/features/stats/daily-series.ts
+tests:
+  - scripts/install-workspaces.spec.ts
+  - services/member-api/test/firebase-id-token-verifier.test.ts
+  - services/member-api/test/config.test.ts
+  - src/views/HistoryView.spec.ts
+  - services/member-api/test/shutdown.test.ts
+  - src/features/history/device-event-history.spec.ts
+  - src/features/stats/daily-stats.spec.ts
+  - src/features/devices/device-overview-store.spec.ts
+  - src/views/StatsView.spec.ts
+  - src/features/devices/member-device-api.spec.ts
+  - deploy/development/deploy-ingestion.spec.ts
+  - src/features/devices/owned-device-model.spec.ts
+  - src/router/auth-guard.spec.ts
+  - firebase/development/deploy.spec.ts
+  - deploy/development/verify-ingestion.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - scripts/test-tool.spec.ts
+  - src/components/DailyUrinationChart.spec.ts
+  - src/views/SignInView.spec.ts
+  - src/App.spec.ts
+  - src/features/devices/use-device-selection.spec.ts
+  - src/components/ShellAccessibility.spec.ts
+  - scripts/check-release.spec.ts
+  - services/ingestion-api/test/daily-urination-counts.test.ts
+  - services/ingestion-api/test/daily-urination-record.test.ts
+  - services/member-api/test/authenticated-member-flow.integration.test.ts
+  - src/components/DeviceSelector.spec.ts
+  - services/ingestion-api/test/end-to-end-ingestion.integration.test.ts
+  - src/components/BottomNavigation.spec.ts
+  - services/ingestion-api/test/firestore-event-sink.integration.test.ts
+  - src/features/devices/device-display-name.spec.ts
+  - services/ingestion-api/test/app.test.ts
+  - firebase/development/preflight.spec.ts
+  - src/features/auth/return-route.spec.ts
+  - src/platform/firebase/client.spec.ts
+  - src/views/SettingsView.spec.ts
+  - firebase/development/readiness.spec.ts
+  - services/ingestion-api/test/today-urination-projection.test.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/custom-name.test.ts
+  - src/features/history/device-event-history-store.spec.ts
+  - services/ingestion-api/test/urination-event-persistence.test.ts
+  - services/ingestion-api/test/urine-volume-estimate.test.ts
+  - src/features/auth/protected-resource-registry.spec.ts
+  - src/router/index.spec.ts
+  - firebase/local/fixtures/members-and-devices.spec.ts
+  - firebase/development/seed.spec.ts
+  - src/App.no-service-worker.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/history/urination-history-model.spec.ts
+  - src/platform/firebase/config.spec.ts
+  - src/features/auth/auth-emulator.integration.spec.ts
+  - scripts/audit-production-dependencies.spec.ts
+  - services/member-api/test/device-name-firestore.integration.test.ts
+  - src/features/devices/device-overview-model.spec.ts
+  - src/views/NotificationsView.spec.ts
+  - src/features/devices/owned-device-repository.spec.ts
+  - src/features/stats/daily-stats-store.spec.ts
+  - src/App.auth.spec.ts
+  - src/features/auth/auth-store.spec.ts
+-->
+
+---
+### Requirement: Least-privilege runtime identity
+
+The service SHALL run as a dedicated development service account with only required Firestore access and access to the named current and previous webhook secret versions.
+
+#### Scenario: Inspect the deployment plan
+- **WHEN** dry-run succeeds
+- **THEN** output lists the dedicated identity and secret references without secret values
+
+##### Example: Sanitized rotation plan
+- **GIVEN** runtime identity `peecare-ingestion-runtime@petcare-c7483.iam.gserviceaccount.com` and distinct current/previous Secret Manager version references
+- **WHEN** dry-run emits its JSON plan
+- **THEN** the plan contains the identity and resource references but contains neither resolved secret value nor service-account key material
+
+
+<!-- @trace
+source: deploy-development-ingestion-api
+updated: 2026-08-10
+code:
+  - scripts/test-tool.html
+  - src/router/index.ts
+  - env.d.ts
+  - services/member-api/vitest.config.ts
+  - firebase/development/readiness.d.mts
+  - services/member-api/src/app.ts
+  - services/member-api/src/security/firebase-id-token-verifier.ts
+  - services/ingestion-api/src/persistence/urination-event-record.ts
+  - src/features/history/device-event-history-store-key.ts
+  - src/views/NotificationsView.vue
+  - deploy/development/verify-ingestion.mjs
+  - firebase/development/readiness.mjs
+  - src/components/DeviceSelector.vue
+  - src/components/OverviewPlaceholder.vue
+  - src/features/auth/return-route.ts
+  - src/features/stats/daily-stats-model.ts
+  - src/views/SignInView.vue
+  - .env.example
+  - services/member-api/src/firestore/firestore-client.ts
+  - src/components/BottomNavigation.vue
+  - src/views/StatsView.vue
+  - src/features/devices/device-overview-model.ts
+  - vitest.config.ts
+  - firebase/development/deploy.mjs
+  - services/member-api/src/server.ts
+  - src/features/auth/auth-provider.ts
+  - src/features/devices/owned-device-repository.ts
+  - firebase/development/environment.d.mts
+  - services/member-api/package.json
+  - src/App.vue
+  - firebase/development/seed.mjs
+  - contracts/device-events/README.md
+  - src/features/history/device-event-history-store.ts
+  - docs/mqtt-interfaces-and-firestore-models.md
+  - services/member-api/src/config.ts
+  - services/member-api/Dockerfile
+  - services/ingestion-api/package.json
+  - scripts/audit-production-dependencies.mjs
+  - services/member-api/src/firestore/device-name-repository.ts
+  - src/features/devices/device-overview-store-key.ts
+  - deploy/development/deploy-ingestion.mjs
+  - firebase/development/preflight.mjs
+  - services/ingestion-api/src/persistence/urine-volume-estimate.ts
+  - src/components/DailyUrinationChart.vue
+  - services/ingestion-api/tsconfig.json
+  - firebase/development/preflight.d.mts
+  - firebase/development/environment.ts
+  - services/ingestion-api/src/aggregation/daily-urination-record.ts
+  - services/member-api/src/http/errors.ts
+  - scripts/check-release.mjs
+  - firebase/development/deploy.d.mts
+  - src/features/devices/device-display-name.ts
+  - firebase/development/seed-admin-adapter.mjs
+  - src/features/devices/use-device-selection.ts
+  - src/features/devices/device-overview-store.ts
+  - scripts/machine.png
+  - firebase/development/environment.mjs
+  - scripts/test-tool.mjs
+  - services/ingestion-api/src/app.ts
+  - src/features/auth/auth-store-key.ts
+  - src/features/devices/member-device-api.ts
+  - firebase/local/fixtures/members-and-devices.ts
+  - src/views/HomeView.vue
+  - src/features/auth/session.ts
+  - scripts/test-firebase.mjs
+  - src/platform/firebase/config.ts
+  - src/features/history/device-event-history-repository.ts
+  - src/features/stats/daily-stats-store.ts
+  - src/features/stats/daily-stats-source.ts
+  - services/ingestion-api/cloudbuild.json
+  - src/main.ts
+  - src/features/auth/protected-resource-registry.ts
+  - src/views/HistoryView.vue
+  - services/member-api/src/devices/device-name-service.ts
+  - firebase/development/verify.mjs
+  - src/components/HomeInstantCards.vue
+  - firebase/development/readiness-admin-adapter.mjs
+  - scripts/install-workspaces.mjs
+  - firebase/development/seed.d.mts
+  - deploy/development/verify-ingestion.d.mts
+  - src/features/stats/daily-stats-repository.ts
+  - services/ingestion-api/src/aggregation/today-urination-projection.ts
+  - services/member-api/src/shutdown.ts
+  - .firebaserc
+  - src/features/stats/daily-stats-store-key.ts
+  - services/member-api/tsconfig.test.json
+  - vitest.firebase.config.ts
+  - src/features/auth/auth-store.ts
+  - src/platform/firebase/client.ts
+  - deploy/development/ingestion-service.yaml
+  - services/member-api/src/devices/custom-name.ts
+  - src/views/SettingsView.vue
+  - package.json
+  - src/features/history/urination-history-model.ts
+  - firestore.rules
+  - src/features/devices/owned-device-model.ts
+  - src/components/HomeOverviewHero.vue
+  - services/ingestion-api/src/firestore/firestore-event-sink.ts
+  - deploy/development/deploy-ingestion.d.mts
+  - scripts/dog.png
+  - firestore.indexes.json
+  - services/member-api/tsconfig.json
+  - firebase/development/README.md
+  - src/features/stats/daily-series.ts
+tests:
+  - scripts/install-workspaces.spec.ts
+  - services/member-api/test/firebase-id-token-verifier.test.ts
+  - services/member-api/test/config.test.ts
+  - src/views/HistoryView.spec.ts
+  - services/member-api/test/shutdown.test.ts
+  - src/features/history/device-event-history.spec.ts
+  - src/features/stats/daily-stats.spec.ts
+  - src/features/devices/device-overview-store.spec.ts
+  - src/views/StatsView.spec.ts
+  - src/features/devices/member-device-api.spec.ts
+  - deploy/development/deploy-ingestion.spec.ts
+  - src/features/devices/owned-device-model.spec.ts
+  - src/router/auth-guard.spec.ts
+  - firebase/development/deploy.spec.ts
+  - deploy/development/verify-ingestion.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - scripts/test-tool.spec.ts
+  - src/components/DailyUrinationChart.spec.ts
+  - src/views/SignInView.spec.ts
+  - src/App.spec.ts
+  - src/features/devices/use-device-selection.spec.ts
+  - src/components/ShellAccessibility.spec.ts
+  - scripts/check-release.spec.ts
+  - services/ingestion-api/test/daily-urination-counts.test.ts
+  - services/ingestion-api/test/daily-urination-record.test.ts
+  - services/member-api/test/authenticated-member-flow.integration.test.ts
+  - src/components/DeviceSelector.spec.ts
+  - services/ingestion-api/test/end-to-end-ingestion.integration.test.ts
+  - src/components/BottomNavigation.spec.ts
+  - services/ingestion-api/test/firestore-event-sink.integration.test.ts
+  - src/features/devices/device-display-name.spec.ts
+  - services/ingestion-api/test/app.test.ts
+  - firebase/development/preflight.spec.ts
+  - src/features/auth/return-route.spec.ts
+  - src/platform/firebase/client.spec.ts
+  - src/views/SettingsView.spec.ts
+  - firebase/development/readiness.spec.ts
+  - services/ingestion-api/test/today-urination-projection.test.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/custom-name.test.ts
+  - src/features/history/device-event-history-store.spec.ts
+  - services/ingestion-api/test/urination-event-persistence.test.ts
+  - services/ingestion-api/test/urine-volume-estimate.test.ts
+  - src/features/auth/protected-resource-registry.spec.ts
+  - src/router/index.spec.ts
+  - firebase/local/fixtures/members-and-devices.spec.ts
+  - firebase/development/seed.spec.ts
+  - src/App.no-service-worker.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/history/urination-history-model.spec.ts
+  - src/platform/firebase/config.spec.ts
+  - src/features/auth/auth-emulator.integration.spec.ts
+  - scripts/audit-production-dependencies.spec.ts
+  - services/member-api/test/device-name-firestore.integration.test.ts
+  - src/features/devices/device-overview-model.spec.ts
+  - src/views/NotificationsView.spec.ts
+  - src/features/devices/owned-device-repository.spec.ts
+  - src/features/stats/daily-stats-store.spec.ts
+  - src/App.auth.spec.ts
+  - src/features/auth/auth-store.spec.ts
+-->
+
+---
+### Requirement: Development resource gates
+
+Deployment SHALL require project `petcare-c7483`, region `asia-east1`, service `peecare-ingestion-development`, 1 CPU, 512 MiB memory, 60-second timeout, concurrency 20, maximum instances 2, minimum instances zero, and an approved Cloud Billing budget resource name matching `billingAccounts/{billing-account-id}/budgets/{budget-id}`.
+
+#### Scenario: Reject a target mismatch
+- **WHEN** the manifest project differs from the approved inventory
+- **THEN** no Cloud Run revision is created
+
+##### Example: Reject the Emulator project
+- **GIVEN** manifest project `demo-peecare` and approved project `petcare-c7483`
+- **WHEN** the operator requests dry-run or apply
+- **THEN** preflight exits non-zero before invoking `gcloud`
+
+
+<!-- @trace
+source: deploy-development-ingestion-api
+updated: 2026-08-10
+code:
+  - scripts/test-tool.html
+  - src/router/index.ts
+  - env.d.ts
+  - services/member-api/vitest.config.ts
+  - firebase/development/readiness.d.mts
+  - services/member-api/src/app.ts
+  - services/member-api/src/security/firebase-id-token-verifier.ts
+  - services/ingestion-api/src/persistence/urination-event-record.ts
+  - src/features/history/device-event-history-store-key.ts
+  - src/views/NotificationsView.vue
+  - deploy/development/verify-ingestion.mjs
+  - firebase/development/readiness.mjs
+  - src/components/DeviceSelector.vue
+  - src/components/OverviewPlaceholder.vue
+  - src/features/auth/return-route.ts
+  - src/features/stats/daily-stats-model.ts
+  - src/views/SignInView.vue
+  - .env.example
+  - services/member-api/src/firestore/firestore-client.ts
+  - src/components/BottomNavigation.vue
+  - src/views/StatsView.vue
+  - src/features/devices/device-overview-model.ts
+  - vitest.config.ts
+  - firebase/development/deploy.mjs
+  - services/member-api/src/server.ts
+  - src/features/auth/auth-provider.ts
+  - src/features/devices/owned-device-repository.ts
+  - firebase/development/environment.d.mts
+  - services/member-api/package.json
+  - src/App.vue
+  - firebase/development/seed.mjs
+  - contracts/device-events/README.md
+  - src/features/history/device-event-history-store.ts
+  - docs/mqtt-interfaces-and-firestore-models.md
+  - services/member-api/src/config.ts
+  - services/member-api/Dockerfile
+  - services/ingestion-api/package.json
+  - scripts/audit-production-dependencies.mjs
+  - services/member-api/src/firestore/device-name-repository.ts
+  - src/features/devices/device-overview-store-key.ts
+  - deploy/development/deploy-ingestion.mjs
+  - firebase/development/preflight.mjs
+  - services/ingestion-api/src/persistence/urine-volume-estimate.ts
+  - src/components/DailyUrinationChart.vue
+  - services/ingestion-api/tsconfig.json
+  - firebase/development/preflight.d.mts
+  - firebase/development/environment.ts
+  - services/ingestion-api/src/aggregation/daily-urination-record.ts
+  - services/member-api/src/http/errors.ts
+  - scripts/check-release.mjs
+  - firebase/development/deploy.d.mts
+  - src/features/devices/device-display-name.ts
+  - firebase/development/seed-admin-adapter.mjs
+  - src/features/devices/use-device-selection.ts
+  - src/features/devices/device-overview-store.ts
+  - scripts/machine.png
+  - firebase/development/environment.mjs
+  - scripts/test-tool.mjs
+  - services/ingestion-api/src/app.ts
+  - src/features/auth/auth-store-key.ts
+  - src/features/devices/member-device-api.ts
+  - firebase/local/fixtures/members-and-devices.ts
+  - src/views/HomeView.vue
+  - src/features/auth/session.ts
+  - scripts/test-firebase.mjs
+  - src/platform/firebase/config.ts
+  - src/features/history/device-event-history-repository.ts
+  - src/features/stats/daily-stats-store.ts
+  - src/features/stats/daily-stats-source.ts
+  - services/ingestion-api/cloudbuild.json
+  - src/main.ts
+  - src/features/auth/protected-resource-registry.ts
+  - src/views/HistoryView.vue
+  - services/member-api/src/devices/device-name-service.ts
+  - firebase/development/verify.mjs
+  - src/components/HomeInstantCards.vue
+  - firebase/development/readiness-admin-adapter.mjs
+  - scripts/install-workspaces.mjs
+  - firebase/development/seed.d.mts
+  - deploy/development/verify-ingestion.d.mts
+  - src/features/stats/daily-stats-repository.ts
+  - services/ingestion-api/src/aggregation/today-urination-projection.ts
+  - services/member-api/src/shutdown.ts
+  - .firebaserc
+  - src/features/stats/daily-stats-store-key.ts
+  - services/member-api/tsconfig.test.json
+  - vitest.firebase.config.ts
+  - src/features/auth/auth-store.ts
+  - src/platform/firebase/client.ts
+  - deploy/development/ingestion-service.yaml
+  - services/member-api/src/devices/custom-name.ts
+  - src/views/SettingsView.vue
+  - package.json
+  - src/features/history/urination-history-model.ts
+  - firestore.rules
+  - src/features/devices/owned-device-model.ts
+  - src/components/HomeOverviewHero.vue
+  - services/ingestion-api/src/firestore/firestore-event-sink.ts
+  - deploy/development/deploy-ingestion.d.mts
+  - scripts/dog.png
+  - firestore.indexes.json
+  - services/member-api/tsconfig.json
+  - firebase/development/README.md
+  - src/features/stats/daily-series.ts
+tests:
+  - scripts/install-workspaces.spec.ts
+  - services/member-api/test/firebase-id-token-verifier.test.ts
+  - services/member-api/test/config.test.ts
+  - src/views/HistoryView.spec.ts
+  - services/member-api/test/shutdown.test.ts
+  - src/features/history/device-event-history.spec.ts
+  - src/features/stats/daily-stats.spec.ts
+  - src/features/devices/device-overview-store.spec.ts
+  - src/views/StatsView.spec.ts
+  - src/features/devices/member-device-api.spec.ts
+  - deploy/development/deploy-ingestion.spec.ts
+  - src/features/devices/owned-device-model.spec.ts
+  - src/router/auth-guard.spec.ts
+  - firebase/development/deploy.spec.ts
+  - deploy/development/verify-ingestion.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - scripts/test-tool.spec.ts
+  - src/components/DailyUrinationChart.spec.ts
+  - src/views/SignInView.spec.ts
+  - src/App.spec.ts
+  - src/features/devices/use-device-selection.spec.ts
+  - src/components/ShellAccessibility.spec.ts
+  - scripts/check-release.spec.ts
+  - services/ingestion-api/test/daily-urination-counts.test.ts
+  - services/ingestion-api/test/daily-urination-record.test.ts
+  - services/member-api/test/authenticated-member-flow.integration.test.ts
+  - src/components/DeviceSelector.spec.ts
+  - services/ingestion-api/test/end-to-end-ingestion.integration.test.ts
+  - src/components/BottomNavigation.spec.ts
+  - services/ingestion-api/test/firestore-event-sink.integration.test.ts
+  - src/features/devices/device-display-name.spec.ts
+  - services/ingestion-api/test/app.test.ts
+  - firebase/development/preflight.spec.ts
+  - src/features/auth/return-route.spec.ts
+  - src/platform/firebase/client.spec.ts
+  - src/views/SettingsView.spec.ts
+  - firebase/development/readiness.spec.ts
+  - services/ingestion-api/test/today-urination-projection.test.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/custom-name.test.ts
+  - src/features/history/device-event-history-store.spec.ts
+  - services/ingestion-api/test/urination-event-persistence.test.ts
+  - services/ingestion-api/test/urine-volume-estimate.test.ts
+  - src/features/auth/protected-resource-registry.spec.ts
+  - src/router/index.spec.ts
+  - firebase/local/fixtures/members-and-devices.spec.ts
+  - firebase/development/seed.spec.ts
+  - src/App.no-service-worker.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/history/urination-history-model.spec.ts
+  - src/platform/firebase/config.spec.ts
+  - src/features/auth/auth-emulator.integration.spec.ts
+  - scripts/audit-production-dependencies.spec.ts
+  - services/member-api/test/device-name-firestore.integration.test.ts
+  - src/features/devices/device-overview-model.spec.ts
+  - src/views/NotificationsView.spec.ts
+  - src/features/devices/owned-device-repository.spec.ts
+  - src/features/stats/daily-stats-store.spec.ts
+  - src/App.auth.spec.ts
+  - src/features/auth/auth-store.spec.ts
+-->
+
+---
+### Requirement: Cloud smoke verification
+
+Verification SHALL confirm health 200, unauthenticated webhook 401, and one authenticated fixture reaching development Firestore.
+
+#### Scenario: Verify a deployed revision
+- **WHEN** the revision is ready and secrets are valid
+- **THEN** all three smoke checks pass and output contains no payload or secret
+
+##### Example: Sanitized healthy revision
+- **GIVEN** exact revision `peecare-ingestion-development-00001-abc`, authenticated fixture event `PC-DEV-0001:smoke-urination-1`, and project `petcare-c7483`
+- **WHEN** health returns 200, unauthenticated webhook returns 401, and the authenticated fixture reaches Firestore
+- **THEN** verification emits a passing summary containing revision and event ID but no payload or secret
+
+
+<!-- @trace
+source: deploy-development-ingestion-api
+updated: 2026-08-10
+code:
+  - scripts/test-tool.html
+  - src/router/index.ts
+  - env.d.ts
+  - services/member-api/vitest.config.ts
+  - firebase/development/readiness.d.mts
+  - services/member-api/src/app.ts
+  - services/member-api/src/security/firebase-id-token-verifier.ts
+  - services/ingestion-api/src/persistence/urination-event-record.ts
+  - src/features/history/device-event-history-store-key.ts
+  - src/views/NotificationsView.vue
+  - deploy/development/verify-ingestion.mjs
+  - firebase/development/readiness.mjs
+  - src/components/DeviceSelector.vue
+  - src/components/OverviewPlaceholder.vue
+  - src/features/auth/return-route.ts
+  - src/features/stats/daily-stats-model.ts
+  - src/views/SignInView.vue
+  - .env.example
+  - services/member-api/src/firestore/firestore-client.ts
+  - src/components/BottomNavigation.vue
+  - src/views/StatsView.vue
+  - src/features/devices/device-overview-model.ts
+  - vitest.config.ts
+  - firebase/development/deploy.mjs
+  - services/member-api/src/server.ts
+  - src/features/auth/auth-provider.ts
+  - src/features/devices/owned-device-repository.ts
+  - firebase/development/environment.d.mts
+  - services/member-api/package.json
+  - src/App.vue
+  - firebase/development/seed.mjs
+  - contracts/device-events/README.md
+  - src/features/history/device-event-history-store.ts
+  - docs/mqtt-interfaces-and-firestore-models.md
+  - services/member-api/src/config.ts
+  - services/member-api/Dockerfile
+  - services/ingestion-api/package.json
+  - scripts/audit-production-dependencies.mjs
+  - services/member-api/src/firestore/device-name-repository.ts
+  - src/features/devices/device-overview-store-key.ts
+  - deploy/development/deploy-ingestion.mjs
+  - firebase/development/preflight.mjs
+  - services/ingestion-api/src/persistence/urine-volume-estimate.ts
+  - src/components/DailyUrinationChart.vue
+  - services/ingestion-api/tsconfig.json
+  - firebase/development/preflight.d.mts
+  - firebase/development/environment.ts
+  - services/ingestion-api/src/aggregation/daily-urination-record.ts
+  - services/member-api/src/http/errors.ts
+  - scripts/check-release.mjs
+  - firebase/development/deploy.d.mts
+  - src/features/devices/device-display-name.ts
+  - firebase/development/seed-admin-adapter.mjs
+  - src/features/devices/use-device-selection.ts
+  - src/features/devices/device-overview-store.ts
+  - scripts/machine.png
+  - firebase/development/environment.mjs
+  - scripts/test-tool.mjs
+  - services/ingestion-api/src/app.ts
+  - src/features/auth/auth-store-key.ts
+  - src/features/devices/member-device-api.ts
+  - firebase/local/fixtures/members-and-devices.ts
+  - src/views/HomeView.vue
+  - src/features/auth/session.ts
+  - scripts/test-firebase.mjs
+  - src/platform/firebase/config.ts
+  - src/features/history/device-event-history-repository.ts
+  - src/features/stats/daily-stats-store.ts
+  - src/features/stats/daily-stats-source.ts
+  - services/ingestion-api/cloudbuild.json
+  - src/main.ts
+  - src/features/auth/protected-resource-registry.ts
+  - src/views/HistoryView.vue
+  - services/member-api/src/devices/device-name-service.ts
+  - firebase/development/verify.mjs
+  - src/components/HomeInstantCards.vue
+  - firebase/development/readiness-admin-adapter.mjs
+  - scripts/install-workspaces.mjs
+  - firebase/development/seed.d.mts
+  - deploy/development/verify-ingestion.d.mts
+  - src/features/stats/daily-stats-repository.ts
+  - services/ingestion-api/src/aggregation/today-urination-projection.ts
+  - services/member-api/src/shutdown.ts
+  - .firebaserc
+  - src/features/stats/daily-stats-store-key.ts
+  - services/member-api/tsconfig.test.json
+  - vitest.firebase.config.ts
+  - src/features/auth/auth-store.ts
+  - src/platform/firebase/client.ts
+  - deploy/development/ingestion-service.yaml
+  - services/member-api/src/devices/custom-name.ts
+  - src/views/SettingsView.vue
+  - package.json
+  - src/features/history/urination-history-model.ts
+  - firestore.rules
+  - src/features/devices/owned-device-model.ts
+  - src/components/HomeOverviewHero.vue
+  - services/ingestion-api/src/firestore/firestore-event-sink.ts
+  - deploy/development/deploy-ingestion.d.mts
+  - scripts/dog.png
+  - firestore.indexes.json
+  - services/member-api/tsconfig.json
+  - firebase/development/README.md
+  - src/features/stats/daily-series.ts
+tests:
+  - scripts/install-workspaces.spec.ts
+  - services/member-api/test/firebase-id-token-verifier.test.ts
+  - services/member-api/test/config.test.ts
+  - src/views/HistoryView.spec.ts
+  - services/member-api/test/shutdown.test.ts
+  - src/features/history/device-event-history.spec.ts
+  - src/features/stats/daily-stats.spec.ts
+  - src/features/devices/device-overview-store.spec.ts
+  - src/views/StatsView.spec.ts
+  - src/features/devices/member-device-api.spec.ts
+  - deploy/development/deploy-ingestion.spec.ts
+  - src/features/devices/owned-device-model.spec.ts
+  - src/router/auth-guard.spec.ts
+  - firebase/development/deploy.spec.ts
+  - deploy/development/verify-ingestion.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - scripts/test-tool.spec.ts
+  - src/components/DailyUrinationChart.spec.ts
+  - src/views/SignInView.spec.ts
+  - src/App.spec.ts
+  - src/features/devices/use-device-selection.spec.ts
+  - src/components/ShellAccessibility.spec.ts
+  - scripts/check-release.spec.ts
+  - services/ingestion-api/test/daily-urination-counts.test.ts
+  - services/ingestion-api/test/daily-urination-record.test.ts
+  - services/member-api/test/authenticated-member-flow.integration.test.ts
+  - src/components/DeviceSelector.spec.ts
+  - services/ingestion-api/test/end-to-end-ingestion.integration.test.ts
+  - src/components/BottomNavigation.spec.ts
+  - services/ingestion-api/test/firestore-event-sink.integration.test.ts
+  - src/features/devices/device-display-name.spec.ts
+  - services/ingestion-api/test/app.test.ts
+  - firebase/development/preflight.spec.ts
+  - src/features/auth/return-route.spec.ts
+  - src/platform/firebase/client.spec.ts
+  - src/views/SettingsView.spec.ts
+  - firebase/development/readiness.spec.ts
+  - services/ingestion-api/test/today-urination-projection.test.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/custom-name.test.ts
+  - src/features/history/device-event-history-store.spec.ts
+  - services/ingestion-api/test/urination-event-persistence.test.ts
+  - services/ingestion-api/test/urine-volume-estimate.test.ts
+  - src/features/auth/protected-resource-registry.spec.ts
+  - src/router/index.spec.ts
+  - firebase/local/fixtures/members-and-devices.spec.ts
+  - firebase/development/seed.spec.ts
+  - src/App.no-service-worker.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/history/urination-history-model.spec.ts
+  - src/platform/firebase/config.spec.ts
+  - src/features/auth/auth-emulator.integration.spec.ts
+  - scripts/audit-production-dependencies.spec.ts
+  - services/member-api/test/device-name-firestore.integration.test.ts
+  - src/features/devices/device-overview-model.spec.ts
+  - src/views/NotificationsView.spec.ts
+  - src/features/devices/owned-device-repository.spec.ts
+  - src/features/stats/daily-stats-store.spec.ts
+  - src/App.auth.spec.ts
+  - src/features/auth/auth-store.spec.ts
+-->
+
+---
+### Requirement: Revision rollback
+
+Deployment records SHALL identify the prior healthy revision and SHALL provide a verified rollback command before EMQX integration.
+
+#### Scenario: Validate rollback target
+- **WHEN** a prior healthy revision exists
+- **THEN** rollback dry-run resolves that exact revision
+
+##### Example: Resolve the same-service prior revision
+- **GIVEN** active revision `peecare-ingestion-development-00002-def` and prior healthy revision `peecare-ingestion-development-00001-abc`
+- **WHEN** rollback dry-run targets the prior release record
+- **THEN** the plan resolves `peecare-ingestion-development-00001-abc` without changing traffic
+
+
+<!-- @trace
+source: deploy-development-ingestion-api
+updated: 2026-08-10
+code:
+  - scripts/test-tool.html
+  - src/router/index.ts
+  - env.d.ts
+  - services/member-api/vitest.config.ts
+  - firebase/development/readiness.d.mts
+  - services/member-api/src/app.ts
+  - services/member-api/src/security/firebase-id-token-verifier.ts
+  - services/ingestion-api/src/persistence/urination-event-record.ts
+  - src/features/history/device-event-history-store-key.ts
+  - src/views/NotificationsView.vue
+  - deploy/development/verify-ingestion.mjs
+  - firebase/development/readiness.mjs
+  - src/components/DeviceSelector.vue
+  - src/components/OverviewPlaceholder.vue
+  - src/features/auth/return-route.ts
+  - src/features/stats/daily-stats-model.ts
+  - src/views/SignInView.vue
+  - .env.example
+  - services/member-api/src/firestore/firestore-client.ts
+  - src/components/BottomNavigation.vue
+  - src/views/StatsView.vue
+  - src/features/devices/device-overview-model.ts
+  - vitest.config.ts
+  - firebase/development/deploy.mjs
+  - services/member-api/src/server.ts
+  - src/features/auth/auth-provider.ts
+  - src/features/devices/owned-device-repository.ts
+  - firebase/development/environment.d.mts
+  - services/member-api/package.json
+  - src/App.vue
+  - firebase/development/seed.mjs
+  - contracts/device-events/README.md
+  - src/features/history/device-event-history-store.ts
+  - docs/mqtt-interfaces-and-firestore-models.md
+  - services/member-api/src/config.ts
+  - services/member-api/Dockerfile
+  - services/ingestion-api/package.json
+  - scripts/audit-production-dependencies.mjs
+  - services/member-api/src/firestore/device-name-repository.ts
+  - src/features/devices/device-overview-store-key.ts
+  - deploy/development/deploy-ingestion.mjs
+  - firebase/development/preflight.mjs
+  - services/ingestion-api/src/persistence/urine-volume-estimate.ts
+  - src/components/DailyUrinationChart.vue
+  - services/ingestion-api/tsconfig.json
+  - firebase/development/preflight.d.mts
+  - firebase/development/environment.ts
+  - services/ingestion-api/src/aggregation/daily-urination-record.ts
+  - services/member-api/src/http/errors.ts
+  - scripts/check-release.mjs
+  - firebase/development/deploy.d.mts
+  - src/features/devices/device-display-name.ts
+  - firebase/development/seed-admin-adapter.mjs
+  - src/features/devices/use-device-selection.ts
+  - src/features/devices/device-overview-store.ts
+  - scripts/machine.png
+  - firebase/development/environment.mjs
+  - scripts/test-tool.mjs
+  - services/ingestion-api/src/app.ts
+  - src/features/auth/auth-store-key.ts
+  - src/features/devices/member-device-api.ts
+  - firebase/local/fixtures/members-and-devices.ts
+  - src/views/HomeView.vue
+  - src/features/auth/session.ts
+  - scripts/test-firebase.mjs
+  - src/platform/firebase/config.ts
+  - src/features/history/device-event-history-repository.ts
+  - src/features/stats/daily-stats-store.ts
+  - src/features/stats/daily-stats-source.ts
+  - services/ingestion-api/cloudbuild.json
+  - src/main.ts
+  - src/features/auth/protected-resource-registry.ts
+  - src/views/HistoryView.vue
+  - services/member-api/src/devices/device-name-service.ts
+  - firebase/development/verify.mjs
+  - src/components/HomeInstantCards.vue
+  - firebase/development/readiness-admin-adapter.mjs
+  - scripts/install-workspaces.mjs
+  - firebase/development/seed.d.mts
+  - deploy/development/verify-ingestion.d.mts
+  - src/features/stats/daily-stats-repository.ts
+  - services/ingestion-api/src/aggregation/today-urination-projection.ts
+  - services/member-api/src/shutdown.ts
+  - .firebaserc
+  - src/features/stats/daily-stats-store-key.ts
+  - services/member-api/tsconfig.test.json
+  - vitest.firebase.config.ts
+  - src/features/auth/auth-store.ts
+  - src/platform/firebase/client.ts
+  - deploy/development/ingestion-service.yaml
+  - services/member-api/src/devices/custom-name.ts
+  - src/views/SettingsView.vue
+  - package.json
+  - src/features/history/urination-history-model.ts
+  - firestore.rules
+  - src/features/devices/owned-device-model.ts
+  - src/components/HomeOverviewHero.vue
+  - services/ingestion-api/src/firestore/firestore-event-sink.ts
+  - deploy/development/deploy-ingestion.d.mts
+  - scripts/dog.png
+  - firestore.indexes.json
+  - services/member-api/tsconfig.json
+  - firebase/development/README.md
+  - src/features/stats/daily-series.ts
+tests:
+  - scripts/install-workspaces.spec.ts
+  - services/member-api/test/firebase-id-token-verifier.test.ts
+  - services/member-api/test/config.test.ts
+  - src/views/HistoryView.spec.ts
+  - services/member-api/test/shutdown.test.ts
+  - src/features/history/device-event-history.spec.ts
+  - src/features/stats/daily-stats.spec.ts
+  - src/features/devices/device-overview-store.spec.ts
+  - src/views/StatsView.spec.ts
+  - src/features/devices/member-device-api.spec.ts
+  - deploy/development/deploy-ingestion.spec.ts
+  - src/features/devices/owned-device-model.spec.ts
+  - src/router/auth-guard.spec.ts
+  - firebase/development/deploy.spec.ts
+  - deploy/development/verify-ingestion.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - scripts/test-tool.spec.ts
+  - src/components/DailyUrinationChart.spec.ts
+  - src/views/SignInView.spec.ts
+  - src/App.spec.ts
+  - src/features/devices/use-device-selection.spec.ts
+  - src/components/ShellAccessibility.spec.ts
+  - scripts/check-release.spec.ts
+  - services/ingestion-api/test/daily-urination-counts.test.ts
+  - services/ingestion-api/test/daily-urination-record.test.ts
+  - services/member-api/test/authenticated-member-flow.integration.test.ts
+  - src/components/DeviceSelector.spec.ts
+  - services/ingestion-api/test/end-to-end-ingestion.integration.test.ts
+  - src/components/BottomNavigation.spec.ts
+  - services/ingestion-api/test/firestore-event-sink.integration.test.ts
+  - src/features/devices/device-display-name.spec.ts
+  - services/ingestion-api/test/app.test.ts
+  - firebase/development/preflight.spec.ts
+  - src/features/auth/return-route.spec.ts
+  - src/platform/firebase/client.spec.ts
+  - src/views/SettingsView.spec.ts
+  - firebase/development/readiness.spec.ts
+  - services/ingestion-api/test/today-urination-projection.test.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/custom-name.test.ts
+  - src/features/history/device-event-history-store.spec.ts
+  - services/ingestion-api/test/urination-event-persistence.test.ts
+  - services/ingestion-api/test/urine-volume-estimate.test.ts
+  - src/features/auth/protected-resource-registry.spec.ts
+  - src/router/index.spec.ts
+  - firebase/local/fixtures/members-and-devices.spec.ts
+  - firebase/development/seed.spec.ts
+  - src/App.no-service-worker.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/history/urination-history-model.spec.ts
+  - src/platform/firebase/config.spec.ts
+  - src/features/auth/auth-emulator.integration.spec.ts
+  - scripts/audit-production-dependencies.spec.ts
+  - services/member-api/test/device-name-firestore.integration.test.ts
+  - src/features/devices/device-overview-model.spec.ts
+  - src/views/NotificationsView.spec.ts
+  - src/features/devices/owned-device-repository.spec.ts
+  - src/features/stats/daily-stats-store.spec.ts
+  - src/App.auth.spec.ts
+  - src/features/auth/auth-store.spec.ts
+-->
+
+---
+### Requirement: Public network ingress with application authentication
+
+The development Cloud Run service SHALL accept public HTTPS invocation so EMQX can reach it. Cloud Run public `GET /health` SHALL return `200 {"status":"ok"}` without authentication, while `POST /v1/emqx/events` MUST enforce the existing current-or-previous Bearer authentication and SHALL return the uniform 401 error for missing or invalid credentials. The container SHALL retain `GET /healthz` for compatibility, but live rollout verification SHALL use `/health` because Cloud Run intercepts the exact `/healthz` path.
+
+#### Scenario: Reach the webhook without a Bearer token
+- **WHEN** a public client posts a valid-looking envelope without Authorization
+- **THEN** Cloud Run reaches the service and the service returns HTTP 401 without invoking Firestore
+
+
+<!-- @trace
+source: deploy-development-ingestion-api
+updated: 2026-08-10
+code:
+  - scripts/test-tool.html
+  - src/router/index.ts
+  - env.d.ts
+  - services/member-api/vitest.config.ts
+  - firebase/development/readiness.d.mts
+  - services/member-api/src/app.ts
+  - services/member-api/src/security/firebase-id-token-verifier.ts
+  - services/ingestion-api/src/persistence/urination-event-record.ts
+  - src/features/history/device-event-history-store-key.ts
+  - src/views/NotificationsView.vue
+  - deploy/development/verify-ingestion.mjs
+  - firebase/development/readiness.mjs
+  - src/components/DeviceSelector.vue
+  - src/components/OverviewPlaceholder.vue
+  - src/features/auth/return-route.ts
+  - src/features/stats/daily-stats-model.ts
+  - src/views/SignInView.vue
+  - .env.example
+  - services/member-api/src/firestore/firestore-client.ts
+  - src/components/BottomNavigation.vue
+  - src/views/StatsView.vue
+  - src/features/devices/device-overview-model.ts
+  - vitest.config.ts
+  - firebase/development/deploy.mjs
+  - services/member-api/src/server.ts
+  - src/features/auth/auth-provider.ts
+  - src/features/devices/owned-device-repository.ts
+  - firebase/development/environment.d.mts
+  - services/member-api/package.json
+  - src/App.vue
+  - firebase/development/seed.mjs
+  - contracts/device-events/README.md
+  - src/features/history/device-event-history-store.ts
+  - docs/mqtt-interfaces-and-firestore-models.md
+  - services/member-api/src/config.ts
+  - services/member-api/Dockerfile
+  - services/ingestion-api/package.json
+  - scripts/audit-production-dependencies.mjs
+  - services/member-api/src/firestore/device-name-repository.ts
+  - src/features/devices/device-overview-store-key.ts
+  - deploy/development/deploy-ingestion.mjs
+  - firebase/development/preflight.mjs
+  - services/ingestion-api/src/persistence/urine-volume-estimate.ts
+  - src/components/DailyUrinationChart.vue
+  - services/ingestion-api/tsconfig.json
+  - firebase/development/preflight.d.mts
+  - firebase/development/environment.ts
+  - services/ingestion-api/src/aggregation/daily-urination-record.ts
+  - services/member-api/src/http/errors.ts
+  - scripts/check-release.mjs
+  - firebase/development/deploy.d.mts
+  - src/features/devices/device-display-name.ts
+  - firebase/development/seed-admin-adapter.mjs
+  - src/features/devices/use-device-selection.ts
+  - src/features/devices/device-overview-store.ts
+  - scripts/machine.png
+  - firebase/development/environment.mjs
+  - scripts/test-tool.mjs
+  - services/ingestion-api/src/app.ts
+  - src/features/auth/auth-store-key.ts
+  - src/features/devices/member-device-api.ts
+  - firebase/local/fixtures/members-and-devices.ts
+  - src/views/HomeView.vue
+  - src/features/auth/session.ts
+  - scripts/test-firebase.mjs
+  - src/platform/firebase/config.ts
+  - src/features/history/device-event-history-repository.ts
+  - src/features/stats/daily-stats-store.ts
+  - src/features/stats/daily-stats-source.ts
+  - services/ingestion-api/cloudbuild.json
+  - src/main.ts
+  - src/features/auth/protected-resource-registry.ts
+  - src/views/HistoryView.vue
+  - services/member-api/src/devices/device-name-service.ts
+  - firebase/development/verify.mjs
+  - src/components/HomeInstantCards.vue
+  - firebase/development/readiness-admin-adapter.mjs
+  - scripts/install-workspaces.mjs
+  - firebase/development/seed.d.mts
+  - deploy/development/verify-ingestion.d.mts
+  - src/features/stats/daily-stats-repository.ts
+  - services/ingestion-api/src/aggregation/today-urination-projection.ts
+  - services/member-api/src/shutdown.ts
+  - .firebaserc
+  - src/features/stats/daily-stats-store-key.ts
+  - services/member-api/tsconfig.test.json
+  - vitest.firebase.config.ts
+  - src/features/auth/auth-store.ts
+  - src/platform/firebase/client.ts
+  - deploy/development/ingestion-service.yaml
+  - services/member-api/src/devices/custom-name.ts
+  - src/views/SettingsView.vue
+  - package.json
+  - src/features/history/urination-history-model.ts
+  - firestore.rules
+  - src/features/devices/owned-device-model.ts
+  - src/components/HomeOverviewHero.vue
+  - services/ingestion-api/src/firestore/firestore-event-sink.ts
+  - deploy/development/deploy-ingestion.d.mts
+  - scripts/dog.png
+  - firestore.indexes.json
+  - services/member-api/tsconfig.json
+  - firebase/development/README.md
+  - src/features/stats/daily-series.ts
+tests:
+  - scripts/install-workspaces.spec.ts
+  - services/member-api/test/firebase-id-token-verifier.test.ts
+  - services/member-api/test/config.test.ts
+  - src/views/HistoryView.spec.ts
+  - services/member-api/test/shutdown.test.ts
+  - src/features/history/device-event-history.spec.ts
+  - src/features/stats/daily-stats.spec.ts
+  - src/features/devices/device-overview-store.spec.ts
+  - src/views/StatsView.spec.ts
+  - src/features/devices/member-device-api.spec.ts
+  - deploy/development/deploy-ingestion.spec.ts
+  - src/features/devices/owned-device-model.spec.ts
+  - src/router/auth-guard.spec.ts
+  - firebase/development/deploy.spec.ts
+  - deploy/development/verify-ingestion.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - scripts/test-tool.spec.ts
+  - src/components/DailyUrinationChart.spec.ts
+  - src/views/SignInView.spec.ts
+  - src/App.spec.ts
+  - src/features/devices/use-device-selection.spec.ts
+  - src/components/ShellAccessibility.spec.ts
+  - scripts/check-release.spec.ts
+  - services/ingestion-api/test/daily-urination-counts.test.ts
+  - services/ingestion-api/test/daily-urination-record.test.ts
+  - services/member-api/test/authenticated-member-flow.integration.test.ts
+  - src/components/DeviceSelector.spec.ts
+  - services/ingestion-api/test/end-to-end-ingestion.integration.test.ts
+  - src/components/BottomNavigation.spec.ts
+  - services/ingestion-api/test/firestore-event-sink.integration.test.ts
+  - src/features/devices/device-display-name.spec.ts
+  - services/ingestion-api/test/app.test.ts
+  - firebase/development/preflight.spec.ts
+  - src/features/auth/return-route.spec.ts
+  - src/platform/firebase/client.spec.ts
+  - src/views/SettingsView.spec.ts
+  - firebase/development/readiness.spec.ts
+  - services/ingestion-api/test/today-urination-projection.test.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/custom-name.test.ts
+  - src/features/history/device-event-history-store.spec.ts
+  - services/ingestion-api/test/urination-event-persistence.test.ts
+  - services/ingestion-api/test/urine-volume-estimate.test.ts
+  - src/features/auth/protected-resource-registry.spec.ts
+  - src/router/index.spec.ts
+  - firebase/local/fixtures/members-and-devices.spec.ts
+  - firebase/development/seed.spec.ts
+  - src/App.no-service-worker.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/history/urination-history-model.spec.ts
+  - src/platform/firebase/config.spec.ts
+  - src/features/auth/auth-emulator.integration.spec.ts
+  - scripts/audit-production-dependencies.spec.ts
+  - services/member-api/test/device-name-firestore.integration.test.ts
+  - src/features/devices/device-overview-model.spec.ts
+  - src/views/NotificationsView.spec.ts
+  - src/features/devices/owned-device-repository.spec.ts
+  - src/features/stats/daily-stats-store.spec.ts
+  - src/App.auth.spec.ts
+  - src/features/auth/auth-store.spec.ts
+-->
+
+---
+### Requirement: Exact production runtime environment
+
+The revision SHALL set `GOOGLE_CLOUD_PROJECT` to the approved development project, SHALL inject Secret Manager references as `EMQX_WEBHOOK_SECRET_CURRENT` and optional `EMQX_WEBHOOK_SECRET_PREVIOUS`, and SHALL NOT set `FIRESTORE_EMULATOR_HOST`. Current and previous secret values MUST differ.
+
+#### Scenario: Reject an Emulator runtime variable
+- **WHEN** the deployment manifest includes FIRESTORE_EMULATOR_HOST
+- **THEN** preflight exits before creating a revision
+
+##### Example: Reject loopback Emulator injection
+- **GIVEN** runtime environment `FIRESTORE_EMULATOR_HOST=127.0.0.1:8085`
+- **WHEN** the operator requests dry-run or apply
+- **THEN** preflight exits non-zero before invoking `gcloud`
+
+
+<!-- @trace
+source: deploy-development-ingestion-api
+updated: 2026-08-10
+code:
+  - scripts/test-tool.html
+  - src/router/index.ts
+  - env.d.ts
+  - services/member-api/vitest.config.ts
+  - firebase/development/readiness.d.mts
+  - services/member-api/src/app.ts
+  - services/member-api/src/security/firebase-id-token-verifier.ts
+  - services/ingestion-api/src/persistence/urination-event-record.ts
+  - src/features/history/device-event-history-store-key.ts
+  - src/views/NotificationsView.vue
+  - deploy/development/verify-ingestion.mjs
+  - firebase/development/readiness.mjs
+  - src/components/DeviceSelector.vue
+  - src/components/OverviewPlaceholder.vue
+  - src/features/auth/return-route.ts
+  - src/features/stats/daily-stats-model.ts
+  - src/views/SignInView.vue
+  - .env.example
+  - services/member-api/src/firestore/firestore-client.ts
+  - src/components/BottomNavigation.vue
+  - src/views/StatsView.vue
+  - src/features/devices/device-overview-model.ts
+  - vitest.config.ts
+  - firebase/development/deploy.mjs
+  - services/member-api/src/server.ts
+  - src/features/auth/auth-provider.ts
+  - src/features/devices/owned-device-repository.ts
+  - firebase/development/environment.d.mts
+  - services/member-api/package.json
+  - src/App.vue
+  - firebase/development/seed.mjs
+  - contracts/device-events/README.md
+  - src/features/history/device-event-history-store.ts
+  - docs/mqtt-interfaces-and-firestore-models.md
+  - services/member-api/src/config.ts
+  - services/member-api/Dockerfile
+  - services/ingestion-api/package.json
+  - scripts/audit-production-dependencies.mjs
+  - services/member-api/src/firestore/device-name-repository.ts
+  - src/features/devices/device-overview-store-key.ts
+  - deploy/development/deploy-ingestion.mjs
+  - firebase/development/preflight.mjs
+  - services/ingestion-api/src/persistence/urine-volume-estimate.ts
+  - src/components/DailyUrinationChart.vue
+  - services/ingestion-api/tsconfig.json
+  - firebase/development/preflight.d.mts
+  - firebase/development/environment.ts
+  - services/ingestion-api/src/aggregation/daily-urination-record.ts
+  - services/member-api/src/http/errors.ts
+  - scripts/check-release.mjs
+  - firebase/development/deploy.d.mts
+  - src/features/devices/device-display-name.ts
+  - firebase/development/seed-admin-adapter.mjs
+  - src/features/devices/use-device-selection.ts
+  - src/features/devices/device-overview-store.ts
+  - scripts/machine.png
+  - firebase/development/environment.mjs
+  - scripts/test-tool.mjs
+  - services/ingestion-api/src/app.ts
+  - src/features/auth/auth-store-key.ts
+  - src/features/devices/member-device-api.ts
+  - firebase/local/fixtures/members-and-devices.ts
+  - src/views/HomeView.vue
+  - src/features/auth/session.ts
+  - scripts/test-firebase.mjs
+  - src/platform/firebase/config.ts
+  - src/features/history/device-event-history-repository.ts
+  - src/features/stats/daily-stats-store.ts
+  - src/features/stats/daily-stats-source.ts
+  - services/ingestion-api/cloudbuild.json
+  - src/main.ts
+  - src/features/auth/protected-resource-registry.ts
+  - src/views/HistoryView.vue
+  - services/member-api/src/devices/device-name-service.ts
+  - firebase/development/verify.mjs
+  - src/components/HomeInstantCards.vue
+  - firebase/development/readiness-admin-adapter.mjs
+  - scripts/install-workspaces.mjs
+  - firebase/development/seed.d.mts
+  - deploy/development/verify-ingestion.d.mts
+  - src/features/stats/daily-stats-repository.ts
+  - services/ingestion-api/src/aggregation/today-urination-projection.ts
+  - services/member-api/src/shutdown.ts
+  - .firebaserc
+  - src/features/stats/daily-stats-store-key.ts
+  - services/member-api/tsconfig.test.json
+  - vitest.firebase.config.ts
+  - src/features/auth/auth-store.ts
+  - src/platform/firebase/client.ts
+  - deploy/development/ingestion-service.yaml
+  - services/member-api/src/devices/custom-name.ts
+  - src/views/SettingsView.vue
+  - package.json
+  - src/features/history/urination-history-model.ts
+  - firestore.rules
+  - src/features/devices/owned-device-model.ts
+  - src/components/HomeOverviewHero.vue
+  - services/ingestion-api/src/firestore/firestore-event-sink.ts
+  - deploy/development/deploy-ingestion.d.mts
+  - scripts/dog.png
+  - firestore.indexes.json
+  - services/member-api/tsconfig.json
+  - firebase/development/README.md
+  - src/features/stats/daily-series.ts
+tests:
+  - scripts/install-workspaces.spec.ts
+  - services/member-api/test/firebase-id-token-verifier.test.ts
+  - services/member-api/test/config.test.ts
+  - src/views/HistoryView.spec.ts
+  - services/member-api/test/shutdown.test.ts
+  - src/features/history/device-event-history.spec.ts
+  - src/features/stats/daily-stats.spec.ts
+  - src/features/devices/device-overview-store.spec.ts
+  - src/views/StatsView.spec.ts
+  - src/features/devices/member-device-api.spec.ts
+  - deploy/development/deploy-ingestion.spec.ts
+  - src/features/devices/owned-device-model.spec.ts
+  - src/router/auth-guard.spec.ts
+  - firebase/development/deploy.spec.ts
+  - deploy/development/verify-ingestion.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - scripts/test-tool.spec.ts
+  - src/components/DailyUrinationChart.spec.ts
+  - src/views/SignInView.spec.ts
+  - src/App.spec.ts
+  - src/features/devices/use-device-selection.spec.ts
+  - src/components/ShellAccessibility.spec.ts
+  - scripts/check-release.spec.ts
+  - services/ingestion-api/test/daily-urination-counts.test.ts
+  - services/ingestion-api/test/daily-urination-record.test.ts
+  - services/member-api/test/authenticated-member-flow.integration.test.ts
+  - src/components/DeviceSelector.spec.ts
+  - services/ingestion-api/test/end-to-end-ingestion.integration.test.ts
+  - src/components/BottomNavigation.spec.ts
+  - services/ingestion-api/test/firestore-event-sink.integration.test.ts
+  - src/features/devices/device-display-name.spec.ts
+  - services/ingestion-api/test/app.test.ts
+  - firebase/development/preflight.spec.ts
+  - src/features/auth/return-route.spec.ts
+  - src/platform/firebase/client.spec.ts
+  - src/views/SettingsView.spec.ts
+  - firebase/development/readiness.spec.ts
+  - services/ingestion-api/test/today-urination-projection.test.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/custom-name.test.ts
+  - src/features/history/device-event-history-store.spec.ts
+  - services/ingestion-api/test/urination-event-persistence.test.ts
+  - services/ingestion-api/test/urine-volume-estimate.test.ts
+  - src/features/auth/protected-resource-registry.spec.ts
+  - src/router/index.spec.ts
+  - firebase/local/fixtures/members-and-devices.spec.ts
+  - firebase/development/seed.spec.ts
+  - src/App.no-service-worker.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/history/urination-history-model.spec.ts
+  - src/platform/firebase/config.spec.ts
+  - src/features/auth/auth-emulator.integration.spec.ts
+  - scripts/audit-production-dependencies.spec.ts
+  - services/member-api/test/device-name-firestore.integration.test.ts
+  - src/features/devices/device-overview-model.spec.ts
+  - src/views/NotificationsView.spec.ts
+  - src/features/devices/owned-device-repository.spec.ts
+  - src/features/stats/daily-stats-store.spec.ts
+  - src/App.auth.spec.ts
+  - src/features/auth/auth-store.spec.ts
+-->
+
+---
+### Requirement: Durable event smoke outcomes
+
+Cloud smoke verification SHALL submit one urination and one battery fixture for an enabled registered development device and SHALL confirm HTTP 201 plus the exact immutable event, projection, and urination-only daily aggregate effects. Replaying either fixture SHALL return HTTP 200 with no writes.
+
+#### Scenario: Replay the urination smoke fixture
+- **WHEN** the same canonical urination event is posted twice
+- **THEN** responses are 201 then 200, one event exists, and daily urinationCount increases once
+
+
+<!-- @trace
+source: deploy-development-ingestion-api
+updated: 2026-08-10
+code:
+  - scripts/test-tool.html
+  - src/router/index.ts
+  - env.d.ts
+  - services/member-api/vitest.config.ts
+  - firebase/development/readiness.d.mts
+  - services/member-api/src/app.ts
+  - services/member-api/src/security/firebase-id-token-verifier.ts
+  - services/ingestion-api/src/persistence/urination-event-record.ts
+  - src/features/history/device-event-history-store-key.ts
+  - src/views/NotificationsView.vue
+  - deploy/development/verify-ingestion.mjs
+  - firebase/development/readiness.mjs
+  - src/components/DeviceSelector.vue
+  - src/components/OverviewPlaceholder.vue
+  - src/features/auth/return-route.ts
+  - src/features/stats/daily-stats-model.ts
+  - src/views/SignInView.vue
+  - .env.example
+  - services/member-api/src/firestore/firestore-client.ts
+  - src/components/BottomNavigation.vue
+  - src/views/StatsView.vue
+  - src/features/devices/device-overview-model.ts
+  - vitest.config.ts
+  - firebase/development/deploy.mjs
+  - services/member-api/src/server.ts
+  - src/features/auth/auth-provider.ts
+  - src/features/devices/owned-device-repository.ts
+  - firebase/development/environment.d.mts
+  - services/member-api/package.json
+  - src/App.vue
+  - firebase/development/seed.mjs
+  - contracts/device-events/README.md
+  - src/features/history/device-event-history-store.ts
+  - docs/mqtt-interfaces-and-firestore-models.md
+  - services/member-api/src/config.ts
+  - services/member-api/Dockerfile
+  - services/ingestion-api/package.json
+  - scripts/audit-production-dependencies.mjs
+  - services/member-api/src/firestore/device-name-repository.ts
+  - src/features/devices/device-overview-store-key.ts
+  - deploy/development/deploy-ingestion.mjs
+  - firebase/development/preflight.mjs
+  - services/ingestion-api/src/persistence/urine-volume-estimate.ts
+  - src/components/DailyUrinationChart.vue
+  - services/ingestion-api/tsconfig.json
+  - firebase/development/preflight.d.mts
+  - firebase/development/environment.ts
+  - services/ingestion-api/src/aggregation/daily-urination-record.ts
+  - services/member-api/src/http/errors.ts
+  - scripts/check-release.mjs
+  - firebase/development/deploy.d.mts
+  - src/features/devices/device-display-name.ts
+  - firebase/development/seed-admin-adapter.mjs
+  - src/features/devices/use-device-selection.ts
+  - src/features/devices/device-overview-store.ts
+  - scripts/machine.png
+  - firebase/development/environment.mjs
+  - scripts/test-tool.mjs
+  - services/ingestion-api/src/app.ts
+  - src/features/auth/auth-store-key.ts
+  - src/features/devices/member-device-api.ts
+  - firebase/local/fixtures/members-and-devices.ts
+  - src/views/HomeView.vue
+  - src/features/auth/session.ts
+  - scripts/test-firebase.mjs
+  - src/platform/firebase/config.ts
+  - src/features/history/device-event-history-repository.ts
+  - src/features/stats/daily-stats-store.ts
+  - src/features/stats/daily-stats-source.ts
+  - services/ingestion-api/cloudbuild.json
+  - src/main.ts
+  - src/features/auth/protected-resource-registry.ts
+  - src/views/HistoryView.vue
+  - services/member-api/src/devices/device-name-service.ts
+  - firebase/development/verify.mjs
+  - src/components/HomeInstantCards.vue
+  - firebase/development/readiness-admin-adapter.mjs
+  - scripts/install-workspaces.mjs
+  - firebase/development/seed.d.mts
+  - deploy/development/verify-ingestion.d.mts
+  - src/features/stats/daily-stats-repository.ts
+  - services/ingestion-api/src/aggregation/today-urination-projection.ts
+  - services/member-api/src/shutdown.ts
+  - .firebaserc
+  - src/features/stats/daily-stats-store-key.ts
+  - services/member-api/tsconfig.test.json
+  - vitest.firebase.config.ts
+  - src/features/auth/auth-store.ts
+  - src/platform/firebase/client.ts
+  - deploy/development/ingestion-service.yaml
+  - services/member-api/src/devices/custom-name.ts
+  - src/views/SettingsView.vue
+  - package.json
+  - src/features/history/urination-history-model.ts
+  - firestore.rules
+  - src/features/devices/owned-device-model.ts
+  - src/components/HomeOverviewHero.vue
+  - services/ingestion-api/src/firestore/firestore-event-sink.ts
+  - deploy/development/deploy-ingestion.d.mts
+  - scripts/dog.png
+  - firestore.indexes.json
+  - services/member-api/tsconfig.json
+  - firebase/development/README.md
+  - src/features/stats/daily-series.ts
+tests:
+  - scripts/install-workspaces.spec.ts
+  - services/member-api/test/firebase-id-token-verifier.test.ts
+  - services/member-api/test/config.test.ts
+  - src/views/HistoryView.spec.ts
+  - services/member-api/test/shutdown.test.ts
+  - src/features/history/device-event-history.spec.ts
+  - src/features/stats/daily-stats.spec.ts
+  - src/features/devices/device-overview-store.spec.ts
+  - src/views/StatsView.spec.ts
+  - src/features/devices/member-device-api.spec.ts
+  - deploy/development/deploy-ingestion.spec.ts
+  - src/features/devices/owned-device-model.spec.ts
+  - src/router/auth-guard.spec.ts
+  - firebase/development/deploy.spec.ts
+  - deploy/development/verify-ingestion.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - scripts/test-tool.spec.ts
+  - src/components/DailyUrinationChart.spec.ts
+  - src/views/SignInView.spec.ts
+  - src/App.spec.ts
+  - src/features/devices/use-device-selection.spec.ts
+  - src/components/ShellAccessibility.spec.ts
+  - scripts/check-release.spec.ts
+  - services/ingestion-api/test/daily-urination-counts.test.ts
+  - services/ingestion-api/test/daily-urination-record.test.ts
+  - services/member-api/test/authenticated-member-flow.integration.test.ts
+  - src/components/DeviceSelector.spec.ts
+  - services/ingestion-api/test/end-to-end-ingestion.integration.test.ts
+  - src/components/BottomNavigation.spec.ts
+  - services/ingestion-api/test/firestore-event-sink.integration.test.ts
+  - src/features/devices/device-display-name.spec.ts
+  - services/ingestion-api/test/app.test.ts
+  - firebase/development/preflight.spec.ts
+  - src/features/auth/return-route.spec.ts
+  - src/platform/firebase/client.spec.ts
+  - src/views/SettingsView.spec.ts
+  - firebase/development/readiness.spec.ts
+  - services/ingestion-api/test/today-urination-projection.test.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/custom-name.test.ts
+  - src/features/history/device-event-history-store.spec.ts
+  - services/ingestion-api/test/urination-event-persistence.test.ts
+  - services/ingestion-api/test/urine-volume-estimate.test.ts
+  - src/features/auth/protected-resource-registry.spec.ts
+  - src/router/index.spec.ts
+  - firebase/local/fixtures/members-and-devices.spec.ts
+  - firebase/development/seed.spec.ts
+  - src/App.no-service-worker.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/history/urination-history-model.spec.ts
+  - src/platform/firebase/config.spec.ts
+  - src/features/auth/auth-emulator.integration.spec.ts
+  - scripts/audit-production-dependencies.spec.ts
+  - services/member-api/test/device-name-firestore.integration.test.ts
+  - src/features/devices/device-overview-model.spec.ts
+  - src/views/NotificationsView.spec.ts
+  - src/features/devices/owned-device-repository.spec.ts
+  - src/features/stats/daily-stats-store.spec.ts
+  - src/App.auth.spec.ts
+  - src/features/auth/auth-store.spec.ts
+-->
+
+---
+### Requirement: Live rollout prerequisite validation
+
+Before any live IAM or Cloud Run mutation, the rollout SHALL confirm an authenticated operator principal, approved project `petcare-c7483`, region `asia-east1`, an existing immutable Artifact Registry digest, a resolvable approved Cloud Billing budget resource, enabled numeric current and optional previous Secret Manager versions, and an enabled smoke fixture device `PC-DEV-0001` whose fixed smoke event IDs do not exist. Prerequisite output MUST contain no access token, secret value, service-account key, or device payload.
+
+#### Scenario: Reject an unresolved live prerequisite
+- **WHEN** the image digest, budget resource, required secret version, fixture device, or approved inventory cannot be resolved by read-only inspection
+- **THEN** the rollout exits before invoking IAM or Cloud Run mutation and emits a sanitized failed prerequisite result
+
+##### Example: Missing current secret version
+- **GIVEN** current reference `projects/petcare-c7483/secrets/emqx-webhook-current/versions/7` resolves to no enabled version
+- **WHEN** the operator runs the live prerequisite gate
+- **THEN** the gate fails without invoking `gcloud projects add-iam-policy-binding`, `gcloud secrets add-iam-policy-binding`, or `gcloud run deploy`
+
+
+<!-- @trace
+source: deploy-development-ingestion-api
+updated: 2026-08-10
+code:
+  - scripts/test-tool.html
+  - src/router/index.ts
+  - env.d.ts
+  - services/member-api/vitest.config.ts
+  - firebase/development/readiness.d.mts
+  - services/member-api/src/app.ts
+  - services/member-api/src/security/firebase-id-token-verifier.ts
+  - services/ingestion-api/src/persistence/urination-event-record.ts
+  - src/features/history/device-event-history-store-key.ts
+  - src/views/NotificationsView.vue
+  - deploy/development/verify-ingestion.mjs
+  - firebase/development/readiness.mjs
+  - src/components/DeviceSelector.vue
+  - src/components/OverviewPlaceholder.vue
+  - src/features/auth/return-route.ts
+  - src/features/stats/daily-stats-model.ts
+  - src/views/SignInView.vue
+  - .env.example
+  - services/member-api/src/firestore/firestore-client.ts
+  - src/components/BottomNavigation.vue
+  - src/views/StatsView.vue
+  - src/features/devices/device-overview-model.ts
+  - vitest.config.ts
+  - firebase/development/deploy.mjs
+  - services/member-api/src/server.ts
+  - src/features/auth/auth-provider.ts
+  - src/features/devices/owned-device-repository.ts
+  - firebase/development/environment.d.mts
+  - services/member-api/package.json
+  - src/App.vue
+  - firebase/development/seed.mjs
+  - contracts/device-events/README.md
+  - src/features/history/device-event-history-store.ts
+  - docs/mqtt-interfaces-and-firestore-models.md
+  - services/member-api/src/config.ts
+  - services/member-api/Dockerfile
+  - services/ingestion-api/package.json
+  - scripts/audit-production-dependencies.mjs
+  - services/member-api/src/firestore/device-name-repository.ts
+  - src/features/devices/device-overview-store-key.ts
+  - deploy/development/deploy-ingestion.mjs
+  - firebase/development/preflight.mjs
+  - services/ingestion-api/src/persistence/urine-volume-estimate.ts
+  - src/components/DailyUrinationChart.vue
+  - services/ingestion-api/tsconfig.json
+  - firebase/development/preflight.d.mts
+  - firebase/development/environment.ts
+  - services/ingestion-api/src/aggregation/daily-urination-record.ts
+  - services/member-api/src/http/errors.ts
+  - scripts/check-release.mjs
+  - firebase/development/deploy.d.mts
+  - src/features/devices/device-display-name.ts
+  - firebase/development/seed-admin-adapter.mjs
+  - src/features/devices/use-device-selection.ts
+  - src/features/devices/device-overview-store.ts
+  - scripts/machine.png
+  - firebase/development/environment.mjs
+  - scripts/test-tool.mjs
+  - services/ingestion-api/src/app.ts
+  - src/features/auth/auth-store-key.ts
+  - src/features/devices/member-device-api.ts
+  - firebase/local/fixtures/members-and-devices.ts
+  - src/views/HomeView.vue
+  - src/features/auth/session.ts
+  - scripts/test-firebase.mjs
+  - src/platform/firebase/config.ts
+  - src/features/history/device-event-history-repository.ts
+  - src/features/stats/daily-stats-store.ts
+  - src/features/stats/daily-stats-source.ts
+  - services/ingestion-api/cloudbuild.json
+  - src/main.ts
+  - src/features/auth/protected-resource-registry.ts
+  - src/views/HistoryView.vue
+  - services/member-api/src/devices/device-name-service.ts
+  - firebase/development/verify.mjs
+  - src/components/HomeInstantCards.vue
+  - firebase/development/readiness-admin-adapter.mjs
+  - scripts/install-workspaces.mjs
+  - firebase/development/seed.d.mts
+  - deploy/development/verify-ingestion.d.mts
+  - src/features/stats/daily-stats-repository.ts
+  - services/ingestion-api/src/aggregation/today-urination-projection.ts
+  - services/member-api/src/shutdown.ts
+  - .firebaserc
+  - src/features/stats/daily-stats-store-key.ts
+  - services/member-api/tsconfig.test.json
+  - vitest.firebase.config.ts
+  - src/features/auth/auth-store.ts
+  - src/platform/firebase/client.ts
+  - deploy/development/ingestion-service.yaml
+  - services/member-api/src/devices/custom-name.ts
+  - src/views/SettingsView.vue
+  - package.json
+  - src/features/history/urination-history-model.ts
+  - firestore.rules
+  - src/features/devices/owned-device-model.ts
+  - src/components/HomeOverviewHero.vue
+  - services/ingestion-api/src/firestore/firestore-event-sink.ts
+  - deploy/development/deploy-ingestion.d.mts
+  - scripts/dog.png
+  - firestore.indexes.json
+  - services/member-api/tsconfig.json
+  - firebase/development/README.md
+  - src/features/stats/daily-series.ts
+tests:
+  - scripts/install-workspaces.spec.ts
+  - services/member-api/test/firebase-id-token-verifier.test.ts
+  - services/member-api/test/config.test.ts
+  - src/views/HistoryView.spec.ts
+  - services/member-api/test/shutdown.test.ts
+  - src/features/history/device-event-history.spec.ts
+  - src/features/stats/daily-stats.spec.ts
+  - src/features/devices/device-overview-store.spec.ts
+  - src/views/StatsView.spec.ts
+  - src/features/devices/member-device-api.spec.ts
+  - deploy/development/deploy-ingestion.spec.ts
+  - src/features/devices/owned-device-model.spec.ts
+  - src/router/auth-guard.spec.ts
+  - firebase/development/deploy.spec.ts
+  - deploy/development/verify-ingestion.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - scripts/test-tool.spec.ts
+  - src/components/DailyUrinationChart.spec.ts
+  - src/views/SignInView.spec.ts
+  - src/App.spec.ts
+  - src/features/devices/use-device-selection.spec.ts
+  - src/components/ShellAccessibility.spec.ts
+  - scripts/check-release.spec.ts
+  - services/ingestion-api/test/daily-urination-counts.test.ts
+  - services/ingestion-api/test/daily-urination-record.test.ts
+  - services/member-api/test/authenticated-member-flow.integration.test.ts
+  - src/components/DeviceSelector.spec.ts
+  - services/ingestion-api/test/end-to-end-ingestion.integration.test.ts
+  - src/components/BottomNavigation.spec.ts
+  - services/ingestion-api/test/firestore-event-sink.integration.test.ts
+  - src/features/devices/device-display-name.spec.ts
+  - services/ingestion-api/test/app.test.ts
+  - firebase/development/preflight.spec.ts
+  - src/features/auth/return-route.spec.ts
+  - src/platform/firebase/client.spec.ts
+  - src/views/SettingsView.spec.ts
+  - firebase/development/readiness.spec.ts
+  - services/ingestion-api/test/today-urination-projection.test.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/custom-name.test.ts
+  - src/features/history/device-event-history-store.spec.ts
+  - services/ingestion-api/test/urination-event-persistence.test.ts
+  - services/ingestion-api/test/urine-volume-estimate.test.ts
+  - src/features/auth/protected-resource-registry.spec.ts
+  - src/router/index.spec.ts
+  - firebase/local/fixtures/members-and-devices.spec.ts
+  - firebase/development/seed.spec.ts
+  - src/App.no-service-worker.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/history/urination-history-model.spec.ts
+  - src/platform/firebase/config.spec.ts
+  - src/features/auth/auth-emulator.integration.spec.ts
+  - scripts/audit-production-dependencies.spec.ts
+  - services/member-api/test/device-name-firestore.integration.test.ts
+  - src/features/devices/device-overview-model.spec.ts
+  - src/views/NotificationsView.spec.ts
+  - src/features/devices/owned-device-repository.spec.ts
+  - src/features/stats/daily-stats-store.spec.ts
+  - src/App.auth.spec.ts
+  - src/features/auth/auth-store.spec.ts
+-->
+
+---
+### Requirement: Verified live development rollout
+
+The rollout SHALL execute a sanitized dry-run and live apply with the same immutable image digest, budget resource, and Secret Manager version references. Completion SHALL require read-only Cloud Run inspection to prove that the exact deployed revision serves 100 percent of traffic with the planned digest and runtime identity, followed by successful Cloud smoke verification and a sanitized healthy release record.
+
+#### Scenario: Complete a real development rollout
+- **WHEN** approved prerequisites pass, live apply succeeds, the exact revision serves 100 percent of traffic, and all durable smoke checks pass
+- **THEN** the rollout records the same project, region, service, revision, image digest, runtime identity, and healthy status observed in Cloud Run without recording secrets or payloads
+
+##### Example: Healthy first rollout
+- **GIVEN** planned digest `sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa` and deployed revision `peecare-ingestion-development-00001-abc`
+- **WHEN** Cloud Run inspection reports that revision at 100 percent traffic and verification returns health 200, unauthorized 401, urination 201/200, and battery 201/200
+- **THEN** the healthy release record contains that revision and digest and reports one urination aggregate increment with zero duplicate writes
+
+
+<!-- @trace
+source: deploy-development-ingestion-api
+updated: 2026-08-10
+code:
+  - scripts/test-tool.html
+  - src/router/index.ts
+  - env.d.ts
+  - services/member-api/vitest.config.ts
+  - firebase/development/readiness.d.mts
+  - services/member-api/src/app.ts
+  - services/member-api/src/security/firebase-id-token-verifier.ts
+  - services/ingestion-api/src/persistence/urination-event-record.ts
+  - src/features/history/device-event-history-store-key.ts
+  - src/views/NotificationsView.vue
+  - deploy/development/verify-ingestion.mjs
+  - firebase/development/readiness.mjs
+  - src/components/DeviceSelector.vue
+  - src/components/OverviewPlaceholder.vue
+  - src/features/auth/return-route.ts
+  - src/features/stats/daily-stats-model.ts
+  - src/views/SignInView.vue
+  - .env.example
+  - services/member-api/src/firestore/firestore-client.ts
+  - src/components/BottomNavigation.vue
+  - src/views/StatsView.vue
+  - src/features/devices/device-overview-model.ts
+  - vitest.config.ts
+  - firebase/development/deploy.mjs
+  - services/member-api/src/server.ts
+  - src/features/auth/auth-provider.ts
+  - src/features/devices/owned-device-repository.ts
+  - firebase/development/environment.d.mts
+  - services/member-api/package.json
+  - src/App.vue
+  - firebase/development/seed.mjs
+  - contracts/device-events/README.md
+  - src/features/history/device-event-history-store.ts
+  - docs/mqtt-interfaces-and-firestore-models.md
+  - services/member-api/src/config.ts
+  - services/member-api/Dockerfile
+  - services/ingestion-api/package.json
+  - scripts/audit-production-dependencies.mjs
+  - services/member-api/src/firestore/device-name-repository.ts
+  - src/features/devices/device-overview-store-key.ts
+  - deploy/development/deploy-ingestion.mjs
+  - firebase/development/preflight.mjs
+  - services/ingestion-api/src/persistence/urine-volume-estimate.ts
+  - src/components/DailyUrinationChart.vue
+  - services/ingestion-api/tsconfig.json
+  - firebase/development/preflight.d.mts
+  - firebase/development/environment.ts
+  - services/ingestion-api/src/aggregation/daily-urination-record.ts
+  - services/member-api/src/http/errors.ts
+  - scripts/check-release.mjs
+  - firebase/development/deploy.d.mts
+  - src/features/devices/device-display-name.ts
+  - firebase/development/seed-admin-adapter.mjs
+  - src/features/devices/use-device-selection.ts
+  - src/features/devices/device-overview-store.ts
+  - scripts/machine.png
+  - firebase/development/environment.mjs
+  - scripts/test-tool.mjs
+  - services/ingestion-api/src/app.ts
+  - src/features/auth/auth-store-key.ts
+  - src/features/devices/member-device-api.ts
+  - firebase/local/fixtures/members-and-devices.ts
+  - src/views/HomeView.vue
+  - src/features/auth/session.ts
+  - scripts/test-firebase.mjs
+  - src/platform/firebase/config.ts
+  - src/features/history/device-event-history-repository.ts
+  - src/features/stats/daily-stats-store.ts
+  - src/features/stats/daily-stats-source.ts
+  - services/ingestion-api/cloudbuild.json
+  - src/main.ts
+  - src/features/auth/protected-resource-registry.ts
+  - src/views/HistoryView.vue
+  - services/member-api/src/devices/device-name-service.ts
+  - firebase/development/verify.mjs
+  - src/components/HomeInstantCards.vue
+  - firebase/development/readiness-admin-adapter.mjs
+  - scripts/install-workspaces.mjs
+  - firebase/development/seed.d.mts
+  - deploy/development/verify-ingestion.d.mts
+  - src/features/stats/daily-stats-repository.ts
+  - services/ingestion-api/src/aggregation/today-urination-projection.ts
+  - services/member-api/src/shutdown.ts
+  - .firebaserc
+  - src/features/stats/daily-stats-store-key.ts
+  - services/member-api/tsconfig.test.json
+  - vitest.firebase.config.ts
+  - src/features/auth/auth-store.ts
+  - src/platform/firebase/client.ts
+  - deploy/development/ingestion-service.yaml
+  - services/member-api/src/devices/custom-name.ts
+  - src/views/SettingsView.vue
+  - package.json
+  - src/features/history/urination-history-model.ts
+  - firestore.rules
+  - src/features/devices/owned-device-model.ts
+  - src/components/HomeOverviewHero.vue
+  - services/ingestion-api/src/firestore/firestore-event-sink.ts
+  - deploy/development/deploy-ingestion.d.mts
+  - scripts/dog.png
+  - firestore.indexes.json
+  - services/member-api/tsconfig.json
+  - firebase/development/README.md
+  - src/features/stats/daily-series.ts
+tests:
+  - scripts/install-workspaces.spec.ts
+  - services/member-api/test/firebase-id-token-verifier.test.ts
+  - services/member-api/test/config.test.ts
+  - src/views/HistoryView.spec.ts
+  - services/member-api/test/shutdown.test.ts
+  - src/features/history/device-event-history.spec.ts
+  - src/features/stats/daily-stats.spec.ts
+  - src/features/devices/device-overview-store.spec.ts
+  - src/views/StatsView.spec.ts
+  - src/features/devices/member-device-api.spec.ts
+  - deploy/development/deploy-ingestion.spec.ts
+  - src/features/devices/owned-device-model.spec.ts
+  - src/router/auth-guard.spec.ts
+  - firebase/development/deploy.spec.ts
+  - deploy/development/verify-ingestion.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - scripts/test-tool.spec.ts
+  - src/components/DailyUrinationChart.spec.ts
+  - src/views/SignInView.spec.ts
+  - src/App.spec.ts
+  - src/features/devices/use-device-selection.spec.ts
+  - src/components/ShellAccessibility.spec.ts
+  - scripts/check-release.spec.ts
+  - services/ingestion-api/test/daily-urination-counts.test.ts
+  - services/ingestion-api/test/daily-urination-record.test.ts
+  - services/member-api/test/authenticated-member-flow.integration.test.ts
+  - src/components/DeviceSelector.spec.ts
+  - services/ingestion-api/test/end-to-end-ingestion.integration.test.ts
+  - src/components/BottomNavigation.spec.ts
+  - services/ingestion-api/test/firestore-event-sink.integration.test.ts
+  - src/features/devices/device-display-name.spec.ts
+  - services/ingestion-api/test/app.test.ts
+  - firebase/development/preflight.spec.ts
+  - src/features/auth/return-route.spec.ts
+  - src/platform/firebase/client.spec.ts
+  - src/views/SettingsView.spec.ts
+  - firebase/development/readiness.spec.ts
+  - services/ingestion-api/test/today-urination-projection.test.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/custom-name.test.ts
+  - src/features/history/device-event-history-store.spec.ts
+  - services/ingestion-api/test/urination-event-persistence.test.ts
+  - services/ingestion-api/test/urine-volume-estimate.test.ts
+  - src/features/auth/protected-resource-registry.spec.ts
+  - src/router/index.spec.ts
+  - firebase/local/fixtures/members-and-devices.spec.ts
+  - firebase/development/seed.spec.ts
+  - src/App.no-service-worker.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/history/urination-history-model.spec.ts
+  - src/platform/firebase/config.spec.ts
+  - src/features/auth/auth-emulator.integration.spec.ts
+  - scripts/audit-production-dependencies.spec.ts
+  - services/member-api/test/device-name-firestore.integration.test.ts
+  - src/features/devices/device-overview-model.spec.ts
+  - src/views/NotificationsView.spec.ts
+  - src/features/devices/owned-device-repository.spec.ts
+  - src/features/stats/daily-stats-store.spec.ts
+  - src/App.auth.spec.ts
+  - src/features/auth/auth-store.spec.ts
+-->
+
+---
+### Requirement: Failed live rollout containment
+
+A failed live apply, revision inspection, or smoke verification MUST NOT produce a healthy release record or enable downstream EMQX integration. When a prior healthy immutable revision exists, rollback SHALL require a sanitized exact-revision dry-run, explicit operator execution of the reviewed traffic command, and read-only confirmation that the prior revision serves 100 percent of traffic. When no prior healthy revision exists, the workflow SHALL stop without inventing a rollback target.
+
+#### Scenario: Roll back a failed rollout
+- **WHEN** post-deployment smoke verification fails and a verified prior healthy revision exists
+- **THEN** the operator reviews the exact rollback plan, executes only that traffic command, and confirms the prior revision serves 100 percent of traffic while no healthy record is written for the failed revision
+
+#### Scenario: Stop a failed first rollout
+- **WHEN** post-deployment verification fails and no prior healthy revision exists
+- **THEN** the workflow emits sanitized failure evidence, creates no healthy release record, starts no EMQX integration, and requires explicit operator remediation
+
+##### Example: First revision health failure
+- **GIVEN** deployed revision `peecare-ingestion-development-00001-abc`, no prior healthy release record, and health response HTTP 503
+- **WHEN** live verification evaluates the revision
+- **THEN** the workflow records a sanitized `smoke_failed` result, writes no healthy release record, executes no rollback traffic command, and leaves EMQX integration blocked
+
+<!-- @trace
+source: deploy-development-ingestion-api
+updated: 2026-08-10
+code:
+  - scripts/test-tool.html
+  - src/router/index.ts
+  - env.d.ts
+  - services/member-api/vitest.config.ts
+  - firebase/development/readiness.d.mts
+  - services/member-api/src/app.ts
+  - services/member-api/src/security/firebase-id-token-verifier.ts
+  - services/ingestion-api/src/persistence/urination-event-record.ts
+  - src/features/history/device-event-history-store-key.ts
+  - src/views/NotificationsView.vue
+  - deploy/development/verify-ingestion.mjs
+  - firebase/development/readiness.mjs
+  - src/components/DeviceSelector.vue
+  - src/components/OverviewPlaceholder.vue
+  - src/features/auth/return-route.ts
+  - src/features/stats/daily-stats-model.ts
+  - src/views/SignInView.vue
+  - .env.example
+  - services/member-api/src/firestore/firestore-client.ts
+  - src/components/BottomNavigation.vue
+  - src/views/StatsView.vue
+  - src/features/devices/device-overview-model.ts
+  - vitest.config.ts
+  - firebase/development/deploy.mjs
+  - services/member-api/src/server.ts
+  - src/features/auth/auth-provider.ts
+  - src/features/devices/owned-device-repository.ts
+  - firebase/development/environment.d.mts
+  - services/member-api/package.json
+  - src/App.vue
+  - firebase/development/seed.mjs
+  - contracts/device-events/README.md
+  - src/features/history/device-event-history-store.ts
+  - docs/mqtt-interfaces-and-firestore-models.md
+  - services/member-api/src/config.ts
+  - services/member-api/Dockerfile
+  - services/ingestion-api/package.json
+  - scripts/audit-production-dependencies.mjs
+  - services/member-api/src/firestore/device-name-repository.ts
+  - src/features/devices/device-overview-store-key.ts
+  - deploy/development/deploy-ingestion.mjs
+  - firebase/development/preflight.mjs
+  - services/ingestion-api/src/persistence/urine-volume-estimate.ts
+  - src/components/DailyUrinationChart.vue
+  - services/ingestion-api/tsconfig.json
+  - firebase/development/preflight.d.mts
+  - firebase/development/environment.ts
+  - services/ingestion-api/src/aggregation/daily-urination-record.ts
+  - services/member-api/src/http/errors.ts
+  - scripts/check-release.mjs
+  - firebase/development/deploy.d.mts
+  - src/features/devices/device-display-name.ts
+  - firebase/development/seed-admin-adapter.mjs
+  - src/features/devices/use-device-selection.ts
+  - src/features/devices/device-overview-store.ts
+  - scripts/machine.png
+  - firebase/development/environment.mjs
+  - scripts/test-tool.mjs
+  - services/ingestion-api/src/app.ts
+  - src/features/auth/auth-store-key.ts
+  - src/features/devices/member-device-api.ts
+  - firebase/local/fixtures/members-and-devices.ts
+  - src/views/HomeView.vue
+  - src/features/auth/session.ts
+  - scripts/test-firebase.mjs
+  - src/platform/firebase/config.ts
+  - src/features/history/device-event-history-repository.ts
+  - src/features/stats/daily-stats-store.ts
+  - src/features/stats/daily-stats-source.ts
+  - services/ingestion-api/cloudbuild.json
+  - src/main.ts
+  - src/features/auth/protected-resource-registry.ts
+  - src/views/HistoryView.vue
+  - services/member-api/src/devices/device-name-service.ts
+  - firebase/development/verify.mjs
+  - src/components/HomeInstantCards.vue
+  - firebase/development/readiness-admin-adapter.mjs
+  - scripts/install-workspaces.mjs
+  - firebase/development/seed.d.mts
+  - deploy/development/verify-ingestion.d.mts
+  - src/features/stats/daily-stats-repository.ts
+  - services/ingestion-api/src/aggregation/today-urination-projection.ts
+  - services/member-api/src/shutdown.ts
+  - .firebaserc
+  - src/features/stats/daily-stats-store-key.ts
+  - services/member-api/tsconfig.test.json
+  - vitest.firebase.config.ts
+  - src/features/auth/auth-store.ts
+  - src/platform/firebase/client.ts
+  - deploy/development/ingestion-service.yaml
+  - services/member-api/src/devices/custom-name.ts
+  - src/views/SettingsView.vue
+  - package.json
+  - src/features/history/urination-history-model.ts
+  - firestore.rules
+  - src/features/devices/owned-device-model.ts
+  - src/components/HomeOverviewHero.vue
+  - services/ingestion-api/src/firestore/firestore-event-sink.ts
+  - deploy/development/deploy-ingestion.d.mts
+  - scripts/dog.png
+  - firestore.indexes.json
+  - services/member-api/tsconfig.json
+  - firebase/development/README.md
+  - src/features/stats/daily-series.ts
+tests:
+  - scripts/install-workspaces.spec.ts
+  - services/member-api/test/firebase-id-token-verifier.test.ts
+  - services/member-api/test/config.test.ts
+  - src/views/HistoryView.spec.ts
+  - services/member-api/test/shutdown.test.ts
+  - src/features/history/device-event-history.spec.ts
+  - src/features/stats/daily-stats.spec.ts
+  - src/features/devices/device-overview-store.spec.ts
+  - src/views/StatsView.spec.ts
+  - src/features/devices/member-device-api.spec.ts
+  - deploy/development/deploy-ingestion.spec.ts
+  - src/features/devices/owned-device-model.spec.ts
+  - src/router/auth-guard.spec.ts
+  - firebase/development/deploy.spec.ts
+  - deploy/development/verify-ingestion.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - scripts/test-tool.spec.ts
+  - src/components/DailyUrinationChart.spec.ts
+  - src/views/SignInView.spec.ts
+  - src/App.spec.ts
+  - src/features/devices/use-device-selection.spec.ts
+  - src/components/ShellAccessibility.spec.ts
+  - scripts/check-release.spec.ts
+  - services/ingestion-api/test/daily-urination-counts.test.ts
+  - services/ingestion-api/test/daily-urination-record.test.ts
+  - services/member-api/test/authenticated-member-flow.integration.test.ts
+  - src/components/DeviceSelector.spec.ts
+  - services/ingestion-api/test/end-to-end-ingestion.integration.test.ts
+  - src/components/BottomNavigation.spec.ts
+  - services/ingestion-api/test/firestore-event-sink.integration.test.ts
+  - src/features/devices/device-display-name.spec.ts
+  - services/ingestion-api/test/app.test.ts
+  - firebase/development/preflight.spec.ts
+  - src/features/auth/return-route.spec.ts
+  - src/platform/firebase/client.spec.ts
+  - src/views/SettingsView.spec.ts
+  - firebase/development/readiness.spec.ts
+  - services/ingestion-api/test/today-urination-projection.test.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/custom-name.test.ts
+  - src/features/history/device-event-history-store.spec.ts
+  - services/ingestion-api/test/urination-event-persistence.test.ts
+  - services/ingestion-api/test/urine-volume-estimate.test.ts
+  - src/features/auth/protected-resource-registry.spec.ts
+  - src/router/index.spec.ts
+  - firebase/local/fixtures/members-and-devices.spec.ts
+  - firebase/development/seed.spec.ts
+  - src/App.no-service-worker.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/history/urination-history-model.spec.ts
+  - src/platform/firebase/config.spec.ts
+  - src/features/auth/auth-emulator.integration.spec.ts
+  - scripts/audit-production-dependencies.spec.ts
+  - services/member-api/test/device-name-firestore.integration.test.ts
+  - src/features/devices/device-overview-model.spec.ts
+  - src/views/NotificationsView.spec.ts
+  - src/features/devices/owned-device-repository.spec.ts
+  - src/features/stats/daily-stats-store.spec.ts
+  - src/App.auth.spec.ts
+  - src/features/auth/auth-store.spec.ts
+-->
