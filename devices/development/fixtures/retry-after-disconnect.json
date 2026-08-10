@@ -1,0 +1,31 @@
+{
+  "description": "The connection drops before PUBACK for evt-000001; retry reuses the canonical Topic and complete payload.",
+  "original": {
+    "topic": "products/pc-mini/devices/PC-000001/events/urination",
+    "payload": {
+      "schemaVersion": 1,
+      "eventId": "evt-000001",
+      "eventType": "urination",
+      "deviceId": "PC-000001",
+      "sequence": 42,
+      "recordedAtMs": 1785168000000,
+      "firmwareVersion": "1.2.0",
+      "flushDurationMs": 3000,
+      "pumpDurationMs": 5000
+    }
+  },
+  "retry": {
+    "topic": "products/pc-mini/devices/PC-000001/events/urination",
+    "payload": {
+      "schemaVersion": 1,
+      "eventId": "evt-000001",
+      "eventType": "urination",
+      "deviceId": "PC-000001",
+      "sequence": 42,
+      "recordedAtMs": 1785168000000,
+      "firmwareVersion": "1.2.0",
+      "flushDurationMs": 3000,
+      "pumpDurationMs": 5000
+    }
+  }
+}

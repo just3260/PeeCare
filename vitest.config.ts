@@ -22,6 +22,7 @@ export default mergeConfig(
         'firebase/local/fixtures/members-and-devices.spec.ts',
         'firebase/development/**/*.spec.ts',
         'deploy/development/**/*.spec.ts',
+        'devices/development/**/*.spec.ts',
       ],
       // *.integration.spec.ts are Emulator-backed and run only under
       // vitest.firebase.config.ts, never in this fast, mock-only gate.

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "devices": [
+    {
+      "hardwareLabel": "PeeCare development unit 1",
+      "deviceId": "PC-000001",
+      "productModel": "pc-mini",
+      "mqttPrincipal": "device-PC-000001",
+      "firestore": {
+        "projectId": "petcare-c7483",
+        "documentPath": "devices/PC-000001",
+        "ingestionStatus": "enabled"
+      }
+    }
+  ]
+}

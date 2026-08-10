@@ -1,0 +1,24 @@
+{
+  "username": "device-PC-000001",
+  "rules": [
+    {
+      "permission": "allow",
+      "action": "publish",
+      "topic": "products/pc-mini/devices/PC-000001/events/urination",
+      "qos": [1],
+      "retain": false
+    },
+    {
+      "permission": "allow",
+      "action": "publish",
+      "topic": "products/pc-mini/devices/PC-000001/status/battery",
+      "qos": [1],
+      "retain": false
+    },
+    {
+      "permission": "deny",
+      "action": "all",
+      "topic": "#"
+    }
+  ]
+}
