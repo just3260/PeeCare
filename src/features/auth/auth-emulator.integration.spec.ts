@@ -8,7 +8,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { createUserWithEmailAndPassword } from 'firebase/auth'
 
-import { getLocalFirebaseServices, resetLocalFirebaseServices } from '../../platform/firebase/client'
+import {
+  getLocalFirebaseServices,
+  resetLocalFirebaseServices,
+} from '../../platform/firebase/local-client'
 import type { RawFirebaseEnv } from '../../platform/firebase/config'
 import { createAuthStore, createFirebaseAuthObserver } from './auth-store'
 import { createFirebaseAuthProvider } from './auth-provider'

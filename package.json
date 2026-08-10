@@ -37,6 +37,8 @@
     "member:development:rollback": "node deploy/development/verify-member.mjs --rollback-dry-run",
     "member:development:web-build:dry-run": "node deploy/development/verify-member.mjs --web-build-dry-run",
     "member:development:web-build": "node deploy/development/verify-member.mjs --web-build-apply",
+    "web:development:dry-run": "node deploy/development/deploy-web.mjs --dry-run",
+    "web:development:deploy": "node deploy/development/deploy-web.mjs --apply",
     "test:firebase": "node scripts/test-firebase.mjs",
     "check:all": "npm run check && npm run test:firebase",
     "check:release": "node scripts/check-release.mjs",

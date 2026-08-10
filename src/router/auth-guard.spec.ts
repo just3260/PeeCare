@@ -41,6 +41,49 @@ function createGuardedRouter(store: AuthGuardStore): Router {
 }
 
 describe('protected member navigation', () => {
+  it.each(['/', '/history', '/stats'])(
+    'restores protected route %s for an authenticated Owner',
+    async (path) => {
+      const { store } = createGuardStore({
+        status: 'signed-in',
+        user: { uid: 'member-001', displayName: null, email: null },
+      })
+      const router = createGuardedRouter(store)
+
+      router.push(path)
+      await router.isReady()
+
+      expect(router.currentRoute.value.path).toBe(path)
+    },
+  )
+
+  it.each(['/', '/history', '/stats'])(
+    'guards signed-out direct route %s and preserves it only as returnTo',
+    async (path) => {
+      const { store } = createGuardStore({ status: 'signed-out' })
+      const router = createGuardedRouter(store)
+
+      router.push(path)
+      await router.isReady()
+
+      expect(router.currentRoute.value.path).toBe('/sign-in')
+      expect(router.currentRoute.value.query.returnTo).toBe(path)
+    },
+  )
+
+  it('guards /sign-in by returning an authenticated Owner to the protected home', async () => {
+    const { store } = createGuardStore({
+      status: 'signed-in',
+      user: { uid: 'member-001', displayName: null, email: null },
+    })
+    const router = createGuardedRouter(store)
+
+    router.push('/sign-in')
+    await router.isReady()
+
+    expect(router.currentRoute.value.path).toBe('/')
+  })
+
   it('redirects a signed-out visitor to the sign-in view without protected content', async () => {
     const { store } = createGuardStore({ status: 'signed-out' })
     const router = createGuardedRouter(store)

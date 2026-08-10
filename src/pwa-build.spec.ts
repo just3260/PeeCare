@@ -1,19 +1,29 @@
 // @vitest-environment node
 // Vite/esbuild builds cannot run under the jsdom environment (jsdom replaces
 // TextEncoder), so this build-artifact suite runs in a Node environment.
-import { readFileSync, existsSync, rmSync } from 'node:fs'
+import { readFileSync, existsSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { build } from 'vite'
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url))
 const outDir = join(tmpdir(), 'peecare-pwa-build-test')
+const developmentBuildEnv = {
+  VITE_FIREBASE_ENVIRONMENT: 'development',
+  VITE_FIREBASE_APPROVED_PROJECT_ID: 'petcare-c7483',
+  VITE_FIREBASE_PROJECT_ID: 'petcare-c7483',
+  VITE_FIREBASE_API_KEY: 'public-firebase-client-key',
+  VITE_FIREBASE_AUTH_DOMAIN: 'petcare-c7483.firebaseapp.com',
+  VITE_FIREBASE_APP_ID: '1:348528459946:web:abc123',
+  VITE_MEMBER_API_URL: 'https://peecare-member-development.example.run.app',
+}
 
 describe('PWA production build artifacts', () => {
   beforeAll(async () => {
+    Object.assign(process.env, developmentBuildEnv)
     rmSync(outDir, { recursive: true, force: true })
     await build({
       root: projectRoot,
@@ -21,6 +31,10 @@ describe('PWA production build artifacts', () => {
       build: { outDir, emptyOutDir: true },
     })
   }, 120000)
+
+  afterAll(() => {
+    for (const key of Object.keys(developmentBuildEnv)) delete process.env[key]
+  })
 
   it('generates a zh-TW installable manifest with both icons', () => {
     const manifest = JSON.parse(
@@ -50,9 +64,36 @@ describe('PWA production build artifacts', () => {
     expect(sw).toContain('index.html')
   })
 
+  it('keeps Firebase, Google identity, and Cloud Run member traffic network-only', () => {
+    const sw = readFileSync(join(outDir, 'sw.js'), 'utf8')
+
+    expect(sw).toContain('NetworkOnly')
+    expect(sw).toContain('identitytoolkit')
+    expect(sw).toContain('securetoken')
+    expect(sw).toContain('firestore')
+    expect(sw).toContain('accounts')
+    expect(sw).toContain('run\\.app')
+  })
+
   it('registers the service worker only in production, never in dev or test', () => {
     // The Vitest runner is a non-production environment, so the PROD guard in
     // src/main.ts prevents any service-worker registration here.
     expect(import.meta.env.PROD).toBe(false)
+  })
+
+  it('selects the approved development cloud adapter without Emulator or MQTT capability', () => {
+    const bundle = readdirSync(join(outDir, 'assets'))
+      .filter((name) => name.endsWith('.js'))
+      .map((name) => readFileSync(join(outDir, 'assets', name), 'utf8'))
+      .join('\n')
+
+    expect(bundle).toContain('development')
+    expect(bundle).toContain('petcare-c7483')
+    expect(bundle).not.toMatch(
+      /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?):(?:4000|8085|9099)\b/i,
+    )
+    expect(bundle).not.toMatch(/(?:from|require\s*\()["']mqtt["']/i)
+    expect(bundle).not.toMatch(/wss?:\/\/[^\s"']*(?:broker|\/mqtt)/i)
+    expect(bundle).not.toMatch(/\bmqtt[_-]?(?:username|password|credential)\b/i)
   })
 })

@@ -2,5 +2,14 @@
   "projects": {
     "default": "demo-peecare",
     "development": "petcare-c7483"
+  },
+  "targets": {
+    "petcare-c7483": {
+      "hosting": {
+        "development": [
+          "petcare-c7483"
+        ]
+      }
+    }
   }
 }

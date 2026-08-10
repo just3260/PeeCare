@@ -21,7 +21,8 @@ vi.mock('firebase/firestore', () => ({
   connectFirestoreEmulator: mocks.connectFirestoreEmulator,
 }))
 
-import { getFirebaseServices, getLocalFirebaseServices, resetLocalFirebaseServices } from './client'
+import { getFirebaseServices, resetFirebaseServices } from './client'
+import { getLocalFirebaseServices, resetLocalFirebaseServices } from './local-client'
 
 function validEnv(): RawFirebaseEnv {
   return {
@@ -43,6 +44,7 @@ const fakeFirestore = { kind: 'firestore' }
 
 beforeEach(() => {
   resetLocalFirebaseServices()
+  resetFirebaseServices()
   vi.clearAllMocks()
   mocks.initializeApp.mockReturnValue(fakeApp)
   mocks.getAuth.mockReturnValue(fakeAuth)

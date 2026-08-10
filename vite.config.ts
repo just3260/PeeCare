@@ -37,6 +37,25 @@ export default defineConfig({
       workbox: {
         navigateFallback: '/index.html',
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        cleanupOutdatedCaches: true,
+        runtimeCaching: [
+          ...(['GET', 'POST'] as const).map((method) => ({
+            urlPattern:
+              /^https:\/\/(?:identitytoolkit|securetoken|firestore)\.googleapis\.com\//,
+            handler: 'NetworkOnly' as const,
+            method,
+          })),
+          {
+            urlPattern: /^https:\/\/accounts\.google\.com\//,
+            handler: 'NetworkOnly',
+            method: 'GET',
+          },
+          ...(['GET', 'POST', 'PATCH', 'DELETE'] as const).map((method) => ({
+            urlPattern: /^https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)*\.run\.app\//,
+            handler: 'NetworkOnly' as const,
+            method,
+          })),
+        ],
       },
       // Never run the service worker during development or unit tests.
       devOptions: {
