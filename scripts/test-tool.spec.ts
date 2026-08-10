@@ -324,13 +324,18 @@ describe('local test tool device simulator', () => {
 
   it('updates the device document with a mask so the custom name survives', async () => {
     const document = loadTool()
-    const deviceCard = [...document.querySelectorAll<HTMLElement>('#main-view details.card')][1]
+    const curlPreview = element<HTMLElement>(document, 'curl-device')
+    const curlBox = element<HTMLDetailsElement>(document, 'curlbox-device')
+    const deviceCard = curlBox.closest<HTMLElement>('details.card')
+    expect(deviceCard).not.toBeNull()
+    const renderCompleted = new Promise<void>((resolve) => {
+      curlBox.addEventListener('toggle', () => resolve(), { once: true })
+    })
 
-    deviceCard.querySelector<HTMLButtonElement>('button.ghost')?.click()
-    // curl 區塊展開會非同步觸發 toggle，等它跑完再結束，才不會在 DOM 關閉後才重繪。
-    await flushPending()
+    deviceCard?.querySelector<HTMLButtonElement>('button.ghost')?.click()
+    await renderCompleted
 
-    const curl = element<HTMLElement>(document, 'curl-device').textContent ?? ''
+    const curl = curlPreview.textContent ?? ''
     expect(curl).toContain('updateMask.fieldPaths=deviceId')
     expect(curl).toContain('updateMask.fieldPaths=ownerUid')
     expect(curl).not.toContain('customName')

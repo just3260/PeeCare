@@ -14,6 +14,9 @@ export default mergeConfig(
       // backed so it runs only under vitest.firebase.config.ts.
       include: [
         'src/**/*.{test,spec}.{ts,tsx}',
+        'scripts/audit-production-dependencies.spec.ts',
+        'scripts/check-release.spec.ts',
+        'scripts/install-workspaces.spec.ts',
         'scripts/test-tool.spec.ts',
         'firebase/local/reset.spec.ts',
         'firebase/local/fixtures/members-and-devices.spec.ts',

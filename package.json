@@ -18,7 +18,9 @@
     "emulators:start": "firebase emulators:start --project demo-peecare",
     "emulators:reset": "node firebase/local/reset.mjs",
     "test:firebase": "node scripts/test-firebase.mjs",
-    "check:all": "npm run check && npm run test:firebase"
+    "check:all": "npm run check && npm run test:firebase",
+    "check:release": "node scripts/check-release.mjs",
+    "ci:workspaces": "node scripts/install-workspaces.mjs"
   },
   "dependencies": {
     "firebase": "^11.10.0",
