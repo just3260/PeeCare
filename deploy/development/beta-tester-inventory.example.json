@@ -1,0 +1,7 @@
+{
+  "environment": "development",
+  "marker": "peecare-development-web-beta-v1",
+  "testers": [
+    { "alias": "tester-1", "deviceId": "PC-DEV-000001" }
+  ]
+}

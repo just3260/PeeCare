@@ -1,0 +1,18 @@
+## 1. Inventory 與 cloud preflight
+
+- [x] 1.1 [P] 實作「Non-PII beta tester inventory」：建立 `beta-tester-inventory.schema.json`、example 與 gitignored local path，接受 exactly 3–4 筆唯一 `alias`／development `deviceId` mapping，拒絕 2/5 筆、duplicate、email、UID、credential、secret-like key/value及 production device；以 schema table tests與 `git check-ignore` 驗證 populated inventory不會被追蹤。
+- [x] 1.2 依新 requirement修正「Non-PII beta tester inventory」為 exactly 1 筆 opaque `alias`／`PC-DEV-[0-9]{6}` mapping，拒絕 0/2 筆、PII、credential與非 development device；以 `release-web-beta.spec.ts` boundary table、`PC-DEV-000001` fixture及 `git check-ignore`驗證，且保留已完成1.1的歷史紀錄。
+- [x] 1.3 實作「Live release begins with exact cloud inventory」的 read-only beta preflight：在任何 build/upload前核對 exact project/site/target/Web app/Auth domain/Firestore region、healthy Member API origin及唯一 marked owned device，任一 mismatch回 stable code且 upload spy為零；以 `release-web-beta.spec.ts` wrong-target/prerequisite matrix與 `npm run web:development:beta:dry-run` 驗證不含email/UID/device payload的 sanitized plan。
+
+## 2. Tester credential 與 browser isolation
+
+- [x] 2.1 [P] 實作「Tester credentials enter only through hidden interactive session」與「Ephemeral tester credential handling」：TTY對唯一 alias隱藏取得 email/password，禁止 arguments、env files、JSON及 non-TTY input，登入後不輸出 identity/token並清除 process reference；以 fake TTY、cancel、non-TTY、login failure及 stdout/stderr secret scan tests驗證。
+- [x] 2.2 [P] 實作「Beta verification uses per-tester isolated journeys」的 single browser context lifecycle：唯一 tester建立 fresh context，結束時關閉並清除 Auth persistence、IndexedDB、Cache Storage及 service-worker member state，teardown failure使 stage non-zero；以 instrumented browser adapter驗證 success/failure兩路徑的 context與 storage call counts。
+- [x] 2.3 實作「Isolated beta tester journeys」：唯一 authenticated tester完成 assigned Owner overview、history、stats、marker rename/clear、protected-route reload及 sign-out，UID/device mismatch在 mutation前回 `tester_device_mismatch`；以 `PC-DEV-000001` browser fixture、registry-preservation assertion與 rename cleanup failure case驗證。
+- [x] 2.4 實作「Single-tester exact ownership boundary」：live owned-device query與protected views只能包含 `PC-DEV-000001`，任何額外device回 `unexpected_owned_device`並停止dependent smoke，upload前仍要求既有Emulator non-owner denial gate通過且不得宣稱multi-tester coverage；以 exact-one、extra-device與gate-short-circuit tests驗證。
+
+## 3. Hosting release、evidence 與 rollback
+
+- [x] 3.1 實作「Live beta Hosting availability」與 release orchestration：新增 root beta dry-run/release commands，先通過 `check:release`與 inspected cloud build再 upload live channel，之後驗證 `/`、`/history`、`/stats`、`/sign-in`回相同 shell且非404；以 command short-circuit tests、fake Hosting release fixture與 deployed response verifier驗證。
+- [x] 3.2 實作「Healthy release requires exact Hosting version and explicit rollback evidence」、「Healthy beta release and exact rollback evidence」及「Hosting release record」：first live release要求 exact bootstrap confirmation並記錄 `rollbackAvailable: false`／null version，後續 healthy record綁定 exact prior version、唯一tester stage與全部required check statuses，failed smoke只產生 sanitized evidence，rollback dry-run不猜測 target；以 first-release confirmed/unconfirmed、single-stage record schema、PII/secret/payload scan、missing/ambiguous prior version及 reviewed-command snapshots驗證。
+- [x] 3.3 完成 single-tester beta release runbook與 operator rehearsal：記錄唯一帳號由operator建立、hidden credential輸入、local inventory、dry-run、apply/verify、failed cleanup、multi-tester coverage deferred與explicit rollback順序；先以 `PC-DEV-000001` fixtures執行全流程，再由operator對approved live target執行dry-run並人工確認plan不含email/UID/credential，最後以 `npm run check:release`、Spectra validation與runbook content review完成交付。

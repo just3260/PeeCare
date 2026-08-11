@@ -1,120 +1,5 @@
-# development-web-deployment Specification
+## ADDED Requirements
 
-## Purpose
-
-Define the development-only Firebase Hosting build, release, and smoke-verification requirements for safely deploying the Web MVP against approved cloud services.
-
-## Requirements
-
-### Requirement: Development-only Hosting target
-
-Deployment SHALL require the approved development Firebase project and Hosting site and SHALL reject demo, Emulator, production, or mismatched targets before upload.
-
-#### Scenario: Reject an Emulator build
-
-- **WHEN** the build contains an Emulator host
-- **THEN** deployment exits before Hosting upload
-
----
-### Requirement: Secret-free cloud build
-
-The public build SHALL contain only approved Firebase client configuration and SHALL NOT contain MQTT credentials, webhook secrets, Admin credentials, or source environment files.
-
-#### Scenario: Inspect deployment artifacts
-
-- **WHEN** the build artifact is scanned
-- **THEN** no prohibited secret or environment file is found
-
----
-### Requirement: SPA and cache behavior
-
-Hosting SHALL rewrite application routes to the index shell, revalidate the shell, and immutable-cache content-hashed assets.
-
-#### Scenario: Reload a protected route
-
-- **WHEN** an authenticated member reloads `/history`
-- **THEN** Hosting serves the app shell and the router restores the route
-
----
-### Requirement: Development member smoke journey
-
-Post-deploy verification SHALL cover sign-in, owned-device overview, history, daily stats, non-owner denial, and sign-out on a mobile viewport.
-
-#### Scenario: Complete the smoke journey
-
-- **WHEN** a marked development member signs in
-- **THEN** all owned views load, non-owned data remains denied, and sign-out returns to the sign-in view
-
----
-### Requirement: Hosting release record
-
-A healthy release SHALL record the build hash, Hosting version, target, verification timestamp, and explicit rollback availability without credentials. When a prior live version exists, the record SHALL include that exact rollback version. For the first live release without channel history, the record SHALL contain `rollbackAvailable: false` and `rollbackVersion: null` only after exact operator bootstrap confirmation.
-
-#### Scenario: Record a verified release
-
-- **WHEN** all smoke checks pass and a prior live Hosting version exists
-- **THEN** the release record SHALL identify the deployed version and exact rollback version
-
-#### Scenario: Record a verified first release
-
-- **WHEN** all smoke checks pass for an explicitly confirmed first live release with no channel history
-- **THEN** the release record SHALL identify the deployed version and SHALL explicitly state that rollback is unavailable
-
-
-<!-- @trace
-source: release-development-web-beta
-updated: 2026-08-11
-code:
-  - deploy/development/beta-tester-inventory.schema.json
-  - package.json
-  - deploy/development/release-web-beta.mjs
-  - deploy/development/beta-tester-inventory.example.json
-  - deploy/development/BETA_RELEASE_RUNBOOK.md
-tests:
-  - deploy/development/release-web-beta.spec.ts
--->
-
----
-### Requirement: Development cloud service selection
-
-The hosted build SHALL select the development Firebase adapter through the explicit environment discriminator, SHALL target the approved project, and SHALL contain no loopback host or Emulator connector activation.
-
-#### Scenario: Inspect the hosted Firebase target
-
-- **WHEN** deployment verification loads the built configuration
-- **THEN** it resolves the approved development project and no Emulator endpoint
-
----
-### Requirement: Member data cache exclusion
-
-The service worker SHALL NOT cache Firebase Auth, Firestore, Google identity, or Cloud Run API requests or responses. After sign-out, cached assets SHALL NOT reveal the prior member's device, event, or stats data.
-
-#### Scenario: Sign out and open offline
-
-- **WHEN** a member signs out and the app is reopened without network access
-- **THEN** the shell can load but no prior member domain data is visible
-
----
-### Requirement: No browser MQTT capability
-
-The hosted build SHALL contain no MQTT client dependency, Broker URL, MQTT credential, or direct subscription path.
-
-#### Scenario: Scan the production bundle
-
-- **WHEN** the Hosting artifact is inspected
-- **THEN** no MQTT package import, websocket Broker endpoint, username, or password is present
-
----
-### Requirement: Protected route reload matrix
-
-Verification SHALL directly reload `/`, `/history`, and `/stats` as an authenticated Owner and as a signed-out visitor, and SHALL directly load `/sign-in`. Owner sessions SHALL restore the requested protected route; signed-out sessions SHALL render no protected content and SHALL reach sign-in.
-
-#### Scenario: Reload stats while signed out
-
-- **WHEN** a signed-out browser directly opens `/stats`
-- **THEN** Hosting serves the shell and the router shows sign-in without rendering stats
-
----
 ### Requirement: Live beta Hosting availability
 
 A beta release SHALL publish the inspected development cloud build to the approved Firebase Hosting live channel and SHALL verify that the root shell and every protected-route entry point return the application shell instead of a 404 response.
@@ -129,21 +14,6 @@ A beta release SHALL publish the inspected development cloud build to the approv
 - **WHEN** the live origin or any required route returns 404, a non-shell response, or an unapproved redirect
 - **THEN** the beta release SHALL be marked failed and SHALL NOT produce a healthy release record
 
-
-<!-- @trace
-source: release-development-web-beta
-updated: 2026-08-11
-code:
-  - deploy/development/beta-tester-inventory.schema.json
-  - package.json
-  - deploy/development/release-web-beta.mjs
-  - deploy/development/beta-tester-inventory.example.json
-  - deploy/development/BETA_RELEASE_RUNBOOK.md
-tests:
-  - deploy/development/release-web-beta.spec.ts
--->
-
----
 ### Requirement: Non-PII beta tester inventory
 
 Beta release verification SHALL require exactly one opaque tester alias mapped to one marked development test device identifier matching `^PC-DEV-[0-9]{6}$`. The committed schema and example SHALL NOT contain or permit email addresses, Firebase UIDs, passwords, tokens, secrets, or production device identifiers, and the populated local inventory MUST remain untracked.
@@ -166,21 +36,6 @@ Beta release verification SHALL require exactly one opaque tester alias mapped t
 - **WHEN** an inventory key or value contains an email, Firebase UID, password, ID token, refresh token, webhook secret, or service-account material
 - **THEN** preflight SHALL return `inventory_invalid` before build, browser, Firebase, or Hosting mutation
 
-
-<!-- @trace
-source: release-development-web-beta
-updated: 2026-08-11
-code:
-  - deploy/development/beta-tester-inventory.schema.json
-  - package.json
-  - deploy/development/release-web-beta.mjs
-  - deploy/development/beta-tester-inventory.example.json
-  - deploy/development/BETA_RELEASE_RUNBOOK.md
-tests:
-  - deploy/development/release-web-beta.spec.ts
--->
-
----
 ### Requirement: Ephemeral tester credential handling
 
 The verifier SHALL obtain the single tester email and password only through a hidden interactive session, SHALL keep them only for the current tester authentication operation, and MUST NOT place them in command arguments, environment files, standard output, standard error, browser artifacts, or release records.
@@ -195,21 +50,6 @@ The verifier SHALL obtain the single tester email and password only through a hi
 - **WHEN** no secure TTY is available or credentials are supplied through a command argument or inventory field
 - **THEN** verification SHALL return `credential_input_unavailable` before tester authentication or Member API mutation
 
-
-<!-- @trace
-source: release-development-web-beta
-updated: 2026-08-11
-code:
-  - deploy/development/beta-tester-inventory.schema.json
-  - package.json
-  - deploy/development/release-web-beta.mjs
-  - deploy/development/beta-tester-inventory.example.json
-  - deploy/development/BETA_RELEASE_RUNBOOK.md
-tests:
-  - deploy/development/release-web-beta.spec.ts
--->
-
----
 ### Requirement: Isolated beta tester journeys
 
 Verification SHALL run the single tester in a fresh browser context and SHALL cover sign-in, the assigned owned-device overview, history, daily statistics, Member API display-name rename and clear, protected-route reload, and sign-out. The signed-in Firebase UID SHALL own the inventory-assigned device, and the context MUST be torn down after the journey.
@@ -229,21 +69,6 @@ Verification SHALL run the single tester in a fresh browser context and SHALL co
 - **WHEN** a tester journey succeeds or fails
 - **THEN** the verifier SHALL close that browser context and clear its Auth persistence, IndexedDB, Cache Storage, and service-worker-controlled member state before the verifier exits
 
-
-<!-- @trace
-source: release-development-web-beta
-updated: 2026-08-11
-code:
-  - deploy/development/beta-tester-inventory.schema.json
-  - package.json
-  - deploy/development/release-web-beta.mjs
-  - deploy/development/beta-tester-inventory.example.json
-  - deploy/development/BETA_RELEASE_RUNBOOK.md
-tests:
-  - deploy/development/release-web-beta.spec.ts
--->
-
----
 ### Requirement: Single-tester exact ownership boundary
 
 Live verification SHALL require the authenticated tester's owned-device query and rendered protected content to contain exactly the inventory-assigned device and no additional device. The existing Emulator non-owner denial suite MUST pass before Hosting upload. This change SHALL NOT create a second live tester or claim cross-tester matrix coverage.
@@ -263,21 +88,6 @@ Live verification SHALL require the authenticated tester's owned-device query an
 - **WHEN** the beta release reaches the upload boundary
 - **THEN** the existing Emulator non-owner denial suite MUST have passed and the release SHALL NOT report multi-tester live coverage
 
-
-<!-- @trace
-source: release-development-web-beta
-updated: 2026-08-11
-code:
-  - deploy/development/beta-tester-inventory.schema.json
-  - package.json
-  - deploy/development/release-web-beta.mjs
-  - deploy/development/beta-tester-inventory.example.json
-  - deploy/development/BETA_RELEASE_RUNBOOK.md
-tests:
-  - deploy/development/release-web-beta.spec.ts
--->
-
----
 ### Requirement: Healthy beta release and exact rollback evidence
 
 A healthy beta release record SHALL identify the exact build hash, live Hosting version, rollback availability, verification timestamp, tester aliases, and required check statuses. A first live release without channel history MUST record `rollbackAvailable: false` and `rollbackVersion: null` and SHALL require exact operator bootstrap confirmation before upload. Every later healthy release MUST record `rollbackAvailable: true` and the exact prior Hosting version. The record MUST NOT contain tester PII, credentials, tokens, custom names, or event payloads. A failed release SHALL retain sanitized failure evidence and SHALL provide only an exact prior-version rollback dry-run when that version exists.
@@ -307,15 +117,18 @@ A healthy beta release record SHALL identify the exact build hash, live Hosting 
 - **WHEN** no distinct prior healthy Hosting version can be resolved for the same approved site
 - **THEN** rollback dry-run SHALL return `rollback_unavailable` and SHALL NOT generate or execute a guessed rollback command
 
-<!-- @trace
-source: release-development-web-beta
-updated: 2026-08-11
-code:
-  - deploy/development/beta-tester-inventory.schema.json
-  - package.json
-  - deploy/development/release-web-beta.mjs
-  - deploy/development/beta-tester-inventory.example.json
-  - deploy/development/BETA_RELEASE_RUNBOOK.md
-tests:
-  - deploy/development/release-web-beta.spec.ts
--->
+## MODIFIED Requirements
+
+### Requirement: Hosting release record
+
+A healthy release SHALL record the build hash, Hosting version, target, verification timestamp, and explicit rollback availability without credentials. When a prior live version exists, the record SHALL include that exact rollback version. For the first live release without channel history, the record SHALL contain `rollbackAvailable: false` and `rollbackVersion: null` only after exact operator bootstrap confirmation.
+
+#### Scenario: Record a verified release
+
+- **WHEN** all smoke checks pass and a prior live Hosting version exists
+- **THEN** the release record SHALL identify the deployed version and exact rollback version
+
+#### Scenario: Record a verified first release
+
+- **WHEN** all smoke checks pass for an explicitly confirmed first live release with no channel history
+- **THEN** the release record SHALL identify the deployed version and SHALL explicitly state that rollback is unavailable

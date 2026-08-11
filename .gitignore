@@ -6,6 +6,7 @@ node_modules/
 dist/
 dist-ssr/
 *.local
+deploy/development/beta-tester-inventory.local.json
 .DS_Store
 
 # Editor / TS build info
