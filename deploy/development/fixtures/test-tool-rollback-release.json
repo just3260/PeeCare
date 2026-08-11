@@ -1,0 +1,14 @@
+{
+  "status": "healthy",
+  "projectId": "petcare-c7483",
+  "region": "asia-east1",
+  "service": "peecare-test-tool-development",
+  "revision": "peecare-test-tool-development-00002-def",
+  "imageDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "secretRef": "projects/petcare-c7483/secrets/peecare-emqx-webhook-current/versions/7",
+  "priorHealthyRevision": {
+    "revision": "peecare-test-tool-development-00001-abc",
+    "imageDigest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "secretRef": "projects/petcare-c7483/secrets/peecare-emqx-webhook-current/versions/7"
+  }
+}

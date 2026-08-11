@@ -3,7 +3,7 @@ import { mount } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 
 import App from './App.vue'
-import { routes } from './router'
+import { createApplicationRoutes, routes } from './router'
 
 async function mountApp(path = '/') {
   const router = createRouter({ history: createMemoryHistory(), routes })
@@ -36,5 +36,18 @@ describe('App', () => {
     const { wrapper } = await mountApp('/sign-in')
 
     expect(wrapper.find('nav[aria-label="主要導覽"]').exists()).toBe(false)
+  })
+
+  it('does not expose product bottom navigation on the development tester route', async () => {
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: createApplicationRoutes({ testToolEnabled: true }),
+    })
+    await router.push('/test-tool')
+    await router.isReady()
+    const wrapper = mount(App, { global: { plugins: [router] } })
+
+    expect(wrapper.find('nav[aria-label="主要導覽"]').exists()).toBe(false)
+    expect(wrapper.find('a[href="/test-tool"]').exists()).toBe(false)
   })
 })

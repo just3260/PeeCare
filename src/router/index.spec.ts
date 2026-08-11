@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createRouter, createMemoryHistory } from 'vue-router'
 
-import { routes } from './index'
+import { createApplicationRoutes, routes } from './index'
 
 function createTestRouter() {
   return createRouter({ history: createMemoryHistory(), routes })
@@ -46,5 +46,17 @@ describe('router', () => {
 
   it('no longer registers a component-backed devices route', () => {
     expect(routes.some((route) => route.name === 'devices')).toBe(false)
+  })
+
+  it('registers the protected tester route only for an explicit development build', () => {
+    const developmentRoutes = createApplicationRoutes({ testToolEnabled: true })
+    const nonDevelopmentRoutes = createApplicationRoutes({ testToolEnabled: false })
+    const testToolRoute = developmentRoutes.find((route) => route.name === 'test-tool')
+
+    expect(testToolRoute).toMatchObject({
+      path: '/test-tool',
+      meta: { requiresAuth: true, hideBottomNavigation: true },
+    })
+    expect(nonDevelopmentRoutes.some((route) => route.name === 'test-tool')).toBe(false)
   })
 })

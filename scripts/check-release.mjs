@@ -13,6 +13,8 @@ export const RELEASE_TRACKED_FILES = [
   'services/member-api/package-lock.json',
   'services/ingestion-api/package.json',
   'services/ingestion-api/package-lock.json',
+  'services/test-tool-api/package.json',
+  'services/test-tool-api/package-lock.json',
 ]
 
 const LOCKFILE_DRIFT_STAGE = { name: 'lockfile:drift', workspace: 'repository' }
@@ -26,7 +28,7 @@ export const RELEASE_STAGES = [
   },
   {
     name: 'audit:production',
-    workspace: 'root,member-api,ingestion-api',
+    workspace: 'root,member-api,ingestion-api,test-tool-api',
     command: process.execPath,
     args: [resolve(PROJECT_ROOT, 'scripts/audit-production-dependencies.mjs')],
   },

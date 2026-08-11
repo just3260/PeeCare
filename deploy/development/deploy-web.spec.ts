@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
 
 import { runWebDeploy } from './deploy-web.mjs'
 
@@ -21,6 +22,13 @@ const approvedFirebaseConfig = {
   hosting: {
     target: 'development',
     public: 'dist',
+    rewrites: [{ source: '**', destination: '/index.html' }],
+    headers: [
+      {
+        source: '/assets/**',
+        headers: [{ key: 'Cache-Control', value: 'public,max-age=31536000,immutable' }],
+      },
+    ],
   },
 }
 
@@ -35,6 +43,58 @@ function validEnvironment(): Record<string, string> {
     VITE_FIREBASE_AUTH_DOMAIN: 'petcare-c7483.firebaseapp.com',
     VITE_FIREBASE_APP_ID: '1:348528459946:web:abc123',
     VITE_MEMBER_API_URL: 'https://peecare-member-development.example.run.app',
+    VITE_TEST_TOOL_API_URL:
+      'https://peecare-test-tool-development-348528459946.asia-east1.run.app',
+  }
+}
+
+const now = new Date('2026-08-11T08:00:00.000Z')
+
+function healthyTestToolRelease(overrides: Record<string, unknown> = {}) {
+  const imageDigest = `sha256:${'a'.repeat(64)}`
+  return {
+    status: 'healthy',
+    projectId: 'petcare-c7483',
+    region: 'asia-east1',
+    service: 'peecare-test-tool-development',
+    revision: 'peecare-test-tool-development-00001-abc',
+    image:
+      `asia-east1-docker.pkg.dev/petcare-c7483/peecare/test-tool-api@${imageDigest}`,
+    imageDigest,
+    runtimeIdentity:
+      'peecare-test-tool-runtime@petcare-c7483.iam.gserviceaccount.com',
+    verifiedOrigin:
+      'https://peecare-test-tool-development-348528459946.asia-east1.run.app',
+    verifiedAt: '2026-08-11T07:30:00.000Z',
+    smoke: {
+      publicHealth: 'passed',
+      exactCors: 'passed',
+      unauthorizedZeroWrite: 'passed',
+      foreignDeviceDenial: 'passed',
+      unmarkedDeviceDenial: 'passed',
+      urinationStored: 'passed',
+      batteryStored: 'passed',
+      rateLimit: 'passed',
+      firestoreProjection: 'passed',
+      webProjection: 'passed',
+      logPrivacy: 'passed',
+    },
+    ...overrides,
+  }
+}
+
+function webDeployOptions(overrides: Record<string, unknown> = {}) {
+  return {
+    environment: validEnvironment(),
+    args: ['--dry-run'],
+    firebaseConfig: approvedFirebaseConfig,
+    firebaseRc: approvedFirebaseRc,
+    testToolReleaseRecord: healthyTestToolRelease(),
+    now: () => now,
+    execute: vi.fn(() => ({ status: 0 })),
+    readBuildArtifacts: cleanArtifacts,
+    write: vi.fn(),
+    ...overrides,
   }
 }
 
@@ -42,13 +102,129 @@ function cleanArtifacts() {
   return [
     {
       path: 'assets/index-a1b2c3d4.js',
-      contents: 'const environment="development",projectId="petcare-c7483"',
+      contents:
+        'const environment="development",projectId="petcare-c7483",testTool="https://peecare-test-tool-development-348528459946.asia-east1.run.app"',
     },
     { path: 'index.html', contents: '<div id="app"></div>' },
   ]
 }
 
 describe('runWebDeploy development target preflight', () => {
+  it('hands the exact healthy immutable Test Tool API origin to the Web build', () => {
+    const options = webDeployOptions()
+
+    const result = runWebDeploy(options as never)
+
+    expect(options.execute).toHaveBeenCalledWith(
+      'npm',
+      ['run', 'build'],
+      expect.objectContaining({
+        environment: expect.objectContaining({
+          VITE_TEST_TOOL_API_URL:
+            'https://peecare-test-tool-development-348528459946.asia-east1.run.app',
+        }),
+      }),
+    )
+    expect(result).toMatchObject({
+      testToolApi: {
+        service: 'peecare-test-tool-development',
+        revision: 'peecare-test-tool-development-00001-abc',
+        verifiedOrigin:
+          'https://peecare-test-tool-development-348528459946.asia-east1.run.app',
+      },
+    })
+  })
+
+  it('revalidates release freshness after the build and refuses a now-stale upload', () => {
+    const beforeExpiry = new Date('2026-08-11T08:00:00.000Z')
+    const afterExpiry = new Date('2026-08-11T08:00:00.002Z')
+    const currentTime = vi
+      .fn()
+      .mockReturnValueOnce(beforeExpiry)
+      .mockReturnValueOnce(afterExpiry)
+    const execute = vi.fn(() => ({ status: 0 }))
+    const options = webDeployOptions({
+      args: ['--apply'],
+      testToolReleaseRecord: healthyTestToolRelease({
+        verifiedAt: '2026-08-10T08:00:00.001Z',
+      }),
+      now: currentTime,
+      execute,
+    })
+
+    expect(() => runWebDeploy(options as never)).toThrowError(
+      expect.objectContaining({ code: 'unverified_test_tool_release' }),
+    )
+    expect(currentTime).toHaveBeenCalledTimes(2)
+    expect(execute).toHaveBeenCalledTimes(1)
+    expect(execute).not.toHaveBeenCalledWith(
+      'firebase',
+      expect.anything(),
+      expect.anything(),
+    )
+  })
+
+  it('uploads an immutable staged snapshot even if live dist changes after inspection', () => {
+    const execute = vi.fn(() => ({ status: 0 }))
+    let liveArtifacts = cleanArtifacts()
+    const cleanup = vi.fn()
+    const stageBuildArtifacts = vi.fn(({ artifacts }) => {
+      expect(artifacts.map((artifact: { contents: Buffer }) => artifact.contents.toString('utf8')))
+        .toEqual(cleanArtifacts().map((artifact) => String(artifact.contents)))
+      liveArtifacts = [{ path: 'assets/index.js', contents: 'EMQX_WEBHOOK_SECRET=late-mutation' }]
+      return { configPath: '/private/tmp/verified-web-snapshot/firebase.json', cleanup }
+    })
+    const options = webDeployOptions({
+      args: ['--apply'],
+      execute,
+      readBuildArtifacts: () => liveArtifacts,
+      stageBuildArtifacts,
+    })
+
+    expect(runWebDeploy(options as never)).toMatchObject({ status: 'deployed' })
+    expect(stageBuildArtifacts).toHaveBeenCalledOnce()
+    expect(execute).toHaveBeenLastCalledWith(
+      'firebase',
+      expect.arrayContaining([
+        '--config',
+        '/private/tmp/verified-web-snapshot/firebase.json',
+      ]),
+      expect.anything(),
+    )
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(JSON.stringify(liveArtifacts)).toContain('late-mutation')
+  })
+
+  it.each([
+    ['missing URL', { VITE_TEST_TOOL_API_URL: undefined }, healthyTestToolRelease()],
+    ['missing release record', {}, undefined],
+    ['HTTP', {}, healthyTestToolRelease({ verifiedOrigin: 'http://peecare-test-tool-development-348528459946.asia-east1.run.app' })],
+    ['loopback', {}, healthyTestToolRelease({ verifiedOrigin: 'https://127.0.0.1:8088' })],
+    ['credentials', {}, healthyTestToolRelease({ verifiedOrigin: 'https://user:pass@peecare-test-tool-development-348528459946.asia-east1.run.app' })],
+    ['path', {}, healthyTestToolRelease({ verifiedOrigin: 'https://peecare-test-tool-development-348528459946.asia-east1.run.app/v1' })],
+    ['wrong project', {}, healthyTestToolRelease({ projectId: 'other-project' })],
+    ['wrong service', {}, healthyTestToolRelease({ service: 'peecare-member-development' })],
+    ['wrong origin binding', { VITE_TEST_TOOL_API_URL: 'https://other.invalid' }, healthyTestToolRelease()],
+    ['mutable image', {}, healthyTestToolRelease({ image: 'asia-east1-docker.pkg.dev/petcare-c7483/peecare/test-tool-api:latest' })],
+    ['wrong image repository', {}, healthyTestToolRelease({ image: `asia-east1-docker.pkg.dev/petcare-c7483/peecare/member-api@sha256:${'a'.repeat(64)}` })],
+    ['incomplete smoke', {}, healthyTestToolRelease({ smoke: { publicHealth: 'passed' } })],
+    ['stale record', {}, healthyTestToolRelease({ verifiedAt: '2026-08-10T07:59:59.999Z' })],
+    ['future record', {}, healthyTestToolRelease({ verifiedAt: '2026-08-11T08:05:00.001Z' })],
+    ['non-canonical timestamp', {}, healthyTestToolRelease({ verifiedAt: '2026-08-11 07:30:00Z' })],
+  ])('rejects %s before build or Hosting upload', (_case, environmentOverride, releaseRecord) => {
+    const execute = vi.fn()
+    const options = webDeployOptions({
+      environment: { ...validEnvironment(), ...environmentOverride },
+      args: ['--apply'],
+      testToolReleaseRecord: releaseRecord,
+      execute,
+    })
+
+    expect(() => runWebDeploy(options as never)).toThrowError(
+      expect.objectContaining({ code: 'unverified_test_tool_release' }),
+    )
+    expect(execute).not.toHaveBeenCalled()
+  })
   it('keeps MQTT clients out of browser production dependencies', () => {
     const dependencies = JSON.parse(readFileSync('package.json', 'utf8')).dependencies
 
@@ -100,6 +276,8 @@ describe('runWebDeploy development target preflight', () => {
       args: ['--dry-run'],
       firebaseConfig: approvedFirebaseConfig,
       firebaseRc: approvedFirebaseRc,
+      testToolReleaseRecord: healthyTestToolRelease(),
+      now: () => now,
       execute,
       readBuildArtifacts: cleanArtifacts,
       write: (line) => output.push(line),
@@ -163,10 +341,30 @@ describe('runWebDeploy development target preflight', () => {
         args: ['--apply'],
         firebaseConfig,
         firebaseRc,
+        testToolReleaseRecord: healthyTestToolRelease(),
+        now: () => now,
         execute,
         readBuildArtifacts: cleanArtifacts,
         write: vi.fn(),
       }),
+    ).toThrowError(expect.objectContaining({ code: 'target_mismatch' }))
+    expect(execute).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['redirects', { redirects: [{ source: '**', destination: '/other', type: 302 }] }],
+    ['framework source', { source: '.' }],
+    ['clean URL behavior', { cleanUrls: true }],
+  ])('rejects unexpected Hosting capability %s before build or upload', (_case, extra) => {
+    const execute = vi.fn()
+
+    expect(() =>
+      runWebDeploy({
+        ...webDeployOptions({ execute }),
+        firebaseConfig: {
+          hosting: { ...approvedFirebaseConfig.hosting, ...extra },
+        },
+      } as never),
     ).toThrowError(expect.objectContaining({ code: 'target_mismatch' }))
     expect(execute).not.toHaveBeenCalled()
   })
@@ -183,6 +381,8 @@ describe('runWebDeploy development target preflight', () => {
         args: ['--apply'],
         firebaseConfig: approvedFirebaseConfig,
         firebaseRc: approvedFirebaseRc,
+        testToolReleaseRecord: healthyTestToolRelease(),
+        now: () => now,
         execute,
         readBuildArtifacts: cleanArtifacts,
         write: vi.fn(),
@@ -204,6 +404,8 @@ describe('runWebDeploy development target preflight', () => {
         args: ['--apply'],
         firebaseConfig: approvedFirebaseConfig,
         firebaseRc: approvedFirebaseRc,
+        testToolReleaseRecord: healthyTestToolRelease(),
+        now: () => now,
         execute,
         readBuildArtifacts: cleanArtifacts,
         write: vi.fn(),
@@ -228,6 +430,8 @@ describe('runWebDeploy development target preflight', () => {
         args: ['--apply'],
         firebaseConfig: approvedFirebaseConfig,
         firebaseRc: approvedFirebaseRc,
+        testToolReleaseRecord: healthyTestToolRelease(),
+        now: () => now,
         execute,
         readBuildArtifacts: () => [
           {
@@ -244,6 +448,10 @@ describe('runWebDeploy development target preflight', () => {
   it.each([
     ['development discriminator', 'const projectId="petcare-c7483"'],
     ['approved project', 'const environment="development"'],
+    [
+      'verified Test Tool API origin',
+      'const environment="development",projectId="petcare-c7483"',
+    ],
   ])('rejects a bundle missing its %s', (_case, contents) => {
     const execute = vi.fn(() => ({ status: 0 }))
 
@@ -253,6 +461,8 @@ describe('runWebDeploy development target preflight', () => {
         args: ['--apply'],
         firebaseConfig: approvedFirebaseConfig,
         firebaseRc: approvedFirebaseRc,
+        testToolReleaseRecord: healthyTestToolRelease(),
+        now: () => now,
         execute,
         readBuildArtifacts: () => [{ path: 'assets/index-a1b2c3d4.js', contents }],
         write: vi.fn(),
@@ -277,6 +487,8 @@ describe('runWebDeploy development target preflight', () => {
         args: ['--apply'],
         firebaseConfig: approvedFirebaseConfig,
         firebaseRc: approvedFirebaseRc,
+        testToolReleaseRecord: healthyTestToolRelease(),
+        now: () => now,
         execute,
         readBuildArtifacts: () => artifacts,
         write: vi.fn(),
@@ -287,13 +499,27 @@ describe('runWebDeploy development target preflight', () => {
   })
 
   it('uploads only the inspected clean build to the approved development target', () => {
-    const execute = vi.fn(() => ({ status: 0 }))
+    let stagedConfig: unknown
+    let stagedAsset = ''
+    const execute = vi.fn((command: string, args: string[]) => {
+      if (command === 'firebase') {
+        const configPath = args[2]
+        stagedConfig = JSON.parse(readFileSync(configPath, 'utf8'))
+        stagedAsset = readFileSync(
+          resolve(dirname(configPath), 'public/assets/index-a1b2c3d4.js'),
+          'utf8',
+        )
+      }
+      return { status: 0 }
+    })
 
     const result = runWebDeploy({
       environment: validEnvironment(),
       args: ['--apply'],
       firebaseConfig: approvedFirebaseConfig,
       firebaseRc: approvedFirebaseRc,
+      testToolReleaseRecord: healthyTestToolRelease(),
+      now: () => now,
       execute,
       readBuildArtifacts: cleanArtifacts,
       write: vi.fn(),
@@ -303,14 +529,87 @@ describe('runWebDeploy development target preflight', () => {
       'firebase',
       [
         'deploy',
+        '--config',
+        expect.any(String),
         '--project',
         'petcare-c7483',
         '--only',
-        'hosting:development',
+        'hosting',
         '--non-interactive',
       ],
       expect.objectContaining({ environment: expect.any(Object) }),
     )
+    expect(stagedConfig).toEqual({
+      hosting: {
+        site: 'petcare-c7483',
+        public: 'public',
+        rewrites: approvedFirebaseConfig.hosting.rewrites,
+        headers: approvedFirebaseConfig.hosting.headers,
+      },
+    })
+    expect(stagedAsset).toBe(String(cleanArtifacts()[0].contents))
     expect(result).toMatchObject({ status: 'deployed', projectId: 'petcare-c7483' })
+  })
+
+  it('reports a sanitized cleanup warning without disguising a successful upload', () => {
+    const cleanup = vi.fn(() => {
+      throw new Error('/private/tmp/staging-secret-path')
+    })
+    const output: string[] = []
+    const result = runWebDeploy({
+      ...webDeployOptions({ args: ['--apply'] }),
+      stageBuildArtifacts: () => ({
+        configPath: '/private/tmp/verified-snapshot/firebase.json',
+        cleanup,
+      }),
+      write: (line: string) => output.push(line),
+    } as never)
+
+    expect(cleanup).toHaveBeenCalledTimes(2)
+    expect(result).toMatchObject({
+      status: 'deployed',
+      cleanupWarning: 'staging_cleanup_failed',
+    })
+    expect(JSON.parse(output[0])).toEqual(result)
+    expect(JSON.stringify(result)).not.toContain('staging-secret-path')
+  })
+
+  it('preserves hosting_deploy_failed when cleanup also throws', () => {
+    const cleanup = vi.fn(() => {
+      throw new Error('cleanup failure')
+    })
+    const execute = vi.fn((command: string) => ({ status: command === 'firebase' ? 1 : 0 }))
+
+    expect(() =>
+      runWebDeploy({
+        ...webDeployOptions({ args: ['--apply'], execute }),
+        stageBuildArtifacts: () => ({
+          configPath: '/private/tmp/verified-snapshot/firebase.json',
+          cleanup,
+        }),
+      } as never),
+    ).toThrowError(expect.objectContaining({ code: 'hosting_deploy_failed' }))
+    expect(cleanup).toHaveBeenCalledTimes(2)
+  })
+
+  it('retries a transient staging cleanup failure without emitting a false warning', () => {
+    const cleanup = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error('transient cleanup failure')
+      })
+      .mockImplementationOnce(() => undefined)
+
+    const result = runWebDeploy({
+      ...webDeployOptions({ args: ['--apply'] }),
+      stageBuildArtifacts: () => ({
+        configPath: '/private/tmp/verified-snapshot/firebase.json',
+        cleanup,
+      }),
+    } as never)
+
+    expect(cleanup).toHaveBeenCalledTimes(2)
+    expect(result).toMatchObject({ status: 'deployed' })
+    expect(result).not.toHaveProperty('cleanupWarning')
   })
 })

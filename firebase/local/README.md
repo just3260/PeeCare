@@ -46,15 +46,16 @@ adds explicit, tested rules.
 Copy the non-secret demo defaults into your local environment file:
 
 ```bash
-cp .env.example .env.local
+cp .env.example .env.development.local
 ```
 
-`.env.local` is gitignored. It only holds demo values (`demo-peecare`,
-`demo-api-key`, loopback hosts/ports) — never put a real project ID, API key, or
-service account here.
+`.env.development.local` is gitignored and loaded only by Vite development mode,
+so production builds do not inherit Emulator settings. It only holds demo values
+(`demo-peecare`, `demo-api-key`, loopback hosts/ports) — never put a real project
+ID, API key, or service account here.
 
-`.env.local` is needed by the Vue app when it uses `getLocalFirebaseServices`; it
-is **not** required to run the checks below.
+`.env.development.local` is needed by the Vue app when it uses
+`getLocalFirebaseServices`; it is **not** required to run the checks below.
 
 ## Commands
 
@@ -115,7 +116,7 @@ and the entry point CI uses. It does **not** require `firebase login`,
 
 ```bash
 npm install
-cp .env.example .env.local
+cp .env.example .env.development.local
 npm run check:all
 ```
 

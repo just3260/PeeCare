@@ -75,6 +75,359 @@ tests:
 -->
 
 ---
+### Requirement: Verified Test Tool API origin handoff
+
+A development Web build that includes the tester event tool SHALL require a healthy Test Tool API release record and SHALL inject its exact approved HTTPS origin through `VITE_TEST_TOOL_API_URL`. The build MUST reject a missing, loopback, HTTP, credential-bearing, path-bearing, wrong-project, unverified, or stale API origin before Hosting upload.
+
+#### Scenario: Build with a healthy Test Tool API release
+
+- **WHEN** the release record identifies a healthy immutable `peecare-test-tool-development` revision in `petcare-c7483` and provides its exact HTTPS origin
+- **THEN** the Web build SHALL bind the protected test-tool adapter to that origin and SHALL contain no Emulator or loopback endpoint
+
+#### Scenario: Reject an unverified API origin
+
+- **WHEN** `VITE_TEST_TOOL_API_URL` is missing or does not match the healthy release record for the approved service and project
+- **THEN** the Web deployment SHALL exit before build artifact upload
+
+
+<!-- @trace
+source: publish-development-tester-event-tool
+updated: 2026-08-11
+code:
+  - src/App.vue
+  - env.d.ts
+  - services/test-tool-api/tsconfig.test.json
+  - deploy/development/verify-test-tool.mjs
+  - services/test-tool-api/src/events/test-event-service.ts
+  - scripts/install-workspaces.mjs
+  - scripts/test-tool.mjs
+  - scripts/check-release.mjs
+  - services/test-tool-api/src/security/firebase-id-token-verifier.ts
+  - src/features/test-tool/test-tool-api.ts
+  - services/test-tool-api/scripts/scan-privacy.mjs
+  - deploy/development/deploy-web.mjs
+  - services/test-tool-api/tsconfig.json
+  - package.json
+  - deploy/development/deploy-test-tool.mjs
+  - src/main.ts
+  - firebase.json
+  - src/views/TestToolView.vue
+  - services/test-tool-api/src/devices/test-device-repository.ts
+  - deploy/development/TEST_TOOL_RUNBOOK.md
+  - src/features/auth/protected-resource-registry.ts
+  - scripts/audit-production-dependencies.mjs
+  - scripts/test-tool.development.env.example
+  - deploy/development/verify-web.mjs
+  - firebase/local/README.md
+  - services/test-tool-api/src/usage/usage-ledger.ts
+  - services/test-tool-api/src/events/test-event-request.ts
+  - deploy/development/test-tool-service.json
+  - services/test-tool-api/cloudbuild.json
+  - services/test-tool-api/src/security/privacy-scan.ts
+  - services/test-tool-api/src/server.ts
+  - deploy/development/BETA_RELEASE_RUNBOOK.md
+  - services/test-tool-api/src/config.ts
+  - .env.example
+  - src/router/index.ts
+  - services/test-tool-api/src/http/response-contract.ts
+  - vitest.config.ts
+  - services/test-tool-api/package.json
+  - services/test-tool-api/Dockerfile
+  - services/test-tool-api/vitest.config.ts
+  - services/test-tool-api/src/security/mounted-ingestion-secret.ts
+  - scripts/test-firebase.mjs
+  - deploy/development/beta-tester-inventory.schema.json
+  - services/test-tool-api/src/app.ts
+  - deploy/development/fixtures/test-tool-rollback-release.json
+  - src/features/test-tool/test-tool-api-key.ts
+  - deploy/development/release-web-beta.mjs
+  - scripts/test-tool.html
+  - src/features/test-tool/test-tool-api-config.ts
+  - deploy/development/beta-tester-inventory.example.json
+  - services/test-tool-api/src/ingestion/ingestion-client.ts
+tests:
+  - src/router/test-tool-route.spec.ts
+  - deploy/development/release-web-beta.spec.ts
+  - scripts/test-tool.spec.ts
+  - services/test-tool-api/test/app-ingestion-errors.test.ts
+  - services/test-tool-api/test/test-event-service.test.ts
+  - src/features/auth/protected-resource-registry.spec.ts
+  - services/test-tool-api/test/app-response-privacy.test.ts
+  - services/test-tool-api/test/server.test.ts
+  - firebase/local/firestore.rules.spec.ts
+  - services/test-tool-api/test/test-event-request.test.ts
+  - src/features/test-tool/test-tool-api.spec.ts
+  - scripts/test-firebase.spec.ts
+  - scripts/install-workspaces.spec.ts
+  - services/test-tool-api/test/usage-ledger.test.ts
+  - scripts/audit-production-dependencies.spec.ts
+  - services/test-tool-api/test/app-ledger-errors.test.ts
+  - src/router/auth-guard.spec.ts
+  - deploy/development/verify-test-tool.spec.ts
+  - src/pwa-build.spec.ts
+  - services/test-tool-api/test/app-event-boundary.test.ts
+  - scripts/check-release.spec.ts
+  - scripts/test-tool-server.spec.ts
+  - services/test-tool-api/test/app.test.ts
+  - services/test-tool-api/test/ingestion-client.test.ts
+  - services/test-tool-api/test/privacy-scan.test.ts
+  - services/test-tool-api/test/container.test.ts
+  - deploy/development/verify-web.spec.ts
+  - src/features/test-tool/test-tool-api-config.spec.ts
+  - deploy/development/deploy-web.spec.ts
+  - src/App.auth.spec.ts
+  - src/views/TestToolView.spec.ts
+  - services/test-tool-api/test/app-auth.test.ts
+  - services/test-tool-api/test/app-complete-matrix.test.ts
+  - services/test-tool-api/test/test-device-repository.test.ts
+  - src/App.spec.ts
+  - services/ingestion-api/test/test-tool-event-to-projection.integration.test.ts
+  - services/test-tool-api/test/firebase-id-token-verifier.test.ts
+  - services/test-tool-api/test/test-device-firestore.integration.test.ts
+  - src/router/index.spec.ts
+  - services/test-tool-api/test/app-device-authorization.test.ts
+  - services/test-tool-api/test/config.test.ts
+  - deploy/development/deploy-test-tool.spec.ts
+-->
+
+---
+### Requirement: Protected development test-tool route
+
+The development Web app SHALL expose `/test-tool` only as an authenticated route, SHALL use the existing Firebase authentication lifecycle, and SHALL load tester devices and submit events only through the configured Test Tool API adapter. The route SHALL NOT initialize another Firebase app, display an independent sign-in form, or expose generic proxy settings.
+
+#### Scenario: Reload the tester tool as an authenticated member
+
+- **WHEN** an authenticated development tester directly loads or reloads `/test-tool`
+- **THEN** Firebase Hosting SHALL serve the application shell, the router SHALL preserve `/test-tool`, and the tool SHALL use the existing authenticated session
+
+#### Scenario: Open the tester tool while signed out
+
+- **WHEN** a signed-out visitor directly loads `/test-tool`
+- **THEN** the route guard SHALL redirect to `/sign-in` without rendering tester devices, event forms, or prior tester results
+
+#### Scenario: Exclude the tester tool from non-development configuration
+
+- **WHEN** a Web build does not explicitly select the approved development environment and verified Test Tool API release
+- **THEN** the build SHALL fail closed and SHALL NOT publish a functional tester tool route
+
+
+<!-- @trace
+source: publish-development-tester-event-tool
+updated: 2026-08-11
+code:
+  - src/App.vue
+  - env.d.ts
+  - services/test-tool-api/tsconfig.test.json
+  - deploy/development/verify-test-tool.mjs
+  - services/test-tool-api/src/events/test-event-service.ts
+  - scripts/install-workspaces.mjs
+  - scripts/test-tool.mjs
+  - scripts/check-release.mjs
+  - services/test-tool-api/src/security/firebase-id-token-verifier.ts
+  - src/features/test-tool/test-tool-api.ts
+  - services/test-tool-api/scripts/scan-privacy.mjs
+  - deploy/development/deploy-web.mjs
+  - services/test-tool-api/tsconfig.json
+  - package.json
+  - deploy/development/deploy-test-tool.mjs
+  - src/main.ts
+  - firebase.json
+  - src/views/TestToolView.vue
+  - services/test-tool-api/src/devices/test-device-repository.ts
+  - deploy/development/TEST_TOOL_RUNBOOK.md
+  - src/features/auth/protected-resource-registry.ts
+  - scripts/audit-production-dependencies.mjs
+  - scripts/test-tool.development.env.example
+  - deploy/development/verify-web.mjs
+  - firebase/local/README.md
+  - services/test-tool-api/src/usage/usage-ledger.ts
+  - services/test-tool-api/src/events/test-event-request.ts
+  - deploy/development/test-tool-service.json
+  - services/test-tool-api/cloudbuild.json
+  - services/test-tool-api/src/security/privacy-scan.ts
+  - services/test-tool-api/src/server.ts
+  - deploy/development/BETA_RELEASE_RUNBOOK.md
+  - services/test-tool-api/src/config.ts
+  - .env.example
+  - src/router/index.ts
+  - services/test-tool-api/src/http/response-contract.ts
+  - vitest.config.ts
+  - services/test-tool-api/package.json
+  - services/test-tool-api/Dockerfile
+  - services/test-tool-api/vitest.config.ts
+  - services/test-tool-api/src/security/mounted-ingestion-secret.ts
+  - scripts/test-firebase.mjs
+  - deploy/development/beta-tester-inventory.schema.json
+  - services/test-tool-api/src/app.ts
+  - deploy/development/fixtures/test-tool-rollback-release.json
+  - src/features/test-tool/test-tool-api-key.ts
+  - deploy/development/release-web-beta.mjs
+  - scripts/test-tool.html
+  - src/features/test-tool/test-tool-api-config.ts
+  - deploy/development/beta-tester-inventory.example.json
+  - services/test-tool-api/src/ingestion/ingestion-client.ts
+tests:
+  - src/router/test-tool-route.spec.ts
+  - deploy/development/release-web-beta.spec.ts
+  - scripts/test-tool.spec.ts
+  - services/test-tool-api/test/app-ingestion-errors.test.ts
+  - services/test-tool-api/test/test-event-service.test.ts
+  - src/features/auth/protected-resource-registry.spec.ts
+  - services/test-tool-api/test/app-response-privacy.test.ts
+  - services/test-tool-api/test/server.test.ts
+  - firebase/local/firestore.rules.spec.ts
+  - services/test-tool-api/test/test-event-request.test.ts
+  - src/features/test-tool/test-tool-api.spec.ts
+  - scripts/test-firebase.spec.ts
+  - scripts/install-workspaces.spec.ts
+  - services/test-tool-api/test/usage-ledger.test.ts
+  - scripts/audit-production-dependencies.spec.ts
+  - services/test-tool-api/test/app-ledger-errors.test.ts
+  - src/router/auth-guard.spec.ts
+  - deploy/development/verify-test-tool.spec.ts
+  - src/pwa-build.spec.ts
+  - services/test-tool-api/test/app-event-boundary.test.ts
+  - scripts/check-release.spec.ts
+  - scripts/test-tool-server.spec.ts
+  - services/test-tool-api/test/app.test.ts
+  - services/test-tool-api/test/ingestion-client.test.ts
+  - services/test-tool-api/test/privacy-scan.test.ts
+  - services/test-tool-api/test/container.test.ts
+  - deploy/development/verify-web.spec.ts
+  - src/features/test-tool/test-tool-api-config.spec.ts
+  - deploy/development/deploy-web.spec.ts
+  - src/App.auth.spec.ts
+  - src/views/TestToolView.spec.ts
+  - services/test-tool-api/test/app-auth.test.ts
+  - services/test-tool-api/test/app-complete-matrix.test.ts
+  - services/test-tool-api/test/test-device-repository.test.ts
+  - src/App.spec.ts
+  - services/ingestion-api/test/test-tool-event-to-projection.integration.test.ts
+  - services/test-tool-api/test/firebase-id-token-verifier.test.ts
+  - services/test-tool-api/test/test-device-firestore.integration.test.ts
+  - src/router/index.spec.ts
+  - services/test-tool-api/test/app-device-authorization.test.ts
+  - services/test-tool-api/test/config.test.ts
+  - deploy/development/deploy-test-tool.spec.ts
+-->
+
+---
+### Requirement: Test-tool member data cache exclusion
+
+The service worker SHALL NOT cache Test Tool API requests, responses, eligible-device data, event results, Firebase ID tokens, or tester form state. Signing out and reopening the app offline MUST NOT display any prior tester device, measurements, event identifier, or outcome.
+
+#### Scenario: Sign out after submitting a test event
+
+- **WHEN** a tester submits an event, signs out, goes offline, and reloads `/test-tool`
+- **THEN** the shell SHALL route to sign-in and SHALL display no cached tester device, form values, event identifier, sequence, or result
+
+#### Scenario: Inspect Cache Storage after tester use
+
+- **WHEN** verification inspects all service-worker cache entries after device listing and event submission
+- **THEN** no entry SHALL target the Test Tool API origin or contain tester device or event-result markers
+
+
+<!-- @trace
+source: publish-development-tester-event-tool
+updated: 2026-08-11
+code:
+  - src/App.vue
+  - env.d.ts
+  - services/test-tool-api/tsconfig.test.json
+  - deploy/development/verify-test-tool.mjs
+  - services/test-tool-api/src/events/test-event-service.ts
+  - scripts/install-workspaces.mjs
+  - scripts/test-tool.mjs
+  - scripts/check-release.mjs
+  - services/test-tool-api/src/security/firebase-id-token-verifier.ts
+  - src/features/test-tool/test-tool-api.ts
+  - services/test-tool-api/scripts/scan-privacy.mjs
+  - deploy/development/deploy-web.mjs
+  - services/test-tool-api/tsconfig.json
+  - package.json
+  - deploy/development/deploy-test-tool.mjs
+  - src/main.ts
+  - firebase.json
+  - src/views/TestToolView.vue
+  - services/test-tool-api/src/devices/test-device-repository.ts
+  - deploy/development/TEST_TOOL_RUNBOOK.md
+  - src/features/auth/protected-resource-registry.ts
+  - scripts/audit-production-dependencies.mjs
+  - scripts/test-tool.development.env.example
+  - deploy/development/verify-web.mjs
+  - firebase/local/README.md
+  - services/test-tool-api/src/usage/usage-ledger.ts
+  - services/test-tool-api/src/events/test-event-request.ts
+  - deploy/development/test-tool-service.json
+  - services/test-tool-api/cloudbuild.json
+  - services/test-tool-api/src/security/privacy-scan.ts
+  - services/test-tool-api/src/server.ts
+  - deploy/development/BETA_RELEASE_RUNBOOK.md
+  - services/test-tool-api/src/config.ts
+  - .env.example
+  - src/router/index.ts
+  - services/test-tool-api/src/http/response-contract.ts
+  - vitest.config.ts
+  - services/test-tool-api/package.json
+  - services/test-tool-api/Dockerfile
+  - services/test-tool-api/vitest.config.ts
+  - services/test-tool-api/src/security/mounted-ingestion-secret.ts
+  - scripts/test-firebase.mjs
+  - deploy/development/beta-tester-inventory.schema.json
+  - services/test-tool-api/src/app.ts
+  - deploy/development/fixtures/test-tool-rollback-release.json
+  - src/features/test-tool/test-tool-api-key.ts
+  - deploy/development/release-web-beta.mjs
+  - scripts/test-tool.html
+  - src/features/test-tool/test-tool-api-config.ts
+  - deploy/development/beta-tester-inventory.example.json
+  - services/test-tool-api/src/ingestion/ingestion-client.ts
+tests:
+  - src/router/test-tool-route.spec.ts
+  - deploy/development/release-web-beta.spec.ts
+  - scripts/test-tool.spec.ts
+  - services/test-tool-api/test/app-ingestion-errors.test.ts
+  - services/test-tool-api/test/test-event-service.test.ts
+  - src/features/auth/protected-resource-registry.spec.ts
+  - services/test-tool-api/test/app-response-privacy.test.ts
+  - services/test-tool-api/test/server.test.ts
+  - firebase/local/firestore.rules.spec.ts
+  - services/test-tool-api/test/test-event-request.test.ts
+  - src/features/test-tool/test-tool-api.spec.ts
+  - scripts/test-firebase.spec.ts
+  - scripts/install-workspaces.spec.ts
+  - services/test-tool-api/test/usage-ledger.test.ts
+  - scripts/audit-production-dependencies.spec.ts
+  - services/test-tool-api/test/app-ledger-errors.test.ts
+  - src/router/auth-guard.spec.ts
+  - deploy/development/verify-test-tool.spec.ts
+  - src/pwa-build.spec.ts
+  - services/test-tool-api/test/app-event-boundary.test.ts
+  - scripts/check-release.spec.ts
+  - scripts/test-tool-server.spec.ts
+  - services/test-tool-api/test/app.test.ts
+  - services/test-tool-api/test/ingestion-client.test.ts
+  - services/test-tool-api/test/privacy-scan.test.ts
+  - services/test-tool-api/test/container.test.ts
+  - deploy/development/verify-web.spec.ts
+  - src/features/test-tool/test-tool-api-config.spec.ts
+  - deploy/development/deploy-web.spec.ts
+  - src/App.auth.spec.ts
+  - src/views/TestToolView.spec.ts
+  - services/test-tool-api/test/app-auth.test.ts
+  - services/test-tool-api/test/app-complete-matrix.test.ts
+  - services/test-tool-api/test/test-device-repository.test.ts
+  - src/App.spec.ts
+  - services/ingestion-api/test/test-tool-event-to-projection.integration.test.ts
+  - services/test-tool-api/test/firebase-id-token-verifier.test.ts
+  - services/test-tool-api/test/test-device-firestore.integration.test.ts
+  - src/router/index.spec.ts
+  - services/test-tool-api/test/app-device-authorization.test.ts
+  - services/test-tool-api/test/config.test.ts
+  - deploy/development/deploy-test-tool.spec.ts
+-->
+
+---
 ### Requirement: Development cloud service selection
 
 The hosted build SHALL select the development Firebase adapter through the explicit environment discriminator, SHALL target the approved project, and SHALL contain no loopback host or Emulator connector activation.

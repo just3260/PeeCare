@@ -11,6 +11,7 @@ import StatsView from '@/views/StatsView.vue'
 import NotificationsView from '@/views/NotificationsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import SignInView from '@/views/SignInView.vue'
+import TestToolView from '@/views/TestToolView.vue'
 import type { AuthState } from '@/features/auth/session'
 
 // Route-level auth requirement. Protected routes wait for the initial session
@@ -18,10 +19,11 @@ import type { AuthState } from '@/features/auth/session'
 declare module 'vue-router' {
   interface RouteMeta {
     requiresAuth?: boolean
+    hideBottomNavigation?: boolean
   }
 }
 
-export const routes: RouteRecordRaw[] = [
+const MEMBER_ROUTES: RouteRecordRaw[] = [
   {
     path: '/',
     name: 'home',
@@ -58,6 +60,9 @@ export const routes: RouteRecordRaw[] = [
     path: '/devices',
     redirect: '/settings',
   },
+]
+
+const PUBLIC_AND_FALLBACK_ROUTES: RouteRecordRaw[] = [
   {
     path: '/sign-in',
     name: 'sign-in',
@@ -69,6 +74,29 @@ export const routes: RouteRecordRaw[] = [
     redirect: '/',
   },
 ]
+
+export function createApplicationRoutes(options: {
+  readonly testToolEnabled: boolean
+}): RouteRecordRaw[] {
+  return [
+    ...MEMBER_ROUTES,
+    ...(options.testToolEnabled
+      ? [{
+          path: '/test-tool',
+          name: 'test-tool',
+          component: TestToolView,
+          meta: { requiresAuth: true, hideBottomNavigation: true },
+        } satisfies RouteRecordRaw]
+      : []),
+    ...PUBLIC_AND_FALLBACK_ROUTES,
+  ]
+}
+
+export const routes = createApplicationRoutes({
+  testToolEnabled:
+    import.meta.env.PROD === true &&
+    import.meta.env.VITE_FIREBASE_ENVIRONMENT === 'development',
+})
 
 /** The slice of the auth store the navigation guard depends on. */
 export interface AuthGuardStore {

@@ -1,9 +1,10 @@
 /// <reference types="vite/client" />
 /// <reference types="vite-plugin-pwa/client" />
 
-// Typed local Firebase Emulator configuration. Populated from .env.local; see
-// .env.example for the non-secret demo defaults. All entries are optional so the
-// Vue app shell type-checks and builds without a local Firebase environment.
+// Typed local Firebase Emulator configuration. Populated from
+// .env.development.local; see .env.example for the non-secret demo defaults. All
+// entries are optional so the Vue app shell type-checks and builds without a
+// local Firebase environment.
 interface ImportMetaEnv {
   readonly VITE_FIREBASE_ENVIRONMENT?: string
   readonly VITE_FIREBASE_APPROVED_PROJECT_ID?: string
@@ -17,4 +18,5 @@ interface ImportMetaEnv {
   readonly VITE_FIREBASE_FIRESTORE_EMULATOR_HOST?: string
   readonly VITE_FIREBASE_FIRESTORE_EMULATOR_PORT?: string
   readonly VITE_MEMBER_API_URL?: string
+  readonly VITE_TEST_TOOL_API_URL?: string
 }

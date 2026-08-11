@@ -8,13 +8,35 @@ const DEVICE_STORAGE_KEY = 'peecare.test-tool.devices'
 const html = readFileSync(resolve(process.cwd(), 'scripts/test-tool.html'), 'utf8')
 const openDocuments: JSDOM[] = []
 
-function loadTool() {
+function loadTool(profile: 'local' | 'development-cloud' = 'local') {
+  const config = profile === 'local'
+    ? { profile: 'local' }
+    : {
+        profile: 'development-cloud',
+        origins: {
+          web: 'https://petcare-c7483.web.app',
+          ingestion: 'https://peecare-ingestion-development-348528459946.asia-east1.run.app',
+          member: 'https://peecare-member-development-348528459946.asia-east1.run.app',
+        },
+      }
   const dom = new JSDOM(html, {
     runScripts: 'dangerously',
     url: 'http://127.0.0.1:5055/',
+    beforeParse(window) {
+      window.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input) !== '/api/config') throw new Error('unexpected request before test setup')
+        return { json: async () => config } as Response
+      }) as typeof fetch
+    },
   })
   openDocuments.push(dom)
   return dom.window.document
+}
+
+async function loadCloudTool() {
+  const document = loadTool('development-cloud')
+  await flushPending()
+  return document
 }
 
 function element<T extends HTMLElement>(document: Document, id: string) {
@@ -114,9 +136,71 @@ describe('local test tool settings navigation', () => {
     // curl 區塊展開會非同步觸發 toggle，等它跑完再結束，才不會在 DOM 關閉後才重繪。
     await flushPending()
 
-    expect(element<HTMLElement>(document, 'curl-health').textContent).toContain(
-      "http://127.0.0.1:9090/healthz",
+    const healthCurl = element<HTMLElement>(document, 'curl-health').textContent ?? ''
+    expect(healthCurl).toContain("'http://127.0.0.1:9090/health'")
+    expect(healthCurl).not.toContain('/healthz')
+
+    const memberHealthPreview = document.querySelector<HTMLButtonElement>(
+      'button[onclick="preview(\'healthMember\')"]',
     )
+    memberHealthPreview?.click()
+    await flushPending()
+
+    const memberHealthCurl = element<HTMLElement>(document, 'curl-healthMember').textContent ?? ''
+    expect(memberHealthCurl).toContain("'http://127.0.0.1:8087/health'")
+    expect(memberHealthCurl).not.toContain('/healthz')
+  })
+})
+
+describe('development-cloud observation handoff', () => {
+  it('shows the fixed Hosting handoff and a clear development banner', async () => {
+    const document = await loadCloudTool()
+    const banner = element<HTMLElement>(document, 'development-cloud-banner')
+    const hostingLink = element<HTMLAnchorElement>(document, 'open-development-web')
+
+    expect(banner.hidden).toBe(false)
+    expect(banner.textContent).toContain('development-cloud')
+    expect(banner.textContent).toContain('operator')
+    expect(hostingLink.href).toBe('https://petcare-c7483.web.app/')
+    expect(hostingLink.target).toBe('_blank')
+    expect(hostingLink.rel).toContain('noopener')
+  })
+
+  it('removes secret DOM values and disables live registry and custom-name operations', async () => {
+    const document = await loadCloudTool()
+    const view = document.defaultView as Window & typeof globalThis
+    const sendRequest = vi.fn()
+    view.fetch = sendRequest as unknown as typeof fetch
+
+    expect(element<HTMLInputElement>(document, 'secret').value).toBe('')
+    expect(element<HTMLElement>(document, 'secret-setting').hidden).toBe(true)
+    expect(element<HTMLElement>(document, 'device-registry-card').hidden).toBe(true)
+    expect(element<HTMLButtonElement>(document, 'refresh-device-names').disabled).toBe(true)
+    expect([...document.querySelectorAll<HTMLInputElement>('input')].map((input) => input.value))
+      .not.toContain('local-dev-secret')
+
+    element<HTMLButtonElement>(document, 'refresh-device-names').click()
+    await flushPending()
+    expect(sendRequest).not.toHaveBeenCalled()
+  })
+
+  it('uses sanitized cloud origins and never sends browser Authorization for an event', async () => {
+    const document = await loadCloudTool()
+    const view = document.defaultView as Window & typeof globalThis
+    const sendRequest = vi.fn(async () => ({
+      json: async () => ({ ok: true, status: 201, statusText: 'Created', elapsedMs: 1, body: '{}' }),
+    }))
+    view.fetch = sendRequest as unknown as typeof fetch
+
+    deviceCards(document)[0].querySelector<HTMLButtonElement>('button[data-event="urination"]')?.click()
+    await flushPending()
+
+    const [, init] = sendRequest.mock.calls[0] as unknown as [string, RequestInit]
+    const proxied = JSON.parse(String(init.body))
+    expect(proxied.url).toBe(
+      'https://peecare-ingestion-development-348528459946.asia-east1.run.app/v1/emqx/events',
+    )
+    expect(Object.keys(proxied.headers).map((key) => key.toLowerCase())).not.toContain('authorization')
   })
 })
 

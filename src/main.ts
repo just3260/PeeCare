@@ -13,6 +13,9 @@ import { DEVICE_OVERVIEW_STORE_KEY } from '@/features/devices/device-overview-st
 import { createMemberDeviceApi } from '@/features/devices/member-device-api'
 import { getFirebaseServices } from '@/platform/firebase/client'
 import { parseMemberApiConfig } from '@/platform/firebase/config'
+import { createTestToolApi } from '@/features/test-tool/test-tool-api'
+import { parseTestToolApiConfig } from '@/features/test-tool/test-tool-api-config'
+import { TEST_TOOL_API_KEY } from '@/features/test-tool/test-tool-api-key'
 import { loadUrinationPage } from '@/features/history/device-event-history-repository'
 import { createDeviceEventHistoryStore } from '@/features/history/device-event-history-store'
 import { DEVICE_EVENT_HISTORY_STORE_KEY } from '@/features/history/device-event-history-store-key'
@@ -29,6 +32,9 @@ const memberApiConfig = parseMemberApiConfig(import.meta.env)
 const authStore = createAuthStore()
 const authProvider = createFirebaseAuthProvider()
 const memberDeviceApi = createMemberDeviceApi({ baseUrl: memberApiConfig.baseUrl })
+const testToolApi = import.meta.env.VITE_FIREBASE_ENVIRONMENT === 'development'
+  ? createTestToolApi({ baseUrl: parseTestToolApiConfig(import.meta.env).baseUrl })
+  : null
 
 // The device overview store shares the auth store's teardown registry so its
 // live Firestore listener is disposed when the member signs out.
@@ -61,6 +67,7 @@ app.provide(AUTH_PROVIDER_KEY, authProvider)
 app.provide(DEVICE_OVERVIEW_STORE_KEY, deviceOverviewStore)
 app.provide(DEVICE_EVENT_HISTORY_STORE_KEY, deviceEventHistoryStore)
 app.provide(DAILY_STATS_STORE_KEY, dailyStatsStore)
+if (testToolApi !== null) app.provide(TEST_TOOL_API_KEY, testToolApi)
 app.mount('#app')
 
 // The service worker is registered only in production builds. Development and

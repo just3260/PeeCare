@@ -1,0 +1,58 @@
+{
+  "apiVersion": "peecare.dev/v1",
+  "kind": "CloudRunService",
+  "metadata": {
+    "projectId": "petcare-c7483",
+    "projectNumber": "348528459946",
+    "region": "asia-east1",
+    "service": "peecare-test-tool-development"
+  },
+  "image": {
+    "digestPattern": "^asia-east1-docker\\.pkg\\.dev/petcare-c7483/peecare/test-tool-api@sha256:[0-9a-f]{64}$"
+  },
+  "runtimeIdentity": {
+    "serviceAccount": "peecare-test-tool-runtime@petcare-c7483.iam.gserviceaccount.com",
+    "accountId": "peecare-test-tool-runtime",
+    "displayName": "PeeCare development Test Tool API runtime"
+  },
+  "iam": {
+    "projectRoles": ["roles/datastore.user", "roles/firebaseauth.viewer"],
+    "secretAccessorRole": "roles/secretmanager.secretAccessor",
+    "secretAccessorConditionTitlePrefix": "peecare-test-tool-secret-version-"
+  },
+  "secretMount": {
+    "secretName": "peecare-emqx-webhook-current",
+    "runtimePath": "/var/run/secrets/peecare/ingestion-secret",
+    "defaultMode": 384
+  },
+  "resources": {
+    "billing": "request-based",
+    "executionEnvironment": "gen1",
+    "cpu": "1",
+    "memory": "512Mi",
+    "timeoutSeconds": 60,
+    "concurrency": 20,
+    "minInstances": 0,
+    "maxInstances": 2
+  },
+  "network": {
+    "ingress": "all",
+    "allowUnauthenticated": true,
+    "publicHealthPath": "/health",
+    "deviceListPath": "/v1/test-devices",
+    "eventPath": "/v1/test-devices/:deviceId/events",
+    "applicationAuth": "firebase-id-token-revoked-aware-owner-marker",
+    "allowedOrigin": "https://petcare-c7483.web.app"
+  },
+  "runtimeEnvironment": {
+    "values": {
+      "NODE_ENV": "production",
+      "GOOGLE_CLOUD_PROJECT": "petcare-c7483",
+      "PEECARE_WEB_ORIGIN": "https://petcare-c7483.web.app",
+      "PEECARE_INGESTION_ORIGIN": "https://peecare-ingestion-development-348528459946.asia-east1.run.app",
+      "PEECARE_INGESTION_SECRET_FILE": "/var/run/secrets/peecare/ingestion-secret",
+      "PEECARE_TEST_TOOL_ENABLED": "true"
+    },
+    "platformProvided": ["PORT"]
+  }
+}

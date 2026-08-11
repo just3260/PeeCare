@@ -73,7 +73,7 @@ The web platform SHALL expose `getLocalFirebaseServices` as the single local Fir
 #### Scenario: Build without local Firebase configuration
 
 - **WHEN** the Vue app shell is type-checked and built without importing `getLocalFirebaseServices`
-- **THEN** the build SHALL succeed without `.env.local` or running Emulators
+- **THEN** the build SHALL succeed without `.env.development.local` or running Emulators
 
 ---
 ### Requirement: Deny-by-default Firestore rules

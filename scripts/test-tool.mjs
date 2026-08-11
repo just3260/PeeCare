@@ -1,23 +1,35 @@
 // PeeCare 本地測試工具 —— 網頁 UI + 後端代送 (proxy)
 //
-// 用途：在瀏覽器填表，發送「健康檢查 / 建立 device / 排尿事件 / 電量事件」四個 HTTP 請求。
-// 瀏覽器只與本工具同源溝通，實際請求由此 Node 程式在 server side 轉發，
-// 藉此避開 ingestion-api 未開啟 CORS 的限制。為安全起見，只允許送往 loopback 位址。
-//
-// 執行：node scripts/test-tool.mjs   然後開啟 http://127.0.0.1:5055
-// 需 Node >= 18（內建 fetch）；專案 ingestion-api 需要 Node >= 22。
+// local profile 保留 Emulator 工作流程；development-cloud profile 只允許固定的
+// development health/event operations，且 ingestion secret 只存在於 Node process。
 
+import { readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-const PORT = process.env.TOOL_PORT ? Number(process.env.TOOL_PORT) : 5055;
-const HTML = readFileSync(new URL('./test-tool.html', import.meta.url), 'utf8');
-// 裝置模擬器的排尿事件按鈕圖示；隨工具一起送出，頁面才不需外部資源。
-const MACHINE_PNG = readFileSync(new URL('./machine.png', import.meta.url));
-// 送出事件前在機器圖中間抖動的狗狗。
-const DOG_PNG = readFileSync(new URL('./dog.png', import.meta.url));
-
+const DEFAULT_PORT = 5055;
+const LISTEN_HOST = '127.0.0.1';
+const LOCAL_PROFILE = 'local';
+const DEVELOPMENT_CLOUD_PROFILE = 'development-cloud';
+const APPROVED_WEB_ORIGIN = 'https://petcare-c7483.web.app';
+const APPROVED_INGESTION_ORIGIN =
+  'https://peecare-ingestion-development-348528459946.asia-east1.run.app';
+const APPROVED_MEMBER_ORIGIN =
+  'https://peecare-member-development-348528459946.asia-east1.run.app';
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+const CLOUD_CONFIG_ERROR = 'Development-cloud test tool configuration is invalid.';
+const CLOUD_OPERATION_ERROR = 'Cloud operation is not allowed.';
+const CONFIG_SECRETS = new WeakMap();
+const VALID_CONFIGS = new WeakSet();
+
+function loadAssets() {
+  return {
+    html: readFileSync(new URL('./test-tool.html', import.meta.url), 'utf8'),
+    machinePng: readFileSync(new URL('./machine.png', import.meta.url)),
+    dogPng: readFileSync(new URL('./dog.png', import.meta.url)),
+  };
+}
 
 function isLoopback(target) {
   try {
@@ -27,14 +39,106 @@ function isLoopback(target) {
   }
 }
 
+function exactApprovedOrigin(value, approvedOrigin) {
+  if (value !== approvedOrigin) throw new Error(CLOUD_CONFIG_ERROR);
+  try {
+    const parsed = new URL(value);
+    if (
+      parsed.protocol !== 'https:' ||
+      parsed.username !== '' ||
+      parsed.password !== '' ||
+      parsed.pathname !== '/' ||
+      parsed.search !== '' ||
+      parsed.hash !== '' ||
+      parsed.origin !== value
+    ) {
+      throw new Error(CLOUD_CONFIG_ERROR);
+    }
+    return parsed.origin;
+  } catch {
+    throw new Error(CLOUD_CONFIG_ERROR);
+  }
+}
+
+function readOperatorSecret(path, readSecretFile, inspectSecretFile) {
+  if (typeof path !== 'string' || path.trim() === '') {
+    throw new Error(CLOUD_CONFIG_ERROR);
+  }
+  try {
+    const stats = inspectSecretFile(path);
+    if (!stats.isFile() || (stats.mode & 0o077) !== 0) {
+      throw new Error(CLOUD_CONFIG_ERROR);
+    }
+    const secret = readSecretFile(path, 'utf8').trim();
+    if (
+      secret === '' ||
+      secret.length > 512 ||
+      !/^[\u0021-\u007e]+$/u.test(secret)
+    ) {
+      throw new Error(CLOUD_CONFIG_ERROR);
+    }
+    return secret;
+  } catch {
+    throw new Error(CLOUD_CONFIG_ERROR);
+  }
+}
+
+export function loadTestToolConfig(
+  environment = process.env,
+  { readSecretFile = readFileSync, inspectSecretFile = statSync } = {},
+) {
+  const profile = environment.PEECARE_TEST_TOOL_PROFILE ?? LOCAL_PROFILE;
+  if (profile === LOCAL_PROFILE) {
+    const config = Object.freeze({ profile });
+    VALID_CONFIGS.add(config);
+    return config;
+  }
+  if (profile !== DEVELOPMENT_CLOUD_PROFILE) {
+    throw new Error('Test tool profile must be local or development-cloud.');
+  }
+
+  const origins = Object.freeze({
+    web: exactApprovedOrigin(
+      environment.PEECARE_DEVELOPMENT_WEB_ORIGIN,
+      APPROVED_WEB_ORIGIN,
+    ),
+    ingestion: exactApprovedOrigin(
+      environment.PEECARE_DEVELOPMENT_INGESTION_ORIGIN,
+      APPROVED_INGESTION_ORIGIN,
+    ),
+    member: exactApprovedOrigin(
+      environment.PEECARE_DEVELOPMENT_MEMBER_ORIGIN,
+      APPROVED_MEMBER_ORIGIN,
+    ),
+  });
+  const config = Object.freeze({ profile, origins });
+  CONFIG_SECRETS.set(
+    config,
+    readOperatorSecret(
+      environment.PEECARE_TEST_TOOL_INGESTION_SECRET_FILE,
+      readSecretFile,
+      inspectSecretFile,
+    ),
+  );
+  VALID_CONFIGS.add(config);
+  return config;
+}
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let raw = '';
+    let rejected = false;
     req.on('data', (chunk) => {
+      if (rejected) return;
       raw += chunk;
-      if (raw.length > 1_000_000) reject(new Error('request body too large'));
+      if (raw.length > 1_000_000) {
+        rejected = true;
+        reject(new Error('request body too large'));
+      }
     });
-    req.on('end', () => resolve(raw));
+    req.on('end', () => {
+      if (!rejected) resolve(raw);
+    });
     req.on('error', reject);
   });
 }
@@ -44,48 +148,258 @@ function sendJson(res, status, payload) {
   res.end(JSON.stringify(payload));
 }
 
-const server = createServer(async (req, res) => {
-  if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(HTML);
-    return;
+function hasCallerAuthorization(headers) {
+  return (
+    headers !== null &&
+    typeof headers === 'object' &&
+    Object.keys(headers).some((name) => name.toLowerCase() === 'authorization')
+  );
+}
+
+function headerValue(headers, expectedName) {
+  if (headers === null || typeof headers !== 'object') return undefined;
+  const entry = Object.entries(headers).find(
+    ([name]) => name.toLowerCase() === expectedName.toLowerCase(),
+  );
+  return entry?.[1];
+}
+
+function isTrustedLoopbackPost(req) {
+  const host = req.headers.host;
+  if (typeof host !== 'string') return false;
+  try {
+    if (!LOOPBACK_HOSTS.has(new URL(`http://${host}`).hostname)) return false;
+  } catch {
+    return false;
   }
 
-  if (req.method === 'GET' && (req.url === '/machine.png' || req.url === '/dog.png')) {
-    res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-cache' });
-    res.end(req.url === '/machine.png' ? MACHINE_PNG : DOG_PNG);
-    return;
+  const contentType = req.headers['content-type'];
+  if (
+    typeof contentType !== 'string' ||
+    !/^application\/json(?:\s*;\s*charset=utf-8)?$/iu.test(contentType)
+  ) {
+    return false;
   }
 
-  if (req.method === 'POST' && req.url === '/api/send') {
-    try {
-      const { method, url, headers, body } = JSON.parse((await readBody(req)) || '{}');
-      if (typeof url !== 'string' || !isLoopback(url)) {
-        return sendJson(res, 400, { ok: false, error: '只允許送往 loopback 位址（127.0.0.1 / localhost）' });
-      }
-      const startedAt = Date.now();
-      const upstream = await fetch(url, {
-        method: method ?? 'GET',
-        headers: headers ?? {},
-        body: body ?? undefined,
-      });
-      const text = await upstream.text();
-      return sendJson(res, 200, {
-        ok: true,
-        status: upstream.status,
-        statusText: upstream.statusText,
-        elapsedMs: Date.now() - startedAt,
-        body: text,
-      });
-    } catch (error) {
-      return sendJson(res, 200, { ok: false, error: error instanceof Error ? error.message : String(error) });
+  const expectedOrigin = `http://${host}`;
+  if (req.headers.origin !== undefined && req.headers.origin !== expectedOrigin) {
+    return false;
+  }
+  const fetchSite = req.headers['sec-fetch-site'];
+  return (
+    fetchSite === undefined ||
+    fetchSite === 'same-origin' ||
+    fetchSite === 'none'
+  );
+}
+
+function approvedCloudRequest(config, request) {
+  if (
+    request === null ||
+    typeof request !== 'object' ||
+    hasCallerAuthorization(request.headers)
+  ) {
+    return null;
+  }
+  const { method, url, headers, body } = request;
+  if (method === 'GET' && body === undefined) {
+    if (
+      url === `${config.origins.ingestion}/health` ||
+      url === `${config.origins.member}/health`
+    ) {
+      return { kind: 'health', method: 'GET', url, headers: {}, body: undefined };
     }
+    return null;
+  }
+  if (
+    method === 'POST' &&
+    url === `${config.origins.ingestion}/v1/emqx/events` &&
+    typeof body === 'string' &&
+    headerValue(headers, 'content-type') === 'application/json'
+  ) {
+    const secret = CONFIG_SECRETS.get(config);
+    if (typeof secret !== 'string') return null;
+    return {
+      kind: 'event',
+      method: 'POST',
+      url,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${secret}`,
+      },
+      body,
+    };
+  }
+  return null;
+}
+
+function redactSecret(text, secret) {
+  if (typeof secret !== 'string' || secret === '') return text;
+  return text.split(secret).join('[REDACTED]');
+}
+
+function sanitizeCloudResponseBody(kind, text, secret, requestBody) {
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return '{}';
+    if (kind === 'health') {
+      return parsed.status === 'ok' ? JSON.stringify({ status: 'ok' }) : '{}';
+    }
+    const safe = {};
+    let expectedEventId;
+    try {
+      expectedEventId = JSON.parse(requestBody)?.payload?.eventId;
+    } catch {}
+    if (
+      typeof parsed.eventId === 'string' &&
+      parsed.eventId === expectedEventId &&
+      !parsed.eventId.includes(secret) &&
+      /^[A-Za-z0-9._:-]{1,256}$/u.test(parsed.eventId)
+    ) {
+      safe.eventId = parsed.eventId;
+    }
+    if (
+      typeof parsed.requestId === 'string' &&
+      !parsed.requestId.includes(secret) &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(parsed.requestId)
+    ) {
+      safe.requestId = parsed.requestId;
+    }
+    return JSON.stringify(safe);
+  } catch {
+    return '{}';
+  }
+}
+
+async function proxyRequest(config, payload, fetchImpl) {
+  let operation;
+  if (config.profile === LOCAL_PROFILE) {
+    if (typeof payload?.url !== 'string' || !isLoopback(payload.url)) {
+      return {
+        denied: true,
+        error: '只允許送往 loopback 位址（127.0.0.1 / localhost）',
+      };
+    }
+    operation = {
+      kind: 'local',
+      method: payload.method ?? 'GET',
+      url: payload.url,
+      headers: payload.headers ?? {},
+      body: payload.body ?? undefined,
+    };
+  } else {
+    operation = approvedCloudRequest(config, payload);
+    if (operation === null) return { denied: true, error: CLOUD_OPERATION_ERROR };
   }
 
-  res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-  res.end('not found');
-});
+  const startedAt = Date.now();
+  const upstream = await fetchImpl(operation.url, {
+    method: operation.method,
+    headers: operation.headers,
+    body: operation.body,
+    redirect: 'error',
+  });
+  const upstreamText = await upstream.text();
+  const isCloud = config.profile === DEVELOPMENT_CLOUD_PROFILE;
+  return {
+    denied: false,
+    response: {
+      ok: true,
+      status: upstream.status,
+      statusText: isCloud ? '' : upstream.statusText,
+      elapsedMs: Date.now() - startedAt,
+      body: isCloud
+        ? sanitizeCloudResponseBody(
+            operation.kind,
+            upstreamText,
+            CONFIG_SECRETS.get(config),
+            operation.body,
+          )
+        : redactSecret(upstreamText, CONFIG_SECRETS.get(config)),
+    },
+  };
+}
 
-server.listen(PORT, '127.0.0.1', () => {
-  console.log(`PeeCare 本地測試工具已啟動：http://127.0.0.1:${PORT}`);
-});
+export function createTestToolServer({ config, fetchImpl = fetch, assets } = {}) {
+  if (!VALID_CONFIGS.has(config)) {
+    throw new Error('A validated test tool configuration is required.');
+  }
+
+  return createServer(async (req, res) => {
+    if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
+      const resolvedAssets = assets ?? loadAssets();
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(resolvedAssets.html);
+      return;
+    }
+
+    if (req.method === 'GET' && (req.url === '/machine.png' || req.url === '/dog.png')) {
+      const resolvedAssets = assets ?? loadAssets();
+      res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'no-cache' });
+      res.end(req.url === '/machine.png' ? resolvedAssets.machinePng : resolvedAssets.dogPng);
+      return;
+    }
+
+    if (req.method === 'GET' && req.url === '/api/config') {
+      return sendJson(res, 200, {
+        profile: config.profile,
+        ...(config.profile === DEVELOPMENT_CLOUD_PROFILE
+          ? { origins: config.origins }
+          : {}),
+      });
+    }
+
+    if (req.method === 'POST' && req.url === '/api/send') {
+      if (!isTrustedLoopbackPost(req)) {
+        return sendJson(res, 400, { ok: false, error: 'Request origin is not allowed.' });
+      }
+      try {
+        const payload = JSON.parse((await readBody(req)) || '{}');
+        const result = await proxyRequest(config, payload, fetchImpl);
+        if (result.denied) {
+          return sendJson(res, 400, { ok: false, error: result.error });
+        }
+        return sendJson(res, 200, result.response);
+      } catch (error) {
+        return sendJson(res, 200, {
+          ok: false,
+          error:
+            config.profile === DEVELOPMENT_CLOUD_PROFILE
+              ? 'Upstream request failed.'
+              : error instanceof Error
+                ? error.message
+                : String(error),
+        });
+      }
+    }
+
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('not found');
+  });
+}
+
+export function startTestTool({ environment = process.env } = {}) {
+  const config = loadTestToolConfig(environment);
+  const port = environment.TOOL_PORT === undefined ? DEFAULT_PORT : Number(environment.TOOL_PORT);
+  if (!Number.isInteger(port) || port < 0 || port > 65_535) {
+    throw new Error('TOOL_PORT must be a valid TCP port.');
+  }
+  const server = createTestToolServer({ config });
+  server.listen(port, LISTEN_HOST, () => {
+    console.log(`PeeCare 本地測試工具已啟動：http://${LISTEN_HOST}:${port}`);
+  });
+  return server;
+}
+
+const isDirectExecution =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+
+if (isDirectExecution) {
+  try {
+    startTestTool();
+  } catch {
+    console.error('PeeCare test tool startup failed: invalid configuration.');
+    process.exitCode = 1;
+  }
+}

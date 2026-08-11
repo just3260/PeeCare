@@ -146,6 +146,241 @@ export async function verifyMemberDataCacheExclusion({ browser, priorMemberMarke
   })
 }
 
+const APPROVED_TEST_TOOL_API_ORIGIN =
+  'https://peecare-test-tool-development-348528459946.asia-east1.run.app'
+const TEST_TOOL_DEVICE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
+const TEST_TOOL_UUID_V4 =
+  /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
+const TEST_TOOL_UINT32_MAX = 4_294_967_295
+const TEST_TOOL_FORBIDDEN_DISPLAY_NAME = /[\p{Cc}\p{Zl}\p{Zp}]/u
+const TEST_TOOL_CONTEXT_METHODS = Object.freeze([
+  'startNetworkInspection',
+  'signInOwner',
+  'visit',
+  'expectTesterDataVisible',
+  'submitTesterEvent',
+  'signOut',
+  'goOffline',
+  'reload',
+  'inspectNetworkRequests',
+  'inspectCacheStorage',
+  'readOfflineState',
+  'close',
+])
+
+function testToolCacheExclusionFailure() {
+  return new WebVerificationError(
+    'test_tool_cache_exclusion_failed',
+    'Offline verification found cached Test Tool traffic or visible prior tester data.',
+  )
+}
+
+function hasExactObjectKeys(value, expectedKeys) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const actual = Object.keys(value).sort()
+  const expected = [...expectedKeys].sort()
+  return actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index])
+}
+
+function isTestToolDevice(value) {
+  return hasExactObjectKeys(value, ['deviceId', 'displayName']) &&
+    typeof value.deviceId === 'string' &&
+    TEST_TOOL_DEVICE_ID.test(value.deviceId) &&
+    typeof value.displayName === 'string' &&
+    value.displayName.trim() === value.displayName &&
+    Array.from(value.displayName).length > 0 &&
+    Array.from(value.displayName).length <= 30 &&
+    !TEST_TOOL_FORBIDDEN_DISPLAY_NAME.test(value.displayName)
+}
+
+function isUint32(value) {
+  return Number.isInteger(value) && value >= 0 && value <= TEST_TOOL_UINT32_MAX
+}
+
+function isTestToolRequest(value) {
+  if (value?.eventType === 'urination') {
+    return hasExactObjectKeys(
+      value,
+      ['eventType', 'flushDurationMs', 'pumpDurationMs'],
+    ) && isUint32(value.flushDurationMs) && isUint32(value.pumpDurationMs)
+  }
+  if (value?.eventType === 'battery') {
+    const keys = value.batteryVoltageMv === undefined
+      ? ['eventType', 'batteryLevelPercent']
+      : ['eventType', 'batteryLevelPercent', 'batteryVoltageMv']
+    return hasExactObjectKeys(value, keys) &&
+      [0, 25, 50, 75, 100].includes(value.batteryLevelPercent) &&
+      (value.batteryVoltageMv === undefined ||
+        (Number.isInteger(value.batteryVoltageMv) &&
+          value.batteryVoltageMv >= 0 &&
+          value.batteryVoltageMv <= 20_000))
+  }
+  return false
+}
+
+function isTestToolResult(value, deviceId, eventType) {
+  if (!hasExactObjectKeys(
+    value,
+    ['status', 'eventId', 'eventType', 'deviceId', 'sequence'],
+  )) return false
+  const prefix = `tt:${deviceId}:`
+  return (value.status === 'stored' || value.status === 'duplicate') &&
+    value.eventType === eventType &&
+    value.deviceId === deviceId &&
+    typeof value.eventId === 'string' &&
+    value.eventId.startsWith(prefix) &&
+    TEST_TOOL_UUID_V4.test(value.eventId.slice(prefix.length)) &&
+    isUint32(value.sequence)
+}
+
+function parseTestToolJourney(device, submission) {
+  if (
+    !isTestToolDevice(device) ||
+    !hasExactObjectKeys(submission, ['request', 'result']) ||
+    !isTestToolRequest(submission.request) ||
+    !isTestToolResult(
+      submission.result,
+      device.deviceId,
+      submission.request.eventType,
+    )
+  ) return null
+  return Object.freeze({
+    device,
+    request: submission.request,
+    result: submission.result,
+    markers: Object.freeze([
+      device.deviceId,
+      ...(device.displayName === device.deviceId ? [] : [device.displayName]),
+      JSON.stringify({ devices: [device] }),
+      JSON.stringify(submission.request),
+      submission.result.eventId,
+      JSON.stringify(submission.result),
+    ]),
+  })
+}
+
+function inspectTestToolNetwork(requests, apiOrigin, deviceId) {
+  if (!Array.isArray(requests)) return null
+  const apiRequests = []
+  for (const request of requests) {
+    if (
+      typeof request !== 'object' ||
+      request === null ||
+      typeof request.url !== 'string' ||
+      typeof request.method !== 'string' ||
+      typeof request.servedFromCache !== 'boolean'
+    ) return null
+    if (!request.url.startsWith(`${apiOrigin}/`)) continue
+    apiRequests.push(request)
+  }
+
+  const listUrl = `${apiOrigin}/v1/test-devices`
+  const eventUrl = `${apiOrigin}/v1/test-devices/${deviceId}/events`
+  if (
+    apiRequests.some(
+      (request) => request.servedFromCache ||
+        !(
+          (request.method === 'GET' && request.url === listUrl) ||
+          (request.method === 'POST' && request.url === eventUrl)
+        ),
+    ) ||
+    !apiRequests.some((request) => request.method === 'GET' && request.url === listUrl) ||
+    !apiRequests.some((request) => request.method === 'POST' && request.url === eventUrl)
+  ) return null
+  return apiRequests.length
+}
+
+function hasInvalidTestToolCache(entries, apiOrigin, journeyMarkers) {
+  return !Array.isArray(entries) || entries.some((entry) => {
+    if (
+      typeof entry !== 'object' ||
+      entry === null ||
+      typeof entry.url !== 'string' ||
+      typeof entry.body !== 'string'
+    ) return true
+    return entry.url.startsWith(`${apiOrigin}/`) ||
+      journeyMarkers.some((marker) => entry.body.includes(marker))
+  })
+}
+
+export async function verifyTestToolDataCacheExclusion({
+  browser,
+  apiOrigin,
+}) {
+  if (apiOrigin !== APPROVED_TEST_TOOL_API_ORIGIN) {
+    throw testToolCacheExclusionFailure()
+  }
+
+  let context
+  try {
+    context = await browser.createContext({
+      session: 'owner',
+      storage: 'isolated',
+      serviceWorker: 'production',
+    })
+    if (
+      typeof context !== 'object' ||
+      context === null ||
+      TEST_TOOL_CONTEXT_METHODS.some((method) => typeof context[method] !== 'function')
+    ) throw testToolCacheExclusionFailure()
+    await context.startNetworkInspection()
+    await context.signInOwner()
+    await context.visit('/test-tool')
+    const device = await context.expectTesterDataVisible()
+    if (!isTestToolDevice(device)) throw testToolCacheExclusionFailure()
+    const submission = await context.submitTesterEvent({
+      deviceId: device.deviceId,
+    })
+    const journey = parseTestToolJourney(device, submission)
+    if (journey === null) throw testToolCacheExclusionFailure()
+
+    await context.signOut()
+    await context.goOffline()
+    await context.reload('/test-tool')
+
+    const [networkRequests, cacheEntries, offlineState] = await Promise.all([
+      context.inspectNetworkRequests(),
+      context.inspectCacheStorage(),
+      context.readOfflineState(),
+    ])
+    const apiRequests = inspectTestToolNetwork(
+      networkRequests,
+      apiOrigin,
+      journey.device.deviceId,
+    )
+    if (
+      apiRequests === null ||
+      hasInvalidTestToolCache(cacheEntries, apiOrigin, journey.markers) ||
+      offlineState?.shellVisible !== true ||
+      offlineState?.protectedContentVisible !== false ||
+      offlineState?.priorTesterDataVisible !== false ||
+      offlineState?.formStateVisible !== false ||
+      offlineState?.route !== '/sign-in'
+    ) throw testToolCacheExclusionFailure()
+
+    return Object.freeze({
+      status: 'verified',
+      apiRequests,
+      cachedShellEntries: cacheEntries.length,
+      offlineRoute: '/sign-in',
+      priorTesterDataVisible: false,
+    })
+  } catch (error) {
+    if (
+      error instanceof WebVerificationError &&
+      error.code === 'test_tool_cache_exclusion_failed'
+    ) throw error
+    throw testToolCacheExclusionFailure()
+  } finally {
+    try {
+      if (typeof context?.close === 'function') await context.close()
+    } catch {
+      throw testToolCacheExclusionFailure()
+    }
+  }
+}
+
 const MOBILE_VIEWPORT = Object.freeze({ width: 390, height: 844, isMobile: true })
 const MEMBER_SMOKE_FLOWS = Object.freeze([
   'sign-in',
@@ -213,18 +448,21 @@ const REQUIRED_RELEASE_CHECKS = Object.freeze([
   'spaAndCache',
   'memberJourney',
   'memberDataCacheExclusion',
+  'testToolDataCacheExclusion',
   'protectedRouteReload',
 ])
 const EXPECTED_OWNER_ROUTES = Object.freeze({
   '/': '/',
   '/history': '/history',
   '/stats': '/stats',
+  '/test-tool': '/test-tool',
   '/sign-in': '/',
 })
 const EXPECTED_SIGNED_OUT_ROUTES = Object.freeze({
   '/': '/sign-in',
   '/history': '/sign-in',
   '/stats': '/sign-in',
+  '/test-tool': '/sign-in',
   '/sign-in': '/sign-in',
 })
 
@@ -236,10 +474,11 @@ function hasCompleteReleaseEvidence(verification) {
   const spa = verification?.spaAndCache
   const journey = verification?.memberJourney
   const cache = verification?.memberDataCacheExclusion
+  const testToolCache = verification?.testToolDataCacheExclusion
   const reload = verification?.protectedRouteReload
   return (
     spa?.status === 'verified' &&
-    spa.protectedRoute === '/history' &&
+    spa.protectedRoute === '/test-tool' &&
     spa.shellCache === SHELL_CACHE_CONTROL &&
     spa.assetCache === ASSET_CACHE_CONTROL &&
     journey?.status === 'verified' &&
@@ -250,6 +489,20 @@ function hasCompleteReleaseEvidence(verification) {
     cache.cachedShellEntries > 0 &&
     cache.offlineRoute === '/sign-in' &&
     cache.priorMemberDataVisible === false &&
+    hasExactObjectKeys(testToolCache, [
+      'status',
+      'apiRequests',
+      'cachedShellEntries',
+      'offlineRoute',
+      'priorTesterDataVisible',
+    ]) &&
+    testToolCache.status === 'verified' &&
+    Number.isSafeInteger(testToolCache.apiRequests) &&
+    testToolCache.apiRequests >= 2 &&
+    Number.isSafeInteger(testToolCache.cachedShellEntries) &&
+    testToolCache.cachedShellEntries > 0 &&
+    testToolCache.offlineRoute === '/sign-in' &&
+    testToolCache.priorTesterDataVisible === false &&
     reload?.status === 'verified' &&
     sameJson(reload.owner, EXPECTED_OWNER_ROUTES) &&
     sameJson(reload.signedOut, EXPECTED_SIGNED_OUT_ROUTES) &&
@@ -310,7 +563,13 @@ export function createHostingReleaseRecord({
   return record
 }
 
-const RELOAD_ROUTES = Object.freeze(['/', '/history', '/stats', '/sign-in'])
+const RELOAD_ROUTES = Object.freeze([
+  '/',
+  '/history',
+  '/stats',
+  '/test-tool',
+  '/sign-in',
+])
 
 function protectedRouteReloadFailure() {
   return new WebVerificationError(

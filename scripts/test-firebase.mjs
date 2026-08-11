@@ -1,11 +1,13 @@
 import { connect } from 'node:net'
 import { spawnSync } from 'node:child_process'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 const projectId = 'demo-peecare'
 const authHost = '127.0.0.1:9099'
 const firestoreHost = '127.0.0.1:8085'
 
-const suites = [
+export const FIREBASE_SUITES = [
   ['npm', ['exec', '--', 'vitest', 'run', '--config', 'vitest.firebase.config.ts']],
   [
     'npm',
@@ -31,6 +33,18 @@ const suites = [
       'test/device-fixtures.integration.test.ts',
       'test/firestore-event-sink.integration.test.ts',
       'test/end-to-end-ingestion.integration.test.ts',
+      'test/test-tool-event-to-projection.integration.test.ts',
+    ],
+  ],
+  [
+    'npm',
+    [
+      '--prefix',
+      'services/test-tool-api',
+      'test',
+      '--',
+      '--run',
+      'test/test-device-firestore.integration.test.ts',
     ],
   ],
 ]
@@ -65,16 +79,18 @@ function runSuites() {
     GCLOUD_PROJECT: projectId,
   }
 
-  for (const [command, args] of suites) {
+  for (const [command, args] of FIREBASE_SUITES) {
     const status = run(command, args, env)
     if (status !== 0) return status
   }
   return 0
 }
 
-if (process.argv.includes('--inside-emulators')) {
-  process.exitCode = runSuites()
-} else {
+async function runCli() {
+  if (process.argv.includes('--inside-emulators')) {
+    process.exitCode = runSuites()
+    return
+  }
   const [authRunning, firestoreRunning] = await Promise.all([
     isListening('127.0.0.1', 9099),
     isListening('127.0.0.1', 8085),
@@ -99,3 +115,6 @@ if (process.argv.includes('--inside-emulators')) {
     process.exitCode = 1
   }
 }
+
+const invokedUrl = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : null
+if (import.meta.url === invokedUrl) await runCli()

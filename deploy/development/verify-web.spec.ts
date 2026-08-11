@@ -6,6 +6,7 @@ import {
   createHostingReleaseRecord,
   verifyProtectedRouteReloadMatrix,
   verifyMemberDataCacheExclusion,
+  verifyTestToolDataCacheExclusion,
   verifyMemberSmokeJourney,
   verifySpaAndCacheBehavior,
 } from './verify-web.mjs'
@@ -17,7 +18,7 @@ describe('development Hosting SPA and cache verification', () => {
     expect(hosting.rewrites).toEqual([{ source: '**', destination: '/index.html' }])
     expect(hosting.headers).toEqual([
       {
-        source: '/{,history,stats,sign-in,index.html}',
+        source: '/{,history,stats,test-tool,sign-in,index.html}',
         headers: [{ key: 'Cache-Control', value: 'public,max-age=0,must-revalidate' }],
       },
       {
@@ -31,7 +32,7 @@ describe('development Hosting SPA and cache verification', () => {
     ])
   })
 
-  it('verifies that a direct /history reload serves the shell with revalidation while hashed assets are immutable', async () => {
+  it('verifies that a direct /test-tool reload serves the shell with revalidation while hashed assets are immutable', async () => {
     const shell = '<!doctype html><div id="app"></div>'
     const request = vi.fn(async (url: string) => {
       const path = new URL(url).pathname
@@ -47,16 +48,16 @@ describe('development Hosting SPA and cache verification', () => {
 
     const result = await verifySpaAndCacheBehavior({
       origin: 'https://petcare-c7483.web.app',
-      protectedRoute: '/history',
+      protectedRoute: '/test-tool',
       hashedAssetPath: '/assets/index-a1b2c3d4.js',
       request,
     })
 
     expect(request).toHaveBeenCalledWith('https://petcare-c7483.web.app/index.html')
-    expect(request).toHaveBeenCalledWith('https://petcare-c7483.web.app/history')
+    expect(request).toHaveBeenCalledWith('https://petcare-c7483.web.app/test-tool')
     expect(result).toEqual({
       status: 'verified',
-      protectedRoute: '/history',
+      protectedRoute: '/test-tool',
       shellCache: 'public,max-age=0,must-revalidate',
       assetCache: 'public,max-age=31536000,immutable',
     })
@@ -83,7 +84,7 @@ describe('development Hosting SPA and cache verification', () => {
     await expect(
       verifySpaAndCacheBehavior({
         origin: 'https://petcare-c7483.web.app',
-        protectedRoute: '/history',
+        protectedRoute: '/test-tool',
         hashedAssetPath: '/assets/index-a1b2c3d4.js',
         request,
       }),
@@ -159,6 +160,219 @@ describe('member data cache exclusion', () => {
     await expect(
       verifyMemberDataCacheExclusion({ browser, priorMemberMarkers: ['PC-000001'] }),
     ).rejects.toMatchObject({ code: 'member_data_cache_exclusion_failed' })
+  })
+})
+
+describe('test-tool data cache exclusion', () => {
+  const apiOrigin =
+    'https://peecare-test-tool-development-348528459946.asia-east1.run.app'
+  const device = { deviceId: 'PC-DEV-000001', displayName: '浴室測試機' }
+  const request = {
+    eventType: 'urination',
+    flushDurationMs: 1_500,
+    pumpDurationMs: 2_500,
+  }
+  const result = {
+    status: 'stored',
+    eventId: 'tt:PC-DEV-000001:1b59ef13-fc86-4c17-95d4-8556ed098d32',
+    eventType: 'urination',
+    deviceId: 'PC-DEV-000001',
+    sequence: 17,
+  }
+
+  function safeBrowser() {
+    const context = {
+      startNetworkInspection: vi.fn(async () => undefined),
+      signInOwner: vi.fn(async () => undefined),
+      visit: vi.fn(async () => undefined),
+      expectTesterDataVisible: vi.fn(async () => device),
+      submitTesterEvent: vi.fn(async () => ({ request, result })),
+      signOut: vi.fn(async () => undefined),
+      goOffline: vi.fn(async () => undefined),
+      reload: vi.fn(async () => undefined),
+      inspectNetworkRequests: vi.fn(async () => [
+        {
+          url: `${apiOrigin}/v1/test-devices`,
+          method: 'GET',
+          servedFromCache: false,
+        },
+        {
+          url: `${apiOrigin}/v1/test-devices/PC-DEV-000001/events`,
+          method: 'POST',
+          servedFromCache: false,
+        },
+      ]),
+      inspectCacheStorage: vi.fn(async () => [
+        { url: 'https://petcare-c7483.web.app/index.html', body: '<div id="app"></div>' },
+        { url: 'https://petcare-c7483.web.app/assets/index-a1b2c3d4.js', body: 'app shell' },
+      ]),
+      readOfflineState: vi.fn(async () => ({
+        shellVisible: true,
+        protectedContentVisible: false,
+        priorTesterDataVisible: false,
+        formStateVisible: false,
+        route: '/sign-in',
+      })),
+      close: vi.fn(async () => undefined),
+    }
+    return {
+      context,
+      browser: {
+        createContext: vi.fn(async () => context),
+      },
+    }
+  }
+
+  it('uses network-only tester API traffic, signs out, and reloads /test-tool offline with no prior data', async () => {
+    const { browser, context } = safeBrowser()
+
+    const result = await verifyTestToolDataCacheExclusion({
+      browser,
+      apiOrigin,
+    })
+
+    expect(browser.createContext).toHaveBeenCalledWith({
+      session: 'owner',
+      storage: 'isolated',
+      serviceWorker: 'production',
+    })
+    expect(context.visit).toHaveBeenCalledWith('/test-tool')
+    expect(context.submitTesterEvent).toHaveBeenCalledWith({ deviceId: device.deviceId })
+    expect(context.signOut).toHaveBeenCalledOnce()
+    expect(context.goOffline).toHaveBeenCalledOnce()
+    expect(context.reload).toHaveBeenCalledWith('/test-tool')
+    expect(context.startNetworkInspection.mock.invocationCallOrder[0]).toBeLessThan(
+      context.signInOwner.mock.invocationCallOrder[0],
+    )
+    expect(context.close).toHaveBeenCalledOnce()
+    expect(result).toEqual({
+      status: 'verified',
+      apiRequests: 2,
+      cachedShellEntries: 2,
+      offlineRoute: '/sign-in',
+      priorTesterDataVisible: false,
+    })
+  })
+
+  it.each([
+    ['cached API response', { cacheUrl: `${apiOrigin}/v1/test-devices`, cacheBody: '{}' }],
+    ['device marker in cache body', { cacheUrl: 'https://petcare-c7483.web.app/index.html', cacheBody: device.deviceId }],
+    ['event marker in cache body', { cacheUrl: 'https://petcare-c7483.web.app/assets/app.js', cacheBody: result.eventId }],
+    ['submitted form in cache body', { cacheUrl: 'https://petcare-c7483.web.app/assets/app.js', cacheBody: JSON.stringify(request) }],
+    ['canonical result in cache body', { cacheUrl: 'https://petcare-c7483.web.app/assets/app.js', cacheBody: JSON.stringify(result) }],
+  ])('rejects %s', async (_name, fixture) => {
+    const { browser, context } = safeBrowser()
+    context.inspectCacheStorage.mockResolvedValue([
+      { url: fixture.cacheUrl, body: fixture.cacheBody },
+    ])
+
+    await expect(verifyTestToolDataCacheExclusion({
+      browser,
+      apiOrigin,
+    })).rejects.toMatchObject({ code: 'test_tool_cache_exclusion_failed' })
+    expect(context.close).toHaveBeenCalledOnce()
+  })
+
+  it('rejects tester API traffic served from a service-worker cache', async () => {
+    const { browser, context } = safeBrowser()
+    context.inspectNetworkRequests.mockResolvedValue([
+      {
+        url: `${apiOrigin}/v1/test-devices`,
+        method: 'GET',
+        servedFromCache: true,
+      },
+      {
+        url: `${apiOrigin}/v1/test-devices/PC-DEV-000001/events`,
+        method: 'POST',
+        servedFromCache: false,
+      },
+    ])
+
+    await expect(verifyTestToolDataCacheExclusion({
+      browser,
+      apiOrigin,
+    })).rejects.toMatchObject({ code: 'test_tool_cache_exclusion_failed' })
+  })
+
+  it('fails closed for an unapproved origin or unreadable cache bodies', async () => {
+    const { browser, context } = safeBrowser()
+    await expect(verifyTestToolDataCacheExclusion({
+      browser,
+      apiOrigin: 'https://other.example.run.app',
+    })).rejects.toMatchObject({ code: 'test_tool_cache_exclusion_failed' })
+
+    context.inspectCacheStorage.mockResolvedValue([
+      { url: 'https://petcare-c7483.web.app/index.html', body: null as unknown as string },
+    ])
+    await expect(verifyTestToolDataCacheExclusion({
+      browser,
+      apiOrigin,
+    })).rejects.toMatchObject({ code: 'test_tool_cache_exclusion_failed' })
+  })
+
+  it.each([
+    ['extra device field', { visible: { ...device, ownerUid: 'must-not-enter-verifier' } }],
+    ['wrong result device', { submission: { request, result: { ...result, deviceId: 'PC-DEV-OTHER' } } }],
+    ['wrong result event type', { submission: { request, result: { ...result, eventType: 'battery' } } }],
+  ])('rejects journey evidence with %s', async (_name, override) => {
+    const { browser, context } = safeBrowser()
+    if (override.visible) context.expectTesterDataVisible.mockResolvedValue(override.visible)
+    if (override.submission) context.submitTesterEvent.mockResolvedValue(override.submission)
+
+    await expect(verifyTestToolDataCacheExclusion({ browser, apiOrigin })).rejects.toMatchObject({
+      code: 'test_tool_cache_exclusion_failed',
+    })
+    if (override.visible) expect(context.submitTesterEvent).not.toHaveBeenCalled()
+  })
+
+  it('rejects a context missing mandatory cleanup before sign-in or mutation', async () => {
+    const { browser, context } = safeBrowser()
+    const { close: _missing, ...withoutClose } = context
+    browser.createContext.mockResolvedValue(withoutClose as typeof context)
+
+    await expect(verifyTestToolDataCacheExclusion({ browser, apiOrigin })).rejects.toMatchObject({
+      code: 'test_tool_cache_exclusion_failed',
+    })
+    expect(context.signInOwner).not.toHaveBeenCalled()
+    expect(context.submitTesterEvent).not.toHaveBeenCalled()
+  })
+
+  it('binds the observed POST path to the eligible device from this journey', async () => {
+    const { browser, context } = safeBrowser()
+    context.inspectNetworkRequests.mockResolvedValue([
+      { url: `${apiOrigin}/v1/test-devices`, method: 'GET', servedFromCache: false },
+      {
+        url: `${apiOrigin}/v1/test-devices/PC-DEV-OTHER/events`,
+        method: 'POST',
+        servedFromCache: false,
+      },
+    ])
+
+    await expect(verifyTestToolDataCacheExclusion({ browser, apiOrigin })).rejects.toMatchObject({
+      code: 'test_tool_cache_exclusion_failed',
+    })
+  })
+
+  it.each([
+    { protectedContentVisible: true },
+    { priorTesterDataVisible: true },
+    { formStateVisible: true },
+    { route: '/test-tool' },
+  ])('rejects unsafe offline state %j', async (override) => {
+    const { browser, context } = safeBrowser()
+    context.readOfflineState.mockResolvedValue({
+      shellVisible: true,
+      protectedContentVisible: false,
+      priorTesterDataVisible: false,
+      formStateVisible: false,
+      route: '/sign-in',
+      ...override,
+    })
+
+    await expect(verifyTestToolDataCacheExclusion({
+      browser,
+      apiOrigin,
+    })).rejects.toMatchObject({ code: 'test_tool_cache_exclusion_failed' })
   })
 })
 
@@ -252,7 +466,7 @@ describe('Hosting release record', () => {
       verification: {
         spaAndCache: {
           status: 'verified',
-          protectedRoute: '/history',
+          protectedRoute: '/test-tool',
           shellCache: 'public,max-age=0,must-revalidate',
           assetCache: 'public,max-age=31536000,immutable',
         },
@@ -274,18 +488,27 @@ describe('Hosting release record', () => {
           offlineRoute: '/sign-in',
           priorMemberDataVisible: false,
         },
+        testToolDataCacheExclusion: {
+          status: 'verified',
+          apiRequests: 2,
+          cachedShellEntries: 8,
+          offlineRoute: '/sign-in',
+          priorTesterDataVisible: false,
+        },
         protectedRouteReload: {
           status: 'verified',
           owner: {
             '/': '/',
             '/history': '/history',
             '/stats': '/stats',
+            '/test-tool': '/test-tool',
             '/sign-in': '/',
           },
           signedOut: {
             '/': '/sign-in',
             '/history': '/sign-in',
             '/stats': '/sign-in',
+            '/test-tool': '/sign-in',
             '/sign-in': '/sign-in',
           },
           protectedContentLeak: false,
@@ -316,6 +539,7 @@ describe('Hosting release record', () => {
         spaAndCache: 'passed',
         memberJourney: 'passed',
         memberDataCacheExclusion: 'passed',
+        testToolDataCacheExclusion: 'passed',
         protectedRouteReload: 'passed',
       },
     })
@@ -343,6 +567,33 @@ describe('Hosting release record', () => {
     [
       'status-only smoke evidence',
       { verification: { protectedRouteReload: { status: 'verified' } } },
+    ],
+    [
+      'missing test-tool cache evidence',
+      { verification: { testToolDataCacheExclusion: undefined } },
+    ],
+    [
+      'failed test-tool cache evidence',
+      { verification: { testToolDataCacheExclusion: { status: 'failed' } } },
+    ],
+    [
+      'status-only test-tool cache evidence',
+      { verification: { testToolDataCacheExclusion: { status: 'verified' } } },
+    ],
+    [
+      'extra test-tool cache evidence field',
+      {
+        verification: {
+          testToolDataCacheExclusion: {
+            status: 'verified',
+            apiRequests: 2,
+            cachedShellEntries: 8,
+            offlineRoute: '/sign-in',
+            priorTesterDataVisible: false,
+            rawDeviceId: 'must-not-be-recorded',
+          },
+        },
+      },
     ],
   ])('refuses a healthy record for %s', (_case, overrides) => {
     const base = verifiedInputs()
@@ -391,12 +642,12 @@ describe('protected route reload matrix', () => {
     }
   }
 
-  it('direct-loads all four routes as Owner and signed-out visitor with exact restore/guard behavior', async () => {
+  it('direct-loads every protected route including the tester tool with exact restore/guard behavior', async () => {
     const { browser, owner, signedOut } = routeBrowser()
 
     const result = await verifyProtectedRouteReloadMatrix({ browser })
 
-    const expectedLoads = [['/'], ['/history'], ['/stats'], ['/sign-in']]
+    const expectedLoads = [['/'], ['/history'], ['/stats'], ['/test-tool'], ['/sign-in']]
     expect(owner.directLoad.mock.calls).toEqual(expectedLoads)
     expect(signedOut.directLoad.mock.calls).toEqual(expectedLoads)
     expect(owner.close).toHaveBeenCalledOnce()
@@ -407,12 +658,14 @@ describe('protected route reload matrix', () => {
         '/': '/',
         '/history': '/history',
         '/stats': '/stats',
+        '/test-tool': '/test-tool',
         '/sign-in': '/',
       },
       signedOut: {
         '/': '/sign-in',
         '/history': '/sign-in',
         '/stats': '/sign-in',
+        '/test-tool': '/sign-in',
         '/sign-in': '/sign-in',
       },
       protectedContentLeak: false,

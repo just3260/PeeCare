@@ -232,6 +232,35 @@ describe('client write denial', () => {
   })
 })
 
+describe('Test Tool usage-ledger client denial', () => {
+  const ledgerPath = `developmentTestToolUsage/${'a'.repeat(64)}`
+  const newLedgerPath = `developmentTestToolUsage/${'b'.repeat(64)}`
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await setDoc(doc(context.firestore(), ledgerPath), {
+        dayKey: '2026-08-11',
+        acceptedToday: 1,
+        nextSequence: 1,
+      })
+    })
+  })
+
+  it.each([
+    ['owner', () => testEnv.authenticatedContext(OWNER_UID).firestore()],
+    ['anonymous', () => testEnv.unauthenticatedContext().firestore()],
+  ])('denies %s direct reads and every write', async (_case, database) => {
+    const ref = doc(database(), ledgerPath)
+    const newRef = doc(database(), newLedgerPath)
+
+    await assertFails(getDoc(ref))
+    await assertFails(setDoc(newRef, { acceptedToday: 0 }))
+    await assertFails(setDoc(ref, { acceptedToday: 0 }))
+    await assertFails(updateDoc(ref, { acceptedToday: 0 }))
+    await assertFails(deleteDoc(ref))
+  })
+})
+
 describe('malformed ownership denial', () => {
   it.each([
     ['empty ownerUid', { ...OWNED_DEVICE, ownerUid: '' }],

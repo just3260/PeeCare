@@ -8,6 +8,7 @@ export const INSTALL_STAGES = [
   { workspace: 'root', directory: PROJECT_ROOT },
   { workspace: 'member-api', directory: resolve(PROJECT_ROOT, 'services/member-api') },
   { workspace: 'ingestion-api', directory: resolve(PROJECT_ROOT, 'services/ingestion-api') },
+  { workspace: 'test-tool-api', directory: resolve(PROJECT_ROOT, 'services/test-tool-api') },
 ]
 
 function installStage(stage) {

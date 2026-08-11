@@ -12,6 +12,7 @@ import { build } from 'vite'
 const projectRoot = fileURLToPath(new URL('../', import.meta.url))
 const outDir = join(tmpdir(), 'peecare-pwa-build-test')
 const developmentBuildEnv = {
+  NODE_ENV: 'production',
   VITE_FIREBASE_ENVIRONMENT: 'development',
   VITE_FIREBASE_APPROVED_PROJECT_ID: 'petcare-c7483',
   VITE_FIREBASE_PROJECT_ID: 'petcare-c7483',
@@ -19,9 +20,15 @@ const developmentBuildEnv = {
   VITE_FIREBASE_AUTH_DOMAIN: 'petcare-c7483.firebaseapp.com',
   VITE_FIREBASE_APP_ID: '1:348528459946:web:abc123',
   VITE_MEMBER_API_URL: 'https://peecare-member-development.example.run.app',
+  VITE_TEST_TOOL_API_URL:
+    'https://peecare-test-tool-development-348528459946.asia-east1.run.app',
 }
 
 describe('PWA production build artifacts', () => {
+  const originalEnvironment = Object.fromEntries(
+    Object.keys(developmentBuildEnv).map((key) => [key, process.env[key]]),
+  )
+
   beforeAll(async () => {
     Object.assign(process.env, developmentBuildEnv)
     rmSync(outDir, { recursive: true, force: true })
@@ -33,7 +40,10 @@ describe('PWA production build artifacts', () => {
   }, 120000)
 
   afterAll(() => {
-    for (const key of Object.keys(developmentBuildEnv)) delete process.env[key]
+    for (const [key, value] of Object.entries(originalEnvironment)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
   })
 
   it('generates a zh-TW installable manifest with both icons', () => {
@@ -73,6 +83,22 @@ describe('PWA production build artifacts', () => {
     expect(sw).toContain('firestore')
     expect(sw).toContain('accounts')
     expect(sw).toContain('run\\.app')
+    for (const method of ['GET', 'POST', 'PATCH', 'DELETE']) {
+      expect(sw).toMatch(new RegExp(`run\\\\\\.app.{0,120}NetworkOnly,"${method}"`))
+    }
+    expect(sw).not.toMatch(
+      /run\\\.app.{0,160}(?:CacheFirst|CacheOnly|NetworkFirst|StaleWhileRevalidate)/,
+    )
+    expect(sw).not.toContain(
+      'https://peecare-test-tool-development-348528459946.asia-east1.run.app',
+    )
+  })
+
+  it('does not add tester data or form persistence capabilities to the Web source', () => {
+    const source = readFileSync(join(projectRoot, 'src/views/TestToolView.vue'), 'utf8')
+
+    expect(source).not.toMatch(/\b(?:localStorage|sessionStorage|indexedDB|caches)\b/)
+    expect(source).not.toMatch(/serialize|persist|hydrate/i)
   })
 
   it('registers the service worker only in production, never in dev or test', () => {
@@ -89,6 +115,10 @@ describe('PWA production build artifacts', () => {
 
     expect(bundle).toContain('development')
     expect(bundle).toContain('petcare-c7483')
+    expect(bundle).toContain('/test-tool')
+    expect(bundle).toContain(
+      'https://peecare-test-tool-development-348528459946.asia-east1.run.app',
+    )
     expect(bundle).not.toMatch(
       /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?):(?:4000|8085|9099)\b/i,
     )

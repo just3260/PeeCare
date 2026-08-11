@@ -27,6 +27,20 @@ describe('protected resource registry', () => {
     expect(disposer).toHaveBeenCalledTimes(1)
   })
 
+  it('allows a mounted resource to unregister without running its disposer', () => {
+    const registry = createProtectedResourceRegistry()
+    const disposer = vi.fn()
+    const unregister = registry.register(disposer)
+
+    expect(registry.size()).toBe(1)
+    unregister()
+    unregister()
+
+    expect(registry.size()).toBe(0)
+    registry.disposeAll()
+    expect(disposer).not.toHaveBeenCalled()
+  })
+
   it('isolates a throwing disposer so the rest still run', () => {
     const registry = createProtectedResourceRegistry()
     const after = vi.fn()

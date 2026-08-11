@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  DEFAULT_WORKSPACES,
   evaluateAuditOutput,
   runAuditGate,
 } from './audit-production-dependencies.mjs'
@@ -17,6 +18,15 @@ function auditJson(overrides: Partial<Record<(typeof severities)[number], number
 }
 
 describe('production dependency audit threshold', () => {
+  it('audits every production workspace including the Test Tool API', () => {
+    expect(DEFAULT_WORKSPACES.map(({ name }) => name)).toEqual([
+      'root',
+      'member-api',
+      'ingestion-api',
+      'test-tool-api',
+    ])
+  })
+
   it.each([
     ['info', 2, true],
     ['low', 2, true],

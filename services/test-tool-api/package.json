@@ -1,0 +1,27 @@
+{
+  "name": "@peecare/test-tool-api",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "type-check": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "test": "vitest run --config vitest.config.ts",
+    "check": "npm run type-check && npm run test && npm run build && npm run scan:privacy",
+    "scan:privacy": "node scripts/scan-privacy.mjs",
+    "audit:production": "npm audit --omit=dev --omit=optional",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "@google-cloud/firestore": "^8.7.0",
+    "fastify": "^5.4.0",
+    "firebase-admin": "^14.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "typescript": "~5.7.3",
+    "vitest": "^4.1.10"
+  }
+}

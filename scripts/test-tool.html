@@ -23,6 +23,12 @@
   h2 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
   h2 .ep { font-size: 12px; font-weight: 500; color: #8a9099; font-family: ui-monospace, monospace; }
   .hint { color: #8a9099; font-size: 13px; margin: 0 0 20px; }
+  .environment-banner {
+    border: 1px solid #b7791f; border-radius: 10px; padding: 12px 14px;
+    margin: 0 0 14px; background: #fffaf0; color: #744210;
+  }
+  .environment-banner p { margin: 0 0 10px; }
+  .environment-banner a { display: inline-block; text-decoration: none; }
   .wrap { max-width: 920px; margin: 0 auto; }
   .page-header {
     display: flex; align-items: center; justify-content: space-between;
@@ -173,6 +179,20 @@
       </svg>
     </button>
   </header>
+  <aside class="environment-banner" id="development-cloud-banner" hidden>
+    <p>
+      <strong>development-cloud operator mode</strong> — events target the approved development
+      Ingestion API. Provision and mark the device through the approved operator workflow first;
+      this page cannot create live registry records or read custom names.
+    </p>
+    <a
+      class="button"
+      id="open-development-web"
+      href="https://petcare-c7483.web.app"
+      target="_blank"
+      rel="noopener noreferrer"
+    >Open development Web App</a>
+  </aside>
   <p class="hint">
     透過本工具的後端代送請求（避開 CORS）。使用前請先啟動 Firebase Emulator 與 ingestion-api。
     時間欄位可選「現在」自動帶入當下毫秒。
@@ -207,7 +227,7 @@
 
   <!-- ① 健康檢查：ingestion-api（MQTT 轉發） -->
   <details class="card">
-    <summary><h2>① 健康檢查 · ingestion-api <span class="ep">GET /healthz</span></h2></summary>
+    <summary><h2>① 健康檢查 · ingestion-api <span class="ep">GET /health</span></h2></summary>
     <p class="hint" style="margin:0 0 10px">檢查接收 EMQX 轉發事件的 ingestion-api 是否運行中（Base URL 取自共用設定）。</p>
     <div class="actions">
       <button class="ghost" onclick="preview('health')">預覽 curl</button>
@@ -222,7 +242,7 @@
 
   <!-- ② 健康檢查：Member API -->
   <details class="card">
-    <summary><h2>② 健康檢查 · Member API <span class="ep">GET /healthz</span></h2></summary>
+    <summary><h2>② 健康檢查 · Member API <span class="ep">GET /health</span></h2></summary>
     <p class="hint" style="margin:0 0 10px">檢查提供 Web App 使用的 Member API 是否運行中（Base URL 取自共用設定，預設 <code>http://127.0.0.1:8087</code>）。</p>
     <div class="actions">
       <button class="ghost" onclick="preview('healthMember')">預覽 curl</button>
@@ -236,7 +256,7 @@
   </details>
 
   <!-- ③ 建立 device -->
-  <details class="card">
+  <details class="card" id="device-registry-card">
     <summary><h2>③ 建立 / 更新 device <span class="ep">PATCH Firestore REST</span></h2></summary>
     <div class="grid">
       <div><label>ingestionStatus</label>
@@ -315,7 +335,7 @@
         <div><label>Member API Base URL</label><input id="memberApiBase" value="http://127.0.0.1:8087" /></div>
         <div><label>Firestore Emulator Base URL</label><input id="firestoreBase" value="http://127.0.0.1:8085" /></div>
         <div><label>Firebase Project ID</label><input id="projectId" value="demo-peecare" /></div>
-        <div><label>Webhook Secret（EMQX_WEBHOOK_SECRET_CURRENT）</label><input id="secret" value="local-dev-secret" /></div>
+        <div id="secret-setting"><label>Webhook Secret（EMQX_WEBHOOK_SECRET_CURRENT）</label><input id="secret" value="local-dev-secret" /></div>
         <div><label>productModel</label><input id="productModel" value="pc-mini" /></div>
         <div><label>deviceId</label><input id="deviceId" value="PC-000001" /></div>
         <div>
@@ -398,9 +418,68 @@
 </div>
 
 <script>
-const $ = (id) => document.getElementById(id);
-const val = (id) => $(id).value.trim();
+const documentRoot = document;
+const $ = (id) => documentRoot.getElementById(id);
+const val = (id) => $(id)?.value?.trim() ?? '';
 const nowMs = () => Date.now();
+const DEVELOPMENT_CLOUD_PROFILE = 'development-cloud';
+const APPROVED_WEB_ORIGIN = 'https://petcare-c7483.web.app';
+const APPROVED_INGESTION_ORIGIN = 'https://peecare-ingestion-development-348528459946.asia-east1.run.app';
+const APPROVED_MEMBER_ORIGIN = 'https://peecare-member-development-348528459946.asia-east1.run.app';
+let runtimeProfile = null;
+
+function applyRestrictedUi({ allowCloudEvents }) {
+  $('secret').value = '';
+  $('secret').disabled = true;
+  $('secret-setting').hidden = true;
+  $('device-registry-card').hidden = true;
+  $('refresh-device-names').disabled = true;
+  $('refresh-device-names').hidden = true;
+  $('runAll').disabled = true;
+  $('runAll').hidden = true;
+  if (!allowCloudEvents) {
+    for (const button of document.querySelectorAll('button[data-event]')) button.disabled = true;
+  }
+}
+
+function applyDevelopmentCloudConfig(config) {
+  runtimeProfile = DEVELOPMENT_CLOUD_PROFILE;
+  $('development-cloud-banner').hidden = false;
+  $('ingestionBase').value = config.origins.ingestion;
+  $('memberApiBase').value = config.origins.member;
+  $('firestoreBase').value = '';
+  $('projectId').value = 'petcare-c7483';
+  for (const id of ['ingestionBase', 'memberApiBase', 'firestoreBase', 'projectId']) {
+    $(id).disabled = true;
+  }
+  applyRestrictedUi({ allowCloudEvents: true });
+}
+
+function isApprovedCloudConfig(config) {
+  return config?.profile === DEVELOPMENT_CLOUD_PROFILE &&
+    config.origins?.web === APPROVED_WEB_ORIGIN &&
+    config.origins?.ingestion === APPROVED_INGESTION_ORIGIN &&
+    config.origins?.member === APPROVED_MEMBER_ORIGIN;
+}
+
+async function initializeRuntimeProfile() {
+  try {
+    const response = await fetch('/api/config');
+    const config = await response.json();
+    if (config?.profile === 'local') {
+      runtimeProfile = 'local';
+      return;
+    }
+    if (isApprovedCloudConfig(config)) {
+      applyDevelopmentCloudConfig(config);
+      return;
+    }
+  } catch {}
+  runtimeProfile = 'invalid';
+  applyRestrictedUi({ allowCloudEvents: false });
+}
+
+const profileReady = initializeRuntimeProfile();
 
 function resolveTime(mode, customId) {
   if (mode === 'now') return nowMs();
@@ -462,7 +541,11 @@ function advanceSequence() {
 }
 
 function eventUrl(s) { return `${s.ingestionBase}/v1/emqx/events`; }
-function eventHeaders(s) { return { 'Content-Type': 'application/json', 'Authorization': `Bearer ${s.secret}` }; }
+function eventHeaders(s) {
+  const headers = { 'Content-Type': 'application/json' };
+  if (runtimeProfile === 'local') headers.Authorization = `Bearer ${s.secret}`;
+  return headers;
+}
 
 /** 事件 payload 的共同欄位；排尿與電量只差在各自的量測值。 */
 function eventPayload(s, eventType) {
@@ -503,11 +586,11 @@ function batteryRequest(s, unit) {
 const builders = {
   health() {
     const s = shared();
-    return { method: 'GET', url: `${s.ingestionBase}/healthz`, headers: {} };
+    return { method: 'GET', url: `${s.ingestionBase}/health`, headers: {} };
   },
   healthMember() {
     const s = shared();
-    return { method: 'GET', url: `${s.memberApiBase}/healthz`, headers: {} };
+    return { method: 'GET', url: `${s.memberApiBase}/health`, headers: {} };
   },
   device() {
     const s = shared();
@@ -557,10 +640,14 @@ function toCurl(req) {
 }
 
 function renderCurl(step) {
-  $(`curl-${step}`).textContent = toCurl(builders[step]());
+  const target = $(`curl-${step}`);
+  if (target === null) return;
+  target.textContent = toCurl(builders[step]());
 }
 
-function preview(step) {
+async function preview(step) {
+  await profileReady;
+  if (step === 'device' && runtimeProfile !== 'local') return;
   renderCurl(step);
   $(`curlbox-${step}`).open = true;
 }
@@ -598,6 +685,8 @@ async function sendRequest(req, box) {
 }
 
 async function run(step) {
+  await profileReady;
+  if (runtimeProfile === 'invalid' || (step === 'device' && runtimeProfile !== 'local')) return null;
   const req = builders[step]();
   $(`curl-${step}`).textContent = toCurl(req);
   const data = await sendRequest(req, $(`res-${step}`));
@@ -608,6 +697,8 @@ async function run(step) {
 }
 
 async function runAll() {
+  await profileReady;
+  if (runtimeProfile !== 'local') return;
   for (const step of ['device', 'urination', 'battery']) {
     const data = await run(step);
     if (!data) break;
@@ -756,6 +847,8 @@ function deviceDocumentUrl(deviceId) {
 
 /** 讀不到（Emulator 未啟動、裝置尚未建立）時回傳 null，讓卡片靜默回退序號。 */
 async function fetchCustomName(deviceId) {
+  await profileReady;
+  if (runtimeProfile !== 'local') return null;
   const url = deviceDocumentUrl(deviceId);
   if (url === null) return null;
   try {
@@ -774,6 +867,8 @@ async function fetchCustomName(deviceId) {
 
 /** 重新讀取畫面上所有裝置的名稱；同一個 deviceId 只讀一次。 */
 async function refreshCustomNames() {
+  await profileReady;
+  if (runtimeProfile !== 'local' || $('device-list') === null) return;
   const deviceIds = [...new Set(devices.map((device) => device.deviceId))];
   await Promise.all(
     deviceIds.map(async (deviceId) => {
@@ -903,6 +998,8 @@ function shakeDog(card) {
 }
 
 async function runDeviceEvent(uid, eventType) {
+  await profileReady;
+  if (runtimeProfile === 'invalid') return null;
   const unit = deviceOf(uid);
   const card = cardOf(uid);
   if (!unit || !card) return null;
@@ -969,7 +1066,6 @@ $('unit-voltageOn').addEventListener('change', (e) => {
 // 初始化
 syncEventId();
 renderDevices();
-refreshCustomNames();
 </script>
 </body>
 </html>

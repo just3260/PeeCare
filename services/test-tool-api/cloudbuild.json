@@ -1,0 +1,18 @@
+{
+  "steps": [
+    {
+      "name": "gcr.io/cloud-builders/docker",
+      "args": [
+        "build",
+        "--platform",
+        "linux/amd64",
+        "--file",
+        "services/test-tool-api/Dockerfile",
+        "--tag",
+        "${_IMAGE}",
+        "."
+      ]
+    }
+  ],
+  "images": ["${_IMAGE}"]
+}

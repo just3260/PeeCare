@@ -10,8 +10,8 @@
 export type Disposer = () => void
 
 export interface ProtectedResourceRegistry {
-  /** Register a disposer to run on the next teardown. */
-  register(disposer: Disposer): void
+  /** Register a disposer to run on the next teardown; returns an unregister callback. */
+  register(disposer: Disposer): Disposer
   /** Run and clear every registered disposer. */
   disposeAll(): void
   /** Number of disposers currently registered. */
@@ -19,29 +19,42 @@ export interface ProtectedResourceRegistry {
 }
 
 export function createProtectedResourceRegistry(): ProtectedResourceRegistry {
-  let disposers: readonly Disposer[] = []
+  interface Registration {
+    readonly dispose: Disposer
+    active: boolean
+  }
+
+  let registrations: readonly Registration[] = []
 
   return {
-    register(disposer: Disposer): void {
-      disposers = [...disposers, disposer]
+    register(disposer: Disposer): Disposer {
+      const registration: Registration = { dispose: disposer, active: true }
+      registrations = [...registrations, registration]
+      return () => {
+        if (!registration.active) return
+        registration.active = false
+        registrations = registrations.filter((candidate) => candidate !== registration)
+      }
     },
     disposeAll(): void {
       // Snapshot and clear first so teardown is re-entrant and a failing disposer
       // cannot leave a half-cleared ledger behind.
-      const pending = disposers
-      disposers = []
-      for (const dispose of pending) {
+      const pending = registrations
+      registrations = []
+      for (const registration of pending) {
+        if (!registration.active) continue
+        registration.active = false
         // Isolate failures: one broken listener must not block the rest of the
         // teardown, which would leave protected resources alive across sessions.
         try {
-          dispose()
+          registration.dispose()
         } catch {
           // Intentionally swallowed; completeness of teardown is the priority.
         }
       }
     },
     size(): number {
-      return disposers.length
+      return registrations.length
     },
   }
 }

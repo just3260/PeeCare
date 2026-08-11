@@ -1,0 +1,217 @@
+## ADDED Requirements
+
+### Requirement: Loopback development-cloud bridge
+
+The existing local test tool SHALL support explicit `local` and `development-cloud` profiles while continuing to listen only on `127.0.0.1`. In `development-cloud` profile, the server MUST accept only the approved credential-free HTTPS Hosting, Ingestion, and Member API origins, and it MUST proxy only Ingestion `GET /healthz`, Member API `GET /healthz`, and Ingestion `POST /v1/emqx/events`. The server MUST reject every other remote host, path, method, caller-supplied Authorization header, and live Firestore REST operation before making an upstream request.
+
+#### Scenario: Send a development event from the local tool
+
+- **WHEN** an operator starts the tool in `development-cloud` profile with approved origins and submits an event for a pre-provisioned development device
+- **THEN** the loopback server SHALL forward exactly one request to the approved Ingestion event path and SHALL remain unreachable from non-loopback network interfaces
+
+#### Scenario: Reject an arbitrary remote proxy request
+
+- **WHEN** the browser asks the local proxy to call an unapproved host, path, method, live Firestore endpoint, or supplies an Authorization header
+- **THEN** the server SHALL reject the request with a sanitized error and SHALL make zero upstream requests
+
+#### Scenario: Preserve the Emulator workflow
+
+- **WHEN** an operator starts the tool in `local` profile
+- **THEN** the existing loopback Emulator health, device registry, urination, battery, custom-name, sequence, and preview behaviors SHALL remain available
+
+### Requirement: Local server-side development secret boundary
+
+In `development-cloud` profile, the local Node server SHALL read the Ingestion credential only from the configured operator-only secret file and SHALL inject it only for the approved Ingestion event operation. The secret MUST NOT appear in the HTML, sanitized configuration response, DOM, browser request, localStorage, curl preview, proxy response, standard output, standard error, or structured test-tool log. Missing, empty, or unreadable secret files and invalid cloud origins MUST fail before the server starts listening.
+
+#### Scenario: Inject the credential server-side
+
+- **WHEN** the browser submits an approved development event without an Authorization header
+- **THEN** the Node server SHALL add the mounted credential to the single approved upstream request and SHALL return a response that contains no credential material
+
+#### Scenario: Fail closed before listening
+
+- **WHEN** the development profile has a missing, empty, or unreadable secret file or an invalid required origin
+- **THEN** startup SHALL exit non-zero before binding the loopback port and SHALL NOT print the invalid value or secret
+
+### Requirement: Hosted Web observation handoff
+
+The `development-cloud` profile SHALL display a clear environment banner and a fixed control that opens `https://petcare-c7483.web.app` without credentials, tokens, device settings, or query parameters. It SHALL disable live device create/update and direct custom-name reads, and it SHALL explain that the selected development device MUST be provisioned through the approved operator workflow before event submission.
+
+#### Scenario: Open the hosted application after an event
+
+- **WHEN** an operator sends an event and activates the Hosting control
+- **THEN** the browser SHALL open the approved Firebase Hosting origin in a separate browsing context so the operator can authenticate normally and inspect the device projection
+
+#### Scenario: Prevent Emulator-only registry access in cloud profile
+
+- **WHEN** the tool is using `development-cloud` profile
+- **THEN** device create/update, Firestore REST, and direct custom-name refresh controls SHALL be unavailable and SHALL make zero live Firestore requests
+
+### Requirement: Authenticated tester event tool access
+
+The development tester event tool SHALL require an existing Firebase member session and SHALL list only devices that the Test Tool API confirms are owned, enabled, and marked for the approved development beta tool. The tool MUST NOT provide a separate credential store or expose tester identity data in persisted UI state.
+
+#### Scenario: Open the tool as an eligible tester
+
+- **WHEN** an authenticated tester opens `/test-tool` and owns one marked enabled beta device
+- **THEN** the tool SHALL display that device and SHALL permit the tester to open urination and battery event forms
+
+#### Scenario: Block a signed-out visitor
+
+- **WHEN** a signed-out visitor opens `/test-tool`
+- **THEN** the existing route guard SHALL redirect to `/sign-in` and SHALL render no tester device or event form
+
+#### Scenario: Show no ineligible devices
+
+- **WHEN** an authenticated member owns devices but none have the approved test-tool marker and enabled ingestion status
+- **THEN** the API SHALL return an empty device list and the tool SHALL provide no event submission control
+
+### Requirement: Typed event API without generic proxy capability
+
+The Test Tool API SHALL expose only a device-list operation and a typed event submission operation. It MUST reject caller-controlled upstream URLs, methods, headers, topics, project identifiers, product models, event identities, sequences, timestamps, transport metadata, and extra request properties.
+
+#### Scenario: Accept a urination measurement request
+
+- **WHEN** an authorized tester submits exact JSON containing `eventType: "urination"`, `flushDurationMs`, and `pumpDurationMs`
+- **THEN** the API SHALL validate the measurements and SHALL construct the remaining event and transport fields server-side
+
+#### Scenario: Accept a battery measurement request
+
+- **WHEN** an authorized tester submits exact JSON containing `eventType: "battery"`, an allowed `batteryLevelPercent`, and an optional valid `batteryVoltageMv`
+- **THEN** the API SHALL validate the measurements and SHALL construct the remaining event and transport fields server-side
+
+#### Scenario: Reject proxy control fields
+
+- **WHEN** a request contains `url`, `method`, `headers`, `authorization`, `topic`, `projectId`, `productModel`, `eventId`, `sequence`, `recordedAtMs`, or any other undeclared property
+- **THEN** the API SHALL return `400 invalid_request` and SHALL make zero ingestion calls
+
+#### Scenario: Enforce transport boundaries
+
+- **WHEN** a request has a non-JSON content type or a body larger than 8 KiB
+- **THEN** the API SHALL return `415 unsupported_media_type` or `413 payload_too_large` respectively and SHALL make zero repository and ingestion calls
+
+### Requirement: Server-side tester and device authorization
+
+Every protected API operation SHALL verify a non-revoked Firebase ID token and SHALL authorize the decoded UID against the current Firestore device document. Event submission SHALL require document ID and `deviceId` consistency, matching `ownerUid`, `ingestionStatus: "enabled"`, a valid product model, and exact `developmentTestTool.enabled: true` and `developmentTestTool.marker: "petcare-c7483-beta-v1"`.
+
+#### Scenario: Authorize an owned marked device
+
+- **WHEN** a valid tester token identifies the owner of an enabled correctly marked development device
+- **THEN** the API SHALL permit validated event submission for that device
+
+#### Scenario: Reject a missing or invalid token
+
+- **WHEN** the ID token is missing, malformed, expired, revoked, invalid, or belongs to the wrong Firebase project
+- **THEN** the API SHALL return `401 unauthorized` and SHALL make zero Firestore usage writes and zero ingestion calls
+
+#### Scenario: Hide device eligibility failures
+
+- **WHEN** the device is missing, foreign-owned, disabled, malformed, or lacks the exact development marker
+- **THEN** the API SHALL return `404 test_device_not_found` with the same response shape and SHALL make zero usage writes and zero ingestion calls
+
+### Requirement: Server-generated canonical event envelope
+
+For every accepted typed request, the server SHALL derive the product model from the authorized registry document, reserve the next sequence, generate a cryptographically random event identifier prefixed with `tt:<deviceId>:`, set server timestamps and fixed test-tool firmware and transport metadata, derive the canonical topic, and submit the resulting envelope to the approved development Ingestion API.
+
+#### Scenario: Generate a canonical urination event
+
+- **WHEN** device `PC-BETA-0001` registered as `pc-mini` reserves sequence 17 for a valid urination request
+- **THEN** the server SHALL submit topic `products/pc-mini/devices/PC-BETA-0001/events/urination`, sequence 17, matching client and payload device identity, QoS 1, `retained: false`, and a unique `tt:PC-BETA-0001:` event identifier
+
+#### Scenario: Generate a canonical battery event
+
+- **WHEN** device `PC-BETA-0001` registered as `pc-mini` reserves sequence 18 for a valid battery request
+- **THEN** the server SHALL submit topic `products/pc-mini/devices/PC-BETA-0001/status/battery` with the validated battery fields and the fixed server-owned transport metadata
+
+#### Scenario: Return a sanitized stored outcome
+
+- **WHEN** the development Ingestion API returns its accepted stored outcome
+- **THEN** the Test Tool API SHALL return only `status`, `eventId`, `eventType`, `deviceId`, and `sequence` and SHALL NOT return the webhook secret, Authorization header, canonical envelope, or upstream response body
+
+### Requirement: Transactional tester rate and sequence ledger
+
+The server SHALL atomically authorize the device and reserve usage in a Firestore ledger keyed by a SHA-256 digest of the approved project ID and Firebase UID. Each tester SHALL be limited to 500 accepted attempts per UTC day, each tester-device pair SHALL have at least 1000 milliseconds between accepted reservations, and each device sequence SHALL increase without reuse up to the unsigned 32-bit maximum.
+
+#### Scenario: Reserve the next permitted event
+
+- **WHEN** the caller is below the daily quota, at least 1000 milliseconds have elapsed for the device, and the next sequence is within range
+- **THEN** one transaction SHALL increment the daily count, record the acceptance time, reserve the next sequence, and permit exactly one ingestion call
+
+#### Scenario: Reject a burst request
+
+- **WHEN** the same tester submits another event for the same device 999 milliseconds after the prior reservation
+- **THEN** the API SHALL return `429 rate_limited` with a bounded `retryAfterSeconds` and SHALL make zero ingestion calls
+
+##### Example: Rate and quota boundaries
+
+| State before request | Expected result |
+| --- | --- |
+| 999 ms since prior device reservation | `429 rate_limited` |
+| 1000 ms since prior device reservation | accepted |
+| 499 accepted attempts in the UTC day | accepted as attempt 500 |
+| 500 accepted attempts in the UTC day | `429 rate_limited` |
+| UTC day changed | daily count resets before reservation |
+| next sequence is 4294967295 | sequence 4294967295 is accepted |
+| next sequence exceeds 4294967295 | `409 sequence_exhausted` |
+
+#### Scenario: Preserve a reservation after upstream failure
+
+- **WHEN** usage reservation commits and the Ingestion API subsequently returns a transient failure
+- **THEN** the API SHALL return `503 ingestion_unavailable` and SHALL NOT decrement the quota or reuse the reserved sequence
+
+#### Scenario: Handle concurrent submissions
+
+- **WHEN** two valid requests for the same tester and device race for one available time window
+- **THEN** Firestore transaction retries SHALL allow at most one reservation and at most one ingestion call
+
+### Requirement: Server-side ingestion secret and privacy boundary
+
+The browser bundle, event-submission response, logs, Firestore usage ledger, deployment summary, and release record MUST NOT contain the ingestion secret, secret value, Authorization header, tester email, raw Firebase UID, raw custom-name field, measurement body, canonical payload, or full upstream response. The authorized device-list response SHALL expose only `deviceId` and resolved `displayName`. The Test Tool API SHALL read the secret only from the approved read-only mounted file and SHALL call only the approved HTTPS Ingestion origin and fixed event path.
+
+#### Scenario: Inspect a successful request path
+
+- **WHEN** a tester event is stored successfully
+- **THEN** all structured logs and persisted records SHALL contain only allowlisted request ID, event type, sanitized device identifier digest, status, latency, and resource identity fields
+
+#### Scenario: Reject unsafe runtime configuration
+
+- **WHEN** the runtime has an Emulator host, mutable secret reference, non-HTTPS or unapproved ingestion origin, missing mounted secret file, service-account key, or unexpected environment variable coupling
+- **THEN** startup SHALL fail before listening or initializing Firebase and SHALL NOT print the invalid value
+
+### Requirement: Exact-origin browser and disable boundaries
+
+The API SHALL return CORS permission only for the exact approved development Web origin, SHALL require authentication for all non-health operations, and SHALL fail event submission closed when the development disable switch is not exactly enabled. Health and preflight SHALL NOT disclose runtime configuration.
+
+#### Scenario: Permit the approved origin with authentication
+
+- **WHEN** the exact approved Web origin performs preflight and then sends a valid authenticated request
+- **THEN** the API SHALL return the exact allow-origin header and SHALL process the request through the normal authorization path
+
+#### Scenario: Reject a foreign browser origin
+
+- **WHEN** a foreign origin performs preflight or an event request
+- **THEN** the response SHALL contain no allow-origin permission and the event request SHALL make zero ingestion calls
+
+#### Scenario: Disable tester event submission
+
+- **WHEN** `PEECARE_TEST_TOOL_ENABLED` is absent or not exactly `true`
+- **THEN** protected event submission SHALL return `503 ingestion_unavailable` and SHALL make zero usage writes and zero ingestion calls
+
+### Requirement: Immutable development Test Tool API deployment
+
+The Test Tool API SHALL deploy as a dedicated non-root Cloud Run service in the approved project and region using an immutable image digest, a dedicated runtime identity, request-based billing, zero minimum instances, bounded maximum instances and concurrency, numeric secret-version access, live verification, a sanitized release record, and exact rollback dry-run.
+
+#### Scenario: Deploy a verified immutable revision
+
+- **WHEN** the approved digest, service identity, budget record, secret version, origins, and resource limits pass preflight
+- **THEN** deployment SHALL create an exact revision and verification SHALL cover health, CORS, unauthorized zero-write, foreign and unmarked denial, valid urination and battery events, rate limiting, Firestore and Web projection, and log privacy
+
+#### Scenario: Reject an unsafe deployment input
+
+- **WHEN** the image uses a mutable tag, the target differs from `petcare-c7483` or `asia-east1`, the identity is shared, the secret reference is not numeric, or any required budget or origin input is missing
+- **THEN** deployment SHALL exit before IAM, Secret Manager, Artifact Registry, or Cloud Run mutation
+
+#### Scenario: Refuse an ambiguous rollback
+
+- **WHEN** no distinct prior healthy immutable revision exists for the same approved Test Tool API service
+- **THEN** rollback dry-run SHALL return `rollback_unavailable` and SHALL NOT generate or execute a guessed traffic command

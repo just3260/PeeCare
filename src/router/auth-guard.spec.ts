@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest'
 import { createRouter, createMemoryHistory, type Router } from 'vue-router'
 
-import { routes, registerAuthGuard, type AuthGuardStore } from './index'
+import {
+  createApplicationRoutes,
+  routes,
+  registerAuthGuard,
+  type AuthGuardStore,
+} from './index'
 import type { AuthState } from '@/features/auth/session'
 
 /** A minimal, controllable stand-in for the auth store's guard surface. */
@@ -34,8 +39,11 @@ function createGuardStore(initial: AuthState) {
   }
 }
 
-function createGuardedRouter(store: AuthGuardStore): Router {
-  const router = createRouter({ history: createMemoryHistory(), routes })
+function createGuardedRouter(
+  store: AuthGuardStore,
+  applicationRoutes = routes,
+): Router {
+  const router = createRouter({ history: createMemoryHistory(), routes: applicationRoutes })
   registerAuthGuard(router, store)
   return router
 }
@@ -154,5 +162,36 @@ describe('protected member navigation', () => {
     await router.isReady()
 
     expect(router.currentRoute.value.query.returnTo).toBe('/')
+  })
+
+  it('supports a signed-in direct reload of the protected development tester route', async () => {
+    const { store } = createGuardStore({
+      status: 'signed-in',
+      user: { uid: 'member-001', displayName: null, email: null },
+    })
+    const router = createGuardedRouter(
+      store,
+      createApplicationRoutes({ testToolEnabled: true }),
+    )
+
+    router.push('/test-tool')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('test-tool')
+    expect(router.currentRoute.value.path).toBe('/test-tool')
+  })
+
+  it('redirects a signed-out tester reload before the protected component renders', async () => {
+    const { store } = createGuardStore({ status: 'signed-out' })
+    const router = createGuardedRouter(
+      store,
+      createApplicationRoutes({ testToolEnabled: true }),
+    )
+
+    router.push('/test-tool')
+    await router.isReady()
+
+    expect(router.currentRoute.value.path).toBe('/sign-in')
+    expect(router.currentRoute.value.query.returnTo).toBe('/test-tool')
   })
 })

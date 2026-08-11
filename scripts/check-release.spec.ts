@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 
-import { RELEASE_STAGES, runReleaseGate } from './check-release.mjs'
+import { RELEASE_STAGES, RELEASE_TRACKED_FILES, runReleaseGate } from './check-release.mjs'
 
 describe('release quality orchestration', () => {
   it('runs the repository checks before the production dependency audits', () => {
@@ -11,6 +11,11 @@ describe('release quality orchestration', () => {
     const result = runReleaseGate({ runStage })
 
     expect(RELEASE_STAGES.map((stage) => stage.name)).toEqual(['check:all', 'audit:production'])
+    expect(RELEASE_STAGES[1].workspace).toBe(
+      'root,member-api,ingestion-api,test-tool-api',
+    )
+    expect(RELEASE_TRACKED_FILES).toContain('services/test-tool-api/package.json')
+    expect(RELEASE_TRACKED_FILES).toContain('services/test-tool-api/package-lock.json')
     expect(runStage.mock.calls.map(([stage]) => stage.name)).toEqual(['check:all', 'audit:production'])
     expect(result).toEqual({ passed: true, exitCode: 0 })
   })

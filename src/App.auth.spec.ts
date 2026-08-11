@@ -3,11 +3,13 @@ import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 
 import App from './App.vue'
-import { routes, registerAuthGuard } from './router'
+import { createApplicationRoutes, routes, registerAuthGuard } from './router'
 import { createAuthStore, type AuthObserver } from '@/features/auth/auth-store'
 import { AUTH_STORE_KEY } from '@/features/auth/auth-store-key'
 import { AUTH_PROVIDER_KEY, type AuthProvider } from '@/features/auth/auth-provider'
 import type { SessionUser } from '@/features/auth/session'
+import { TEST_TOOL_API_KEY } from '@/features/test-tool/test-tool-api-key'
+import type { TestToolApi } from '@/features/test-tool/test-tool-api'
 
 function createFakeObserver() {
   let handler: ((user: SessionUser | null) => void) | null = null
@@ -69,5 +71,44 @@ describe('App — session termination', () => {
     expect(provider.signOut).toHaveBeenCalledTimes(1)
     expect(stopSubscription).toHaveBeenCalledTimes(1)
     expect(router.currentRoute.value.path).toBe('/sign-in')
+  })
+
+  it('immediately removes the tester route and its device data when the observed session ends', async () => {
+    const observer = createFakeObserver()
+    const store = createAuthStore({ observer: observer.port })
+    const testApi = {
+      listDevices: vi.fn().mockResolvedValue({
+        ok: true,
+        devices: [{ deviceId: 'PC-DEV-000001', displayName: '浴室測試機' }],
+      }),
+      submitEvent: vi.fn(),
+    } satisfies TestToolApi
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: createApplicationRoutes({ testToolEnabled: true }),
+    })
+    registerAuthGuard(router, store)
+    const wrapper = mount(App, {
+      global: {
+        plugins: [router],
+        provide: {
+          [AUTH_STORE_KEY as symbol]: store,
+          [TEST_TOOL_API_KEY as symbol]: testApi,
+        },
+      },
+    })
+
+    observer.emit({ uid: 'member-001', displayName: null, email: null })
+    await router.push('/test-tool')
+    await flushPromises()
+    expect(wrapper.text()).toContain('PC-DEV-000001')
+
+    observer.emit(null)
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/sign-in')
+    expect(router.currentRoute.value.query.returnTo).toBe('/test-tool')
+    expect(wrapper.text()).not.toContain('PC-DEV-000001')
+    expect(wrapper.find('[data-test="test-tool-view"]').exists()).toBe(false)
   })
 })

@@ -18,6 +18,11 @@ export const DEFAULT_WORKSPACES = [
     directory: 'services/ingestion-api',
     lockfile: 'services/ingestion-api/package-lock.json',
   },
+  {
+    name: 'test-tool-api',
+    directory: 'services/test-tool-api',
+    lockfile: 'services/test-tool-api/package-lock.json',
+  },
 ]
 
 function unavailableCounts() {

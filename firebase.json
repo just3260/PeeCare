@@ -14,7 +14,7 @@
     ],
     "headers": [
       {
-        "source": "/{,history,stats,sign-in,index.html}",
+        "source": "/{,history,stats,test-tool,sign-in,index.html}",
         "headers": [
           {
             "key": "Cache-Control",
