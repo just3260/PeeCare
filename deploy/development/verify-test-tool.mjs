@@ -7,7 +7,7 @@ const APPROVED_REGION = 'asia-east1'
 const APPROVED_SERVICE = 'peecare-test-tool-development'
 const APPROVED_WEB_ORIGIN = 'https://petcare-c7483.web.app'
 const APPROVED_SERVICE_ORIGIN =
-  'https://peecare-test-tool-development-348528459946.asia-east1.run.app'
+  'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app'
 const APPROVED_DEVICE_ID = 'PC-DEV-000001'
 const APPROVED_PRODUCT_MODEL = 'pc-mini'
 const APPROVED_IDENTITY =

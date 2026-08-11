@@ -23,7 +23,7 @@
   "secretMount": {
     "secretName": "peecare-emqx-webhook-current",
     "runtimePath": "/var/run/secrets/peecare/ingestion-secret",
-    "defaultMode": 384
+    "defaultMode": 256
   },
   "resources": {
     "billing": "request-based",

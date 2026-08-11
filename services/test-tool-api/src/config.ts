@@ -51,7 +51,7 @@ function validateSecretFile(pathValue: string | undefined): string {
     readMountedIngestionSecret(path);
   } catch (error) {
     if (error instanceof MountedIngestionSecretError && error.reason === 'mode') {
-      throw new Error('The ingestion secret file must have exact mode 0600.');
+      throw new Error('The ingestion secret file must have exact mode 0400.');
     }
     throw new Error('The ingestion secret file is unavailable or invalid.');
   }

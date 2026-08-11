@@ -21,7 +21,7 @@ const developmentBuildEnv = {
   VITE_FIREBASE_APP_ID: '1:348528459946:web:abc123',
   VITE_MEMBER_API_URL: 'https://peecare-member-development.example.run.app',
   VITE_TEST_TOOL_API_URL:
-    'https://peecare-test-tool-development-348528459946.asia-east1.run.app',
+    'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app',
 }
 
 describe('PWA production build artifacts', () => {
@@ -90,7 +90,7 @@ describe('PWA production build artifacts', () => {
       /run\\\.app.{0,160}(?:CacheFirst|CacheOnly|NetworkFirst|StaleWhileRevalidate)/,
     )
     expect(sw).not.toContain(
-      'https://peecare-test-tool-development-348528459946.asia-east1.run.app',
+      'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app',
     )
   })
 
@@ -117,7 +117,7 @@ describe('PWA production build artifacts', () => {
     expect(bundle).toContain('petcare-c7483')
     expect(bundle).toContain('/test-tool')
     expect(bundle).toContain(
-      'https://peecare-test-tool-development-348528459946.asia-east1.run.app',
+      'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app',
     )
     expect(bundle).not.toMatch(
       /https?:\/\/(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?):(?:4000|8085|9099)\b/i,

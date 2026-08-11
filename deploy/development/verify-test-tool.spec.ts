@@ -10,7 +10,7 @@ const digest = `sha256:${'a'.repeat(64)}`
 const image = `asia-east1-docker.pkg.dev/petcare-c7483/peecare/test-tool-api@${digest}`
 const revision = 'peecare-test-tool-development-00001-abc'
 const verifiedOrigin =
-  'https://peecare-test-tool-development-348528459946.asia-east1.run.app'
+  'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app'
 const secretRef =
   'projects/petcare-c7483/secrets/peecare-emqx-webhook-current/versions/7'
 const smokeNames = [

@@ -147,7 +147,7 @@ export async function verifyMemberDataCacheExclusion({ browser, priorMemberMarke
 }
 
 const APPROVED_TEST_TOOL_API_ORIGIN =
-  'https://peecare-test-tool-development-348528459946.asia-east1.run.app'
+  'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app'
 const TEST_TOOL_DEVICE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
 const TEST_TOOL_UUID_V4 =
   /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i
@@ -381,6 +381,138 @@ export async function verifyTestToolDataCacheExclusion({
   }
 }
 
+const TEST_TOOL_RESTORATION_VERSION =
+  /^sites\/petcare-c7483\/versions\/[A-Za-z0-9_-]+$/
+const TEST_TOOL_RESTORATION_BUILD_HASH = /^sha256:[0-9a-f]{64}$/
+const TEST_TOOL_RESTORATION_DEVICE = /^PC-DEV-[0-9]{6}$/
+const SIGNED_OUT_RESTORATION_METHODS = Object.freeze(['directLoad', 'close'])
+const AUTHENTICATED_RESTORATION_METHODS = Object.freeze([
+  'directLoad',
+  'reload',
+  'verifyBoundedEventProjection',
+  'signOutAndVerifyOfflineCache',
+  'close',
+])
+
+function testToolRouteRestorationFailure() {
+  return new WebVerificationError(
+    'test_tool_route_restoration_failed',
+    'The exact Hosting version did not satisfy every test-tool route restoration check.',
+  )
+}
+
+function hasMethods(value, methods) {
+  return typeof value === 'object' &&
+    value !== null &&
+    methods.every((method) => typeof value[method] === 'function')
+}
+
+function hasExactEligibleDevice(state, assignedDeviceId) {
+  return state?.route === '/test-tool' &&
+    state.routeName === 'test-tool' &&
+    Array.isArray(state.eligibleDeviceIds) &&
+    state.eligibleDeviceIds.length === 1 &&
+    state.eligibleDeviceIds[0] === assignedDeviceId
+}
+
+export async function verifyExactTestToolRouteRestoration({
+  browser,
+  deployment,
+  assignedDeviceId,
+}) {
+  if (
+    typeof browser?.createContext !== 'function' ||
+    !TEST_TOOL_RESTORATION_BUILD_HASH.test(deployment?.buildHash ?? '') ||
+    !TEST_TOOL_RESTORATION_VERSION.test(deployment?.hostingVersion ?? '') ||
+    !TEST_TOOL_RESTORATION_DEVICE.test(assignedDeviceId ?? '')
+  ) throw testToolRouteRestorationFailure()
+
+  const contextOptions = Object.freeze({
+    storage: 'isolated',
+    hostingVersion: deployment.hostingVersion,
+    buildHash: deployment.buildHash,
+  })
+  let signedOutContext
+  let authenticatedContext
+  let result
+  let failed = false
+  try {
+    signedOutContext = await browser.createContext({
+      session: 'signed-out',
+      ...contextOptions,
+    })
+    authenticatedContext = await browser.createContext({
+      session: 'owner',
+      ...contextOptions,
+    })
+    if (
+      !hasMethods(signedOutContext, SIGNED_OUT_RESTORATION_METHODS) ||
+      !hasMethods(authenticatedContext, AUTHENTICATED_RESTORATION_METHODS)
+    ) throw testToolRouteRestorationFailure()
+
+    const signedOut = await signedOutContext.directLoad('/test-tool')
+    if (
+      signedOut?.route !== '/sign-in' ||
+      signedOut.routeName !== 'sign-in' ||
+      signedOut.returnTo !== '/test-tool' ||
+      signedOut.protectedContentVisible !== false ||
+      signedOut.testToolContentVisible !== false
+    ) throw testToolRouteRestorationFailure()
+
+    const directOpen = await authenticatedContext.directLoad('/test-tool')
+    if (!hasExactEligibleDevice(directOpen, assignedDeviceId)) {
+      throw testToolRouteRestorationFailure()
+    }
+    const reload = await authenticatedContext.reload('/test-tool')
+    if (!hasExactEligibleDevice(reload, assignedDeviceId)) {
+      throw testToolRouteRestorationFailure()
+    }
+    const projection = await authenticatedContext.verifyBoundedEventProjection({
+      deviceId: assignedDeviceId,
+    })
+    if (
+      projection?.status !== 'verified' ||
+      projection.bounded !== true ||
+      projection.webProjection !== true
+    ) throw testToolRouteRestorationFailure()
+
+    const offline = await authenticatedContext.signOutAndVerifyOfflineCache()
+    if (
+      offline?.route !== '/sign-in' ||
+      offline.protectedContentVisible !== false ||
+      offline.priorTesterDataVisible !== false ||
+      offline.formStateVisible !== false ||
+      offline.cacheExclusion !== true
+    ) throw testToolRouteRestorationFailure()
+
+    result = Object.freeze({
+      status: 'verified',
+      hostingVersion: deployment.hostingVersion,
+      buildHash: deployment.buildHash,
+      checks: Object.freeze({
+        signedOutReturnPath: 'passed',
+        authenticatedDirectOpen: 'passed',
+        authenticatedReload: 'passed',
+        eligibleDeviceBoundary: 'passed',
+        eventProjection: 'passed',
+        cacheExclusion: 'passed',
+      }),
+    })
+  } catch {
+    failed = true
+  }
+
+  const closeContext = (context) => Promise.resolve().then(() => context?.close?.())
+  const cleanup = await Promise.allSettled([
+    closeContext(signedOutContext),
+    closeContext(authenticatedContext),
+  ])
+  if (failed || cleanup.some(({ status }) => status === 'rejected')) {
+    throw testToolRouteRestorationFailure()
+  }
+  return result
+}
+
 const MOBILE_VIEWPORT = Object.freeze({ width: 390, height: 844, isMobile: true })
 const MEMBER_SMOKE_FLOWS = Object.freeze([
   'sign-in',
@@ -450,6 +582,15 @@ const REQUIRED_RELEASE_CHECKS = Object.freeze([
   'memberDataCacheExclusion',
   'testToolDataCacheExclusion',
   'protectedRouteReload',
+  'testToolRouteRestoration',
+])
+const REQUIRED_TEST_TOOL_RESTORATION_CHECKS = Object.freeze([
+  'signedOutReturnPath',
+  'authenticatedDirectOpen',
+  'authenticatedReload',
+  'eligibleDeviceBoundary',
+  'eventProjection',
+  'cacheExclusion',
 ])
 const EXPECTED_OWNER_ROUTES = Object.freeze({
   '/': '/',
@@ -470,12 +611,13 @@ function sameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
-function hasCompleteReleaseEvidence(verification) {
+function hasCompleteReleaseEvidence(verification, deployment, hostingRelease) {
   const spa = verification?.spaAndCache
   const journey = verification?.memberJourney
   const cache = verification?.memberDataCacheExclusion
   const testToolCache = verification?.testToolDataCacheExclusion
   const reload = verification?.protectedRouteReload
+  const restoration = verification?.testToolRouteRestoration
   return (
     spa?.status === 'verified' &&
     spa.protectedRoute === '/test-tool' &&
@@ -506,7 +648,20 @@ function hasCompleteReleaseEvidence(verification) {
     reload?.status === 'verified' &&
     sameJson(reload.owner, EXPECTED_OWNER_ROUTES) &&
     sameJson(reload.signedOut, EXPECTED_SIGNED_OUT_ROUTES) &&
-    reload.protectedContentLeak === false
+    reload.protectedContentLeak === false &&
+    hasExactObjectKeys(restoration, [
+      'status',
+      'hostingVersion',
+      'buildHash',
+      'checks',
+    ]) &&
+    restoration.status === 'verified' &&
+    restoration.hostingVersion === hostingRelease?.version &&
+    restoration.buildHash === deployment?.buildHash &&
+    hasExactObjectKeys(restoration.checks, REQUIRED_TEST_TOOL_RESTORATION_CHECKS) &&
+    REQUIRED_TEST_TOOL_RESTORATION_CHECKS.every(
+      (check) => restoration.checks[check] === 'passed',
+    )
   )
 }
 
@@ -533,7 +688,7 @@ export function createHostingReleaseRecord({
     !HOSTING_VERSION_PATTERN.test(hostingRelease?.version ?? '') ||
     !HOSTING_VERSION_PATTERN.test(hostingRelease?.rollbackVersion ?? '') ||
     hostingRelease.version === hostingRelease.rollbackVersion ||
-    !hasCompleteReleaseEvidence(verification) ||
+    !hasCompleteReleaseEvidence(verification, deployment, hostingRelease) ||
     typeof now !== 'function' ||
     typeof write !== 'function'
   ) {

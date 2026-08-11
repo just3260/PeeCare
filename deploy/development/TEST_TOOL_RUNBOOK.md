@@ -12,7 +12,8 @@ ownership, or handles a generic upstream request.
 - Select one enabled numeric version of
   `peecare-emqx-webhook-current`; never use `latest` or print its value.
 - Keep the tester signed in at `https://petcare-c7483.web.app/` in an isolated
-  browser context. ID tokens stay inside that browser session.
+  browser context. ID tokens stay inside that browser session except for the
+  explicitly approved one-time bootstrap operation described below.
 - Run `npm run check:release` and retain no PII, token, custom name, payload, or
   resolved secret in build/deploy evidence.
 
@@ -38,7 +39,8 @@ npm run test-tool:development:deploy -- \
 Preflight is read-only until the image digest, enabled numeric secret version,
 budget, dedicated identity, absence of user-managed keys, and bounded IAM are
 all confirmed. The generated Cloud Run v1 service uses one gen1 container so
-the non-root runtime owns the single mode-`0600` secret file. Secret access is
+the non-root runtime owns the single owner-only read-only mode-`0400` secret
+file after Cloud Run applies its documented `0222` secret-volume umask. Secret access is
 conditioned to that one version. A staging failure performs zero cloud
 mutation; a cleanup warning never disguises an already-deployed revision.
 
@@ -67,10 +69,41 @@ Firebase ID token never leaves the browser. It verifies, in order:
    Storage exclusion, and log privacy.
 
 Only the exact 11-check healthy record may set
-`VITE_TEST_TOOL_API_URL=https://peecare-test-tool-development-348528459946.asia-east1.run.app`
+`VITE_TEST_TOOL_API_URL=https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app`
 for the verified Web build. Deploy Hosting only from that immutable release
-record, then repeat the `/test-tool` reload and cache/privacy smoke against the
-live version.
+record through `PEECARE_TEST_TOOL_RELEASE_RECORD`. The inspected production
+artifact must prove the approved development environment, Firebase project,
+exact API origin, and `/test-tool` route registration before upload. Then bind
+the signed-out exact return path, authenticated direct open/reload, assigned
+eligible device, bounded event projection, sign-out/offline cache exclusion,
+and privacy smoke to the exact live Hosting version and build hash.
+
+### Approved one-time operator harness
+
+When `/test-tool` is absent from live Hosting and the browser-only verifier
+therefore cannot create the API handoff required by the Web upload gate, an
+operator may run the separately approved one-time operator harness. It resolves
+only the existing owner of `PC-DEV-000001` and one existing non-owner Firebase
+Auth account. It never creates, updates, deletes, or resets an account, changes
+device ownership, or accepts a UID or token through arguments or environment.
+
+The harness mints short-lived custom tokens and exchanges them for ID tokens
+only in process memory. Token references are cleared on every success or
+failure path. No identity, token, resolved secret, device payload, event ID, or
+custom name is written to terminal output or release evidence. Missing existing
+principals, target drift, an incomplete smoke set, or a privacy finding fails
+closed before a healthy record or Hosting upload.
+
+```sh
+npm run test-tool:development:verify:operator -- \
+  --apply \
+  --revision 'peecare-test-tool-development-<suffix>' \
+  --image 'asia-east1-docker.pkg.dev/petcare-c7483/peecare/test-tool-api@sha256:<digest>'
+```
+
+This bootstrap exception produces only the exact 11-check sanitized Test Tool
+API release record. It does not replace the isolated browser verification of
+the deployed `/test-tool` route, sign-out/offline state, or Cache Storage.
 
 ## Disable and rollback
 
@@ -87,7 +120,7 @@ npm run test-tool:development:rollback
 ```
 
 The plan is emitted only for one distinct prior healthy revision after
-rechecking its approved image repository, exact gen1 `0600` numeric secret
+rechecking its approved image repository, exact gen1 `0400` numeric secret
 mount, enabled secret version, dedicated identity, no user-managed keys, and
 bounded project/secret IAM. Review the exact traffic command before an operator
 executes it. If the tool returns `rollback_unavailable`, do not guess a target.

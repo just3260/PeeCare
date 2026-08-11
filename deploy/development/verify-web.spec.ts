@@ -4,12 +4,152 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   createHostingReleaseRecord,
+  verifyExactTestToolRouteRestoration,
   verifyProtectedRouteReloadMatrix,
   verifyMemberDataCacheExclusion,
   verifyTestToolDataCacheExclusion,
   verifyMemberSmokeJourney,
   verifySpaAndCacheBehavior,
 } from './verify-web.mjs'
+
+describe('exact live test-tool route restoration', () => {
+  const deployment = {
+    buildHash: `sha256:${'c'.repeat(64)}`,
+    hostingVersion: 'sites/petcare-c7483/versions/restoration-001',
+  }
+  const assignedDeviceId = 'PC-DEV-000001'
+
+  function restorationBrowser() {
+    const signedOut = {
+      directLoad: vi.fn(async () => ({
+        route: '/sign-in',
+        routeName: 'sign-in',
+        returnTo: '/test-tool',
+        protectedContentVisible: false,
+        testToolContentVisible: false,
+      })),
+      close: vi.fn(async () => undefined),
+    }
+    const authenticated = {
+      directLoad: vi.fn(async () => ({
+        route: '/test-tool',
+        routeName: 'test-tool',
+        eligibleDeviceIds: [assignedDeviceId],
+      })),
+      reload: vi.fn(async () => ({
+        route: '/test-tool',
+        routeName: 'test-tool',
+        eligibleDeviceIds: [assignedDeviceId],
+      })),
+      verifyBoundedEventProjection: vi.fn(async () => ({
+        status: 'verified',
+        bounded: true,
+        webProjection: true,
+      })),
+      signOutAndVerifyOfflineCache: vi.fn(async () => ({
+        route: '/sign-in',
+        protectedContentVisible: false,
+        priorTesterDataVisible: false,
+        formStateVisible: false,
+        cacheExclusion: true,
+      })),
+      close: vi.fn(async () => undefined),
+    }
+    return {
+      signedOut,
+      authenticated,
+      browser: {
+        createContext: vi.fn(async ({ session }) =>
+          session === 'signed-out' ? signedOut : authenticated,
+        ),
+      },
+    }
+  }
+
+  it('binds every restoration check to one Hosting version and build hash', async () => {
+    const { browser, signedOut, authenticated } = restorationBrowser()
+
+    await expect(verifyExactTestToolRouteRestoration({
+      browser,
+      deployment,
+      assignedDeviceId,
+    })).resolves.toEqual({
+      status: 'verified',
+      hostingVersion: deployment.hostingVersion,
+      buildHash: deployment.buildHash,
+      checks: {
+        signedOutReturnPath: 'passed',
+        authenticatedDirectOpen: 'passed',
+        authenticatedReload: 'passed',
+        eligibleDeviceBoundary: 'passed',
+        eventProjection: 'passed',
+        cacheExclusion: 'passed',
+      },
+    })
+    expect(browser.createContext.mock.calls).toEqual([
+      [{
+        session: 'signed-out',
+        storage: 'isolated',
+        hostingVersion: deployment.hostingVersion,
+        buildHash: deployment.buildHash,
+      }],
+      [{
+        session: 'owner',
+        storage: 'isolated',
+        hostingVersion: deployment.hostingVersion,
+        buildHash: deployment.buildHash,
+      }],
+    ])
+    expect(signedOut.directLoad).toHaveBeenCalledWith('/test-tool')
+    expect(authenticated.directLoad).toHaveBeenCalledWith('/test-tool')
+    expect(authenticated.reload).toHaveBeenCalledWith('/test-tool')
+    expect(authenticated.verifyBoundedEventProjection).toHaveBeenCalledWith({
+      deviceId: assignedDeviceId,
+    })
+    expect(JSON.stringify(await verifyExactTestToolRouteRestoration({
+      browser: restorationBrowser().browser,
+      deployment,
+      assignedDeviceId,
+    }))).not.toContain(assignedDeviceId)
+    expect(signedOut.close).toHaveBeenCalledOnce()
+    expect(authenticated.close).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    ['home fallback', 'signedOut', 'directLoad', { route: '/', routeName: 'home', returnTo: null, protectedContentVisible: false, testToolContentVisible: false }],
+    ['lost return path', 'signedOut', 'directLoad', { route: '/sign-in', routeName: 'sign-in', returnTo: '/', protectedContentVisible: false, testToolContentVisible: false }],
+    ['unexpected device', 'authenticated', 'directLoad', { route: '/test-tool', routeName: 'test-tool', eligibleDeviceIds: ['PC-DEV-999999'] }],
+    ['failed projection', 'authenticated', 'verifyBoundedEventProjection', { status: 'failed', bounded: true, webProjection: false }],
+    ['unsafe offline cache', 'authenticated', 'signOutAndVerifyOfflineCache', { route: '/test-tool', protectedContentVisible: true, priorTesterDataVisible: true, formStateVisible: true, cacheExclusion: false }],
+  ])('fails closed for %s', async (_case, contextName, method, result) => {
+    const fixture = restorationBrowser()
+    fixture[contextName][method].mockResolvedValue(result)
+
+    await expect(verifyExactTestToolRouteRestoration({
+      browser: fixture.browser,
+      deployment,
+      assignedDeviceId,
+    })).rejects.toMatchObject({ code: 'test_tool_route_restoration_failed' })
+    expect(fixture.signedOut.close).toHaveBeenCalledOnce()
+    expect(fixture.authenticated.close).toHaveBeenCalledOnce()
+  })
+
+  it('fails closed when either isolated context cannot be torn down', async () => {
+    const fixture = restorationBrowser()
+    fixture.authenticated.close.mockImplementation(() => {
+      throw new Error('sensitive teardown detail')
+    })
+
+    await expect(verifyExactTestToolRouteRestoration({
+      browser: fixture.browser,
+      deployment,
+      assignedDeviceId,
+    })).rejects.toMatchObject({
+      code: 'test_tool_route_restoration_failed',
+      message: expect.not.stringContaining('sensitive teardown detail'),
+    })
+  })
+})
 
 describe('development Hosting SPA and cache verification', () => {
   it('commits the SPA rewrite, shell revalidation, and immutable hashed-asset headers', () => {
@@ -165,7 +305,7 @@ describe('member data cache exclusion', () => {
 
 describe('test-tool data cache exclusion', () => {
   const apiOrigin =
-    'https://peecare-test-tool-development-348528459946.asia-east1.run.app'
+    'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app'
   const device = { deviceId: 'PC-DEV-000001', displayName: '浴室測試機' }
   const request = {
     eventType: 'urination',
@@ -513,6 +653,19 @@ describe('Hosting release record', () => {
           },
           protectedContentLeak: false,
         },
+        testToolRouteRestoration: {
+          status: 'verified',
+          hostingVersion: 'sites/petcare-c7483/versions/abc123',
+          buildHash: `sha256:${'a'.repeat(64)}`,
+          checks: {
+            signedOutReturnPath: 'passed',
+            authenticatedDirectOpen: 'passed',
+            authenticatedReload: 'passed',
+            eligibleDeviceBoundary: 'passed',
+            eventProjection: 'passed',
+            cacheExclusion: 'passed',
+          },
+        },
       },
       now: () => new Date('2026-08-11T02:30:00.000Z'),
     }
@@ -541,6 +694,7 @@ describe('Hosting release record', () => {
         memberDataCacheExclusion: 'passed',
         testToolDataCacheExclusion: 'passed',
         protectedRouteReload: 'passed',
+        testToolRouteRestoration: 'passed',
       },
     })
     expect(JSON.parse(output[0])).toEqual(record)
@@ -591,6 +745,39 @@ describe('Hosting release record', () => {
             offlineRoute: '/sign-in',
             priorTesterDataVisible: false,
             rawDeviceId: 'must-not-be-recorded',
+          },
+        },
+      },
+    ],
+    [
+      'test-tool restoration bound to another build',
+      {
+        verification: {
+          testToolRouteRestoration: {
+            ...verifiedInputs().verification.testToolRouteRestoration,
+            buildHash: `sha256:${'b'.repeat(64)}`,
+          },
+        },
+      },
+    ],
+    [
+      'test-tool restoration bound to another Hosting version',
+      {
+        verification: {
+          testToolRouteRestoration: {
+            ...verifiedInputs().verification.testToolRouteRestoration,
+            hostingVersion: 'sites/petcare-c7483/versions/other',
+          },
+        },
+      },
+    ],
+    [
+      'incomplete test-tool restoration checks',
+      {
+        verification: {
+          testToolRouteRestoration: {
+            ...verifiedInputs().verification.testToolRouteRestoration,
+            checks: { signedOutReturnPath: 'passed' },
           },
         },
       },

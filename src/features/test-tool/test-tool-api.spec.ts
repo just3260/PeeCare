@@ -10,7 +10,7 @@ import {
 vi.mock('@/platform/firebase/client', () => ({ getFirebaseServices: vi.fn() }))
 
 const baseUrl = new URL(
-  'https://peecare-test-tool-development-348528459946.asia-east1.run.app/',
+  'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app/',
 )
 const requestId = '2f6ba4f0-f16f-4a3f-9a3e-91ff2fc27379'
 
@@ -43,7 +43,7 @@ describe('Test Tool API browser adapter', () => {
   it.each([
     'http://127.0.0.1:8088',
     'https://other-service-348528459946.asia-east1.run.app',
-    'https://peecare-test-tool-development-348528459946.asia-east1.run.app/v1',
+    'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app/v1',
   ])('refuses to construct against an unapproved base URL %s', (value) => {
     expect(() => createTestToolApi({ baseUrl: new URL(value) })).toThrowError(
       expect.objectContaining({ code: 'invalid_test_tool_api_url' }),

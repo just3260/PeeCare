@@ -1,5 +1,5 @@
 export const APPROVED_TEST_TOOL_API_ORIGIN =
-  'https://peecare-test-tool-development-348528459946.asia-east1.run.app'
+  'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app'
 export const APPROVED_TEST_TOOL_PROJECT_ID = 'petcare-c7483'
 
 export type TestToolApiConfigErrorCode =

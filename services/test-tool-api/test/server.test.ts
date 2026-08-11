@@ -28,8 +28,8 @@ function secretFile(contents = 'mounted-secret\n'): string {
   const directory = mkdtempSync(join(tmpdir(), 'peecare-test-tool-server-'));
   temporaryDirectories.push(directory);
   const path = join(directory, 'secret');
-  writeFileSync(path, contents, { mode: 0o600 });
-  chmodSync(path, 0o600);
+  writeFileSync(path, contents, { mode: 0o400 });
+  chmodSync(path, 0o400);
   return path;
 }
 
@@ -60,8 +60,9 @@ describe('Test Tool API server startup boundary', () => {
     const config = readProductionConfig(
       productionEnv({ PEECARE_INGESTION_SECRET_FILE: path }),
     );
-    writeFileSync(path, '密碼', { mode: 0o600 });
     chmodSync(path, 0o600);
+    writeFileSync(path, '密碼', { mode: 0o600 });
+    chmodSync(path, 0o400);
 
     expect(() => createProductionRuntimeDependencies(config)).toThrow();
     expect(getApps()).toHaveLength(0);

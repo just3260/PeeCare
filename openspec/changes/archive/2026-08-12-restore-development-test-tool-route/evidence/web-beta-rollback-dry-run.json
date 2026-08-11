@@ -1,0 +1,9 @@
+{
+  "status": "ready",
+  "dryRun": true,
+  "projectId": "petcare-c7483",
+  "hostingSite": "petcare-c7483",
+  "currentVersion": "sites/petcare-c7483/versions/f76fe676483832d5",
+  "rollbackVersion": "sites/petcare-c7483/versions/42ad60648148099f",
+  "hostingMutationCount": 0
+}

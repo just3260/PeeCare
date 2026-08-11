@@ -21,6 +21,25 @@ const DEVELOPMENT_DEVICE_ID = /^PC-DEV-[0-9]{6}$/
 const PROHIBITED_KEY = /(?:email|e-mail|uid|password|passphrase|credential|secret|token|private[_-]?key|service[_-]?account|api[_-]?key)/i
 const PROHIBITED_VALUE = /(?:[\w.+-]+@[\w.-]+\.[a-z]{2,}|-----BEGIN (?:RSA |EC )?PRIVATE KEY-----|\beyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b|\bAIza[0-9A-Za-z_-]{20,}\b|\b(?:password|credential|secret|refresh[_-]?token|id[_-]?token|private[_-]?key)\b)/i
 const FIREBASE_UID_LIKE = /^[A-Za-z0-9]{24,128}$/
+const VERIFIED_TEST_TOOL_ROUTE = Object.freeze({
+  path: '/test-tool',
+  status: 'verified',
+})
+const TEST_TOOL_API_IDENTITY_KEYS = Object.freeze([
+  'projectId',
+  'region',
+  'service',
+  'revision',
+  'imageDigest',
+  'verifiedOrigin',
+])
+const APPROVED_TEST_TOOL_API_IDENTITY = Object.freeze({
+  projectId: 'petcare-c7483',
+  region: 'asia-east1',
+  service: 'peecare-test-tool-development',
+  verifiedOrigin:
+    'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app',
+})
 
 const APPROVED_BETA_TARGET = Object.freeze({
   projectId: 'petcare-c7483',
@@ -123,6 +142,40 @@ function validateBetaEnvironment(environment) {
   ) {
     prerequisiteFailed('Public Web configuration does not match the approved development beta target.')
   }
+}
+
+export function createApprovedBetaCliEnvironment(baseEnvironment, webConfig) {
+  if (
+    baseEnvironment === null ||
+    typeof baseEnvironment !== 'object' ||
+    Array.isArray(baseEnvironment) ||
+    webConfig === null ||
+    typeof webConfig !== 'object' ||
+    Array.isArray(webConfig) ||
+    webConfig.projectId !== APPROVED_BETA_TARGET.projectId ||
+    webConfig.appId !== APPROVED_BETA_TARGET.webAppId ||
+    webConfig.authDomain !== APPROVED_BETA_TARGET.authDomain ||
+    typeof webConfig.apiKey !== 'string' ||
+    webConfig.apiKey.length === 0 ||
+    /[\r\n\0]/.test(webConfig.apiKey)
+  ) {
+    prerequisiteFailed(
+      'Inspected public Web configuration does not match the approved development beta target.',
+    )
+  }
+
+  return Object.freeze({
+    ...baseEnvironment,
+    PEECARE_DEVELOPMENT_HOSTING_TARGET: APPROVED_BETA_TARGET.hostingTarget,
+    VITE_FIREBASE_ENVIRONMENT: 'development',
+    VITE_FIREBASE_APPROVED_PROJECT_ID: APPROVED_BETA_TARGET.projectId,
+    VITE_FIREBASE_PROJECT_ID: APPROVED_BETA_TARGET.projectId,
+    VITE_FIREBASE_APP_ID: APPROVED_BETA_TARGET.webAppId,
+    VITE_FIREBASE_AUTH_DOMAIN: APPROVED_BETA_TARGET.authDomain,
+    VITE_FIREBASE_API_KEY: webConfig.apiKey,
+    VITE_MEMBER_API_URL: APPROVED_BETA_TARGET.memberApiOrigin,
+    VITE_TEST_TOOL_API_URL: APPROVED_TEST_TOOL_API_IDENTITY.verifiedOrigin,
+  })
 }
 
 function validateCloudInventory(cloud, testers) {
@@ -328,6 +381,57 @@ function clearCredentialPair(credentials) {
   credentials.password = null
 }
 
+export async function authenticateExistingBetaTester({
+  webApiKey,
+  credentials,
+  request,
+}) {
+  if (
+    typeof webApiKey !== 'string' ||
+    webApiKey.length === 0 ||
+    /[\r\n\0]/.test(webApiKey) ||
+    !isMutableCredentialPair(credentials) ||
+    typeof request !== 'function'
+  ) {
+    throw new BetaReleaseError(
+      'tester_authentication_failed',
+      'Existing beta tester authentication inputs are invalid.',
+    )
+  }
+
+  let responseBody = null
+  try {
+    const response = await request(
+      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(webApiKey)}`,
+      {
+        method: 'POST',
+        redirect: 'error',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          email: credentials.email,
+          password: credentials.password,
+          returnSecureToken: true,
+        }),
+      },
+    )
+    responseBody = await response.json().catch(() => null)
+    if (
+      response.ok !== true ||
+      typeof responseBody?.idToken !== 'string' ||
+      responseBody.idToken.length === 0
+    ) {
+      throw new Error('authentication rejected')
+    }
+  } catch {
+    throw new BetaReleaseError(
+      'tester_authentication_failed',
+      'Existing beta tester authentication failed.',
+    )
+  } finally {
+    responseBody = null
+  }
+}
+
 export async function readHiddenBetaTesterCredentials(options) {
   if (
     !hasOnlyAllowedOptions(options, ['alias', 'input', 'output']) ||
@@ -506,6 +610,7 @@ export async function runBetaReleaseCli({
   uploadHosting,
   verifyLiveRoutes,
   readHostingVersions,
+  authenticateTester,
   write,
 }) {
   const mode = Array.isArray(args) && args.length === 1 ? args[0] : undefined
@@ -546,6 +651,8 @@ export async function runBetaReleaseCli({
     write: () => undefined,
   })
   let history
+  let priorHostingVersion
+  let testerAuthentication
   if (mode === '--apply') {
     if (typeof readHostingVersions !== 'function') rollbackUnavailable()
     let versions
@@ -558,6 +665,41 @@ export async function runBetaReleaseCli({
       currentVersions: versions,
       confirmation: environment?.PEECARE_BETA_FIRST_RELEASE_CONFIRMATION ?? '',
     })
+    if (typeof authenticateTester !== 'function') credentialInputUnavailable()
+    try {
+      testerAuthentication = await authenticateTester(preflight.testerAliases)
+    } catch {
+      throw new BetaReleaseError(
+        'tester_authentication_failed',
+        'Beta tester authentication failed before Hosting release.',
+      )
+    }
+    if (
+      testerAuthentication?.alias !== preflight.testerAliases[0] ||
+      testerAuthentication?.status !== 'authenticated' ||
+      Object.keys(testerAuthentication).sort().join(',') !== 'alias,status'
+    ) {
+      throw new BetaReleaseError(
+        'tester_authentication_failed',
+        'Beta tester authentication returned an invalid stage.',
+      )
+    }
+  } else {
+    if (typeof readHostingVersions !== 'function') rollbackUnavailable()
+    let versions
+    try {
+      versions = await readHostingVersions()
+    } catch {
+      rollbackUnavailable()
+    }
+    if (
+      !Array.isArray(versions) ||
+      versions.length > 1 ||
+      versions.some((version) => !BETA_HOSTING_VERSION.test(version ?? ''))
+    ) {
+      rollbackUnavailable()
+    }
+    priorHostingVersion = versions[0] ?? null
   }
   const hosting = await runBetaHostingRelease({
     mode: mode === '--dry-run' ? 'dry-run' : 'apply',
@@ -569,7 +711,9 @@ export async function runBetaReleaseCli({
   const result = Object.freeze({
     ...preflight,
     ...hosting,
+    ...(mode === '--dry-run' ? { priorHostingVersion } : {}),
     ...(history ? { history } : {}),
+    ...(testerAuthentication ? { testerAuthentication } : {}),
   })
   write(JSON.stringify(result))
   return result
@@ -877,16 +1021,32 @@ export async function runBetaHostingRelease({
   } catch {
     prerequisiteFailed('The inspected development cloud build failed.')
   }
-  if (build?.status !== 'ready' || !/^sha256:[0-9a-f]{64}$/.test(build.buildHash ?? '')) {
+  const verifiedTestToolApi = validateTestToolApiIdentity(build?.testToolApi)
+  if (
+    build?.status !== 'ready' ||
+    !/^sha256:[0-9a-f]{64}$/.test(build.buildHash ?? '') ||
+    !isDeepStrictEqual(build.testToolRoute, VERIFIED_TEST_TOOL_ROUTE) ||
+    verifiedTestToolApi === null
+  ) {
     prerequisiteFailed('The inspected development cloud build failed.')
   }
   if (mode === 'dry-run') {
-    return Object.freeze({ status: 'ready', dryRun: true, buildHash: build.buildHash })
+    return Object.freeze({
+      status: 'ready',
+      dryRun: true,
+      buildHash: build.buildHash,
+      testToolRoute: VERIFIED_TEST_TOOL_ROUTE,
+      testToolApi: verifiedTestToolApi,
+    })
   }
 
   let uploaded
   try {
-    uploaded = await uploadHosting({ buildHash: build.buildHash })
+    uploaded = await uploadHosting({
+      buildHash: build.buildHash,
+      testToolRoute: VERIFIED_TEST_TOOL_ROUTE,
+      testToolApi: verifiedTestToolApi,
+    })
   } catch {
     hostingUnavailable()
   }
@@ -907,6 +1067,8 @@ export async function runBetaHostingRelease({
   return Object.freeze({
     status: 'deployed',
     buildHash: build.buildHash,
+    testToolRoute: VERIFIED_TEST_TOOL_ROUTE,
+    testToolApi: verifiedTestToolApi,
     hostingVersion: uploaded.version,
     routes: LIVE_BETA_ROUTES,
   })
@@ -922,6 +1084,12 @@ const REQUIRED_BETA_RELEASE_CHECKS = Object.freeze([
   'memberDataCacheExclusion',
   'protectedRouteReload',
   'nonOwnerDenial',
+  'routeRegistration',
+  'signedOutReturnPath',
+  'authenticatedReload',
+  'eligibleDeviceBoundary',
+  'eventProjection',
+  'testToolCacheExclusion',
 ])
 const STABLE_BETA_FAILURE_CODES = Object.freeze([
   'inventory_invalid',
@@ -932,6 +1100,7 @@ const STABLE_BETA_FAILURE_CODES = Object.freeze([
   'unexpected_owned_device',
   'hosting_unavailable',
   'smoke_failed',
+  'test_tool_route_restoration_failed',
 ])
 
 function rollbackUnavailable() {
@@ -979,15 +1148,35 @@ function validateReleaseChecks(checks) {
   )
 }
 
+function validateTestToolApiIdentity(value) {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    !hasExactKeys(value, TEST_TOOL_API_IDENTITY_KEYS) ||
+    value.projectId !== APPROVED_TEST_TOOL_API_IDENTITY.projectId ||
+    value.region !== APPROVED_TEST_TOOL_API_IDENTITY.region ||
+    value.service !== APPROVED_TEST_TOOL_API_IDENTITY.service ||
+    !/^peecare-test-tool-development-[a-z0-9-]+$/.test(value.revision ?? '') ||
+    !/^sha256:[0-9a-f]{64}$/.test(value.imageDigest ?? '') ||
+    value.verifiedOrigin !== APPROVED_TEST_TOOL_API_IDENTITY.verifiedOrigin
+  ) return null
+  return Object.freeze(
+    Object.fromEntries(TEST_TOOL_API_IDENTITY_KEYS.map((key) => [key, value[key]])),
+  )
+}
+
 export function createBetaReleaseRecord({
   deployment,
   history,
   testerStages,
   checks,
+  testToolApi,
   now,
 }) {
   const testerStage = Array.isArray(testerStages) ? testerStages[0] : undefined
   const verifiedAt = typeof now === 'function' ? now() : null
+  const verifiedTestToolApi = validateTestToolApiIdentity(testToolApi)
   const historyValid =
     history?.bootstrap === true
       ? history.rollbackAvailable === false && history.rollbackVersion === null
@@ -1008,6 +1197,7 @@ export function createBetaReleaseRecord({
     !SAFE_ALIAS.test(testerStage.alias ?? '') ||
     testerStage.status !== 'passed' ||
     !validateReleaseChecks(checks) ||
+    verifiedTestToolApi === null ||
     !(verifiedAt instanceof Date) ||
     Number.isNaN(verifiedAt.getTime())
   ) {
@@ -1023,6 +1213,7 @@ export function createBetaReleaseRecord({
     rollbackAvailable: history.rollbackAvailable,
     rollbackVersion: history.rollbackVersion,
     verifiedAt: verifiedAt.toISOString(),
+    testToolApi: verifiedTestToolApi,
     testerStages: testerStages.map((stage) => Object.freeze({ ...stage })),
     checks: Object.freeze({ ...checks }),
   }
@@ -1033,9 +1224,14 @@ export function createBetaReleaseRecord({
 export function createFailedBetaReleaseEvidence({
   hostingVersion,
   rollbackVersion,
+  buildHash,
+  testToolApi,
+  now,
   code,
   checks,
 }) {
+  const verifiedAt = typeof now === 'function' ? now() : null
+  const verifiedTestToolApi = validateTestToolApiIdentity(testToolApi)
   const validRollback =
     rollbackVersion === null ||
     (BETA_HOSTING_VERSION.test(rollbackVersion ?? '') && rollbackVersion !== hostingVersion)
@@ -1048,6 +1244,10 @@ export function createFailedBetaReleaseEvidence({
     Object.values(checks).every((status) => ['passed', 'failed', 'not_run'].includes(status))
   if (
     !BETA_HOSTING_VERSION.test(hostingVersion ?? '') ||
+    !/^sha256:[0-9a-f]{64}$/.test(buildHash ?? '') ||
+    verifiedTestToolApi === null ||
+    !(verifiedAt instanceof Date) ||
+    Number.isNaN(verifiedAt.getTime()) ||
     !validRollback ||
     !STABLE_BETA_FAILURE_CODES.includes(code) ||
     !validChecks
@@ -1059,7 +1259,11 @@ export function createFailedBetaReleaseEvidence({
     projectId: APPROVED_BETA_TARGET.projectId,
     hostingSite: APPROVED_BETA_TARGET.hostingSite,
     hostingVersion,
+    rollbackAvailable: rollbackVersion !== null,
     rollbackVersion,
+    buildHash,
+    testToolApi: verifiedTestToolApi,
+    verifiedAt: verifiedAt.toISOString(),
     code,
     checks: Object.freeze({ ...checks }),
   }
@@ -1204,16 +1408,23 @@ function createHostingCommandAdapters({ environment, authorizedJson, request, mo
       return Object.freeze({
         status: plan?.status === 'ready' ? 'ready' : 'failed',
         buildHash: plan?.buildHash,
+        testToolRoute: plan?.testToolRoute,
+        testToolApi: plan?.testToolApi,
       })
     },
-    async uploadHosting({ buildHash }) {
+    async uploadHosting({ buildHash, testToolRoute, testToolApi }) {
       const result = executeCaptured(
         process.execPath,
         [resolve(MODULE_DIRECTORY, 'deploy-web.mjs'), '--apply'],
         commandEnvironment,
       )
       const deployed = result.status === 0 ? readLastJsonObject(result.stdout) : null
-      if (deployed?.status !== 'deployed' || deployed.buildHash !== buildHash) {
+      if (
+        deployed?.status !== 'deployed' ||
+        deployed.buildHash !== buildHash ||
+        !isDeepStrictEqual(deployed.testToolRoute, testToolRoute) ||
+        !isDeepStrictEqual(deployed.testToolApi, testToolApi)
+      ) {
         hostingUnavailable()
       }
       const versions = await readLiveBetaHostingVersions(authorizedJson, 1)
@@ -1231,21 +1442,42 @@ async function runCli() {
     const dependencies = await createGoogleCloudReadDependencies(
       APPROVED_BETA_TARGET.projectId,
     )
+    const encodedAppId = encodeURIComponent(APPROVED_BETA_TARGET.webAppId)
+    const environment = createApprovedBetaCliEnvironment(
+      process.env,
+      await dependencies.authorizedJson(
+        `https://firebase.googleapis.com/v1beta1/projects/-/webApps/${encodedAppId}/config`,
+      ),
+    )
     const inspector = createBetaCloudInspector({
       ...dependencies,
       firebaseRc: readJson(resolve(REPOSITORY_ROOT, '.firebaserc')),
     })
     const hostingAdapters = createHostingCommandAdapters({
-      environment: process.env,
+      environment,
       authorizedJson: dependencies.authorizedJson,
       request: dependencies.request,
       mode,
     })
     await runBetaReleaseCli({
-      environment: process.env,
+      environment,
       args: process.argv.slice(2),
       readJson,
       inspectCloud: inspector,
+      authenticateTester: (aliases) =>
+        runBetaTesterAuthentication({
+          aliases,
+          argv: [],
+          environment,
+          input: process.stdin,
+          output: process.stderr,
+          authenticate: (credentials) =>
+            authenticateExistingBetaTester({
+              webApiKey: environment.VITE_FIREBASE_API_KEY,
+              credentials,
+              request: fetch,
+            }),
+        }),
       ...hostingAdapters,
       write: (line) => process.stdout.write(`${line}\n`),
     })

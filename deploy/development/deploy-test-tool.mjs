@@ -42,7 +42,7 @@ const EXACT_MANIFEST = Object.freeze({
   secretMount: Object.freeze({
     secretName: 'peecare-emqx-webhook-current',
     runtimePath: '/var/run/secrets/peecare/ingestion-secret',
-    defaultMode: 384,
+    defaultMode: 256,
   }),
   resources: Object.freeze({
     billing: 'request-based', executionEnvironment: 'gen1',
@@ -196,6 +196,11 @@ function parseJsonResult(result, code) {
   }
 }
 
+function isEnabledRuntimeIdentity(identity, expectedEmail) {
+  return identity?.email === expectedEmail &&
+    (identity.disabled === undefined || identity.disabled === false)
+}
+
 function parseBudgetReference(reference) {
   const match = reference.match(
     /^billingAccounts\/([^/]+)\/budgets\/([^/]+)$/,
@@ -267,7 +272,7 @@ function inspectCloudResources(manifest, image, secretRef, budgetRecord, execute
       'iam', 'service-accounts', 'describe', email,
       '--project', manifest.metadata.projectId, '--format=json',
     ]), 'runtime_identity_failed')
-    if (describedIdentity?.email !== email || describedIdentity?.disabled !== false) {
+    if (!isEnabledRuntimeIdentity(describedIdentity, email)) {
       fail('runtime_identity_failed', 'The dedicated runtime identity is disabled or changed.')
     }
     const userManagedKeys = parseJsonResult(execute('gcloud', [
@@ -569,8 +574,10 @@ export async function runTestToolRollback({
       runtimeIdentity: manifest.runtimeIdentity.serviceAccount,
     })
     if (
-      runtime?.identity?.email !== manifest.runtimeIdentity.serviceAccount ||
-      runtime?.identity?.disabled !== false ||
+      !isEnabledRuntimeIdentity(
+        runtime?.identity,
+        manifest.runtimeIdentity.serviceAccount,
+      ) ||
       !Array.isArray(runtime?.userManagedKeys) ||
       runtime.userManagedKeys.length !== 0
     ) fail('rollback_unavailable', 'The rollback runtime identity is unavailable or unsafe.')
@@ -630,7 +637,7 @@ export function normalizeRevisionInspection(record, projectId, revision) {
     secretVolume?.secretName === 'peecare-emqx-webhook-current' &&
     typeof secretItem?.key === 'string' && /^[1-9][0-9]*$/.test(secretItem.key) &&
     secretItem?.path === 'ingestion-secret' &&
-    secretItem?.mode === 384 &&
+    secretItem?.mode === 256 &&
     mount?.mountPath === '/var/run/secrets/peecare'
   return Object.freeze({
     revision: record?.metadata?.name ?? revision,

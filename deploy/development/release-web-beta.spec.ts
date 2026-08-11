@@ -7,6 +7,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   BetaReleaseError,
+  authenticateExistingBetaTester,
+  createApprovedBetaCliEnvironment,
   createBetaReleaseRecord,
   createBetaRollbackDryRun,
   createFailedBetaReleaseEvidence,
@@ -29,6 +31,19 @@ import {
 
 const repositoryRoot = resolve(import.meta.dirname, '../..')
 const inventoryPath = 'deploy/development/beta-tester-inventory.local.json'
+const verifiedTestToolRoute = Object.freeze({
+  path: '/test-tool',
+  status: 'verified',
+})
+const verifiedTestToolApi = Object.freeze({
+  projectId: 'petcare-c7483',
+  region: 'asia-east1',
+  service: 'peecare-test-tool-development',
+  revision: 'peecare-test-tool-development-00042-abc',
+  imageDigest: `sha256:${'d'.repeat(64)}`,
+  verifiedOrigin:
+    'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app',
+})
 
 function tester(index: number) {
   return {
@@ -147,8 +162,48 @@ function approvedEnvironment(): Record<string, string> {
     VITE_FIREBASE_APP_ID: '1:348528459946:web:3cd4fe2b9140a3e81f10d3',
     VITE_MEMBER_API_URL:
       'https://peecare-member-development-348528459946.asia-east1.run.app',
+    VITE_TEST_TOOL_API_URL:
+      'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app',
   }
 }
+
+describe('approved beta command environment', () => {
+  it('hydrates only the approved public Web configuration from inspected config', () => {
+    const base = {
+      PEECARE_TEST_TOOL_RELEASE_RECORD: '/private/tmp/test-tool-release.json',
+      PEECARE_BETA_FIRST_RELEASE_CONFIRMATION: 'operator-confirmation',
+    }
+
+    const environment = createApprovedBetaCliEnvironment(base, {
+      projectId: 'petcare-c7483',
+      appId: '1:348528459946:web:3cd4fe2b9140a3e81f10d3',
+      apiKey: 'public-firebase-web-key',
+      authDomain: 'petcare-c7483.firebaseapp.com',
+      storageBucket: 'ignored-public-field',
+    })
+
+    expect(environment).toMatchObject({
+      ...base,
+      ...approvedEnvironment(),
+    })
+    expect(base).not.toHaveProperty('VITE_FIREBASE_API_KEY')
+  })
+
+  it.each([
+    ['foreign project', { projectId: 'other-project' }],
+    ['foreign app', { appId: '1:2:web:foreign' }],
+    ['foreign auth domain', { authDomain: 'other.firebaseapp.com' }],
+    ['missing API key', { apiKey: '' }],
+  ])('rejects %s before returning an environment', (_case, override) => {
+    expect(() => createApprovedBetaCliEnvironment({}, {
+      projectId: 'petcare-c7483',
+      appId: '1:348528459946:web:3cd4fe2b9140a3e81f10d3',
+      apiKey: 'public-firebase-web-key',
+      authDomain: 'petcare-c7483.firebaseapp.com',
+      ...override,
+    })).toThrowError(expect.objectContaining({ code: 'cloud_prerequisite_failed' }))
+  })
+})
 
 function approvedCloudInventory() {
   return {
@@ -415,6 +470,8 @@ describe('beta dry-run command boundary', () => {
       throw new Error(`unexpected path ${path}`)
     })
 
+    const priorHostingVersion = 'sites/petcare-c7483/versions/beta-001'
+    const readHostingVersions = vi.fn(async () => [priorHostingVersion])
     const result = await runBetaReleaseCli({
       environment: approvedEnvironment(),
       args: ['--dry-run'],
@@ -424,9 +481,12 @@ describe('beta dry-run command boundary', () => {
       inspectCloudBuild: vi.fn(async () => ({
         status: 'ready',
         buildHash: `sha256:${'a'.repeat(64)}`,
+        testToolRoute: verifiedTestToolRoute,
+        testToolApi: verifiedTestToolApi,
       })),
       uploadHosting: vi.fn(),
       verifyLiveRoutes: vi.fn(),
+      readHostingVersions,
       write: vi.fn(),
     })
 
@@ -437,7 +497,13 @@ describe('beta dry-run command boundary', () => {
     expect(readJson.mock.calls[0][0]).toMatch(
       /deploy\/development\/beta-tester-inventory\.local\.json$/,
     )
-    expect(result).toMatchObject({ status: 'ready', dryRun: true, testerCount: 1 })
+    expect(result).toMatchObject({
+      status: 'ready',
+      dryRun: true,
+      testerCount: 1,
+      priorHostingVersion,
+    })
+    expect(readHostingVersions).toHaveBeenCalledOnce()
   })
 
   it('returns inventory_invalid when the local inventory is absent before cloud inspection', async () => {
@@ -509,6 +575,35 @@ function enterHiddenFields(
 }
 
 describe('ephemeral beta tester authentication', () => {
+  it('authenticates an existing tester without returning or persisting token material', async () => {
+    const request = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        idToken: 'private-id-token',
+        refreshToken: 'private-refresh-token',
+        localId: 'private-firebase-uid',
+      }),
+    }))
+    const credentials = {
+      email: 'beta.operator@example.test',
+      password: 'sentinel-password',
+    }
+
+    await expect(authenticateExistingBetaTester({
+      webApiKey: 'public-firebase-web-key',
+      credentials,
+      request,
+    })).resolves.toBeUndefined()
+
+    expect(request).toHaveBeenCalledWith(
+      expect.stringContaining('accounts:signInWithPassword?key='),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ ...credentials, returnSecureToken: true }),
+      }),
+    )
+  })
+
   it('reads email and password for exactly one alias from a hidden fake TTY', async () => {
     const tty = fakeCredentialTty()
     enterHiddenFields(tty.input)
@@ -1080,6 +1175,8 @@ describe('live beta Hosting release orchestration', () => {
       const inspectCloudBuild = vi.fn(async () => ({
         status: failedStage === 'inspected build' ? 'failed' : 'ready',
         buildHash,
+        testToolRoute: verifiedTestToolRoute,
+        testToolApi: verifiedTestToolApi,
       }))
 
       await expect(
@@ -1098,6 +1195,47 @@ describe('live beta Hosting release orchestration', () => {
     },
   )
 
+  it('rejects an inspected build without an exact /test-tool route proof before upload', async () => {
+    const uploadHosting = vi.fn()
+
+    await expect(
+      runBetaHostingRelease({
+        mode: 'apply',
+        runReleaseGate: vi.fn(async () => ({ status: 'passed' })),
+        inspectCloudBuild: vi.fn(async () => ({
+          status: 'ready',
+          buildHash,
+          testToolApi: verifiedTestToolApi,
+        })),
+        uploadHosting,
+        verifyLiveRoutes: vi.fn(),
+      }),
+    ).rejects.toMatchObject({ code: 'cloud_prerequisite_failed' })
+    expect(uploadHosting).not.toHaveBeenCalled()
+  })
+
+  it('rejects an inspected build without an exact Test Tool API identity before upload', async () => {
+    const uploadHosting = vi.fn(async () => ({
+      version: 'sites/petcare-c7483/versions/beta-001',
+    }))
+
+    await expect(runBetaHostingRelease({
+      mode: 'apply',
+      runReleaseGate: vi.fn(async () => ({ status: 'passed' })),
+      inspectCloudBuild: vi.fn(async () => ({
+        status: 'ready',
+        buildHash,
+        testToolRoute: verifiedTestToolRoute,
+      })),
+      uploadHosting,
+      verifyLiveRoutes: vi.fn(async () => ({
+        status: 'verified',
+        routes: ['/', '/history', '/stats', '/sign-in'],
+      })),
+    })).rejects.toMatchObject({ code: 'cloud_prerequisite_failed' })
+    expect(uploadHosting).not.toHaveBeenCalled()
+  })
+
   it('uploads the inspected build fixture and verifies the selected live version', async () => {
     const uploadHosting = vi.fn(async () => ({
       version: 'sites/petcare-c7483/versions/beta-001',
@@ -1111,17 +1249,28 @@ describe('live beta Hosting release orchestration', () => {
       runBetaHostingRelease({
         mode: 'apply',
         runReleaseGate: vi.fn(async () => ({ status: 'passed' })),
-        inspectCloudBuild: vi.fn(async () => ({ status: 'ready', buildHash })),
+        inspectCloudBuild: vi.fn(async () => ({
+          status: 'ready',
+          buildHash,
+          testToolRoute: verifiedTestToolRoute,
+          testToolApi: verifiedTestToolApi,
+        })),
         uploadHosting,
         verifyLiveRoutes,
       }),
     ).resolves.toEqual({
       status: 'deployed',
       buildHash,
+      testToolRoute: verifiedTestToolRoute,
+      testToolApi: verifiedTestToolApi,
       hostingVersion: 'sites/petcare-c7483/versions/beta-001',
       routes: ['/', '/history', '/stats', '/sign-in'],
     })
-    expect(uploadHosting).toHaveBeenCalledWith({ buildHash })
+    expect(uploadHosting).toHaveBeenCalledWith({
+      buildHash,
+      testToolRoute: verifiedTestToolRoute,
+      testToolApi: verifiedTestToolApi,
+    })
     expect(verifyLiveRoutes).toHaveBeenCalledWith({
       hostingVersion: 'sites/petcare-c7483/versions/beta-001',
     })
@@ -1135,11 +1284,22 @@ describe('live beta Hosting release orchestration', () => {
       runBetaHostingRelease({
         mode: 'dry-run',
         runReleaseGate: vi.fn(async () => ({ status: 'passed' })),
-        inspectCloudBuild: vi.fn(async () => ({ status: 'ready', buildHash })),
+        inspectCloudBuild: vi.fn(async () => ({
+          status: 'ready',
+          buildHash,
+          testToolRoute: verifiedTestToolRoute,
+          testToolApi: verifiedTestToolApi,
+        })),
         uploadHosting,
         verifyLiveRoutes: vi.fn(),
       }),
-    ).resolves.toEqual({ status: 'ready', dryRun: true, buildHash })
+    ).resolves.toEqual({
+      status: 'ready',
+      dryRun: true,
+      buildHash,
+      testToolRoute: verifiedTestToolRoute,
+      testToolApi: verifiedTestToolApi,
+    })
     expect(uploadHosting).not.toHaveBeenCalled()
     expect(packageJson.scripts['web:development:beta:release']).toBe(
       'node deploy/development/release-web-beta.mjs --apply',
@@ -1151,6 +1311,7 @@ describe('exact beta release evidence and rollback', () => {
   const buildHash = `sha256:${'b'.repeat(64)}`
   const deployedVersion = 'sites/petcare-c7483/versions/beta-002'
   const priorVersion = 'sites/petcare-c7483/versions/beta-001'
+  const testToolApi = verifiedTestToolApi
   const checks = {
     availability: 'passed',
     spaAndCache: 'passed',
@@ -1159,6 +1320,12 @@ describe('exact beta release evidence and rollback', () => {
     memberDataCacheExclusion: 'passed',
     protectedRouteReload: 'passed',
     nonOwnerDenial: 'passed',
+    routeRegistration: 'passed',
+    signedOutReturnPath: 'passed',
+    authenticatedReload: 'passed',
+    eligibleDeviceBoundary: 'passed',
+    eventProjection: 'passed',
+    testToolCacheExclusion: 'passed',
   }
 
   it('requires exact confirmation before a first release with no rollback', () => {
@@ -1176,18 +1343,28 @@ describe('exact beta release evidence and rollback', () => {
 
   it('short-circuits first-release upload without confirmation and permits the exact phrase', async () => {
     const uploadHosting = vi.fn(async () => ({ version: deployedVersion }))
+    const authenticateTester = vi.fn(async (aliases: readonly string[]) => ({
+      alias: aliases[0],
+      status: 'authenticated',
+    }))
     const base = {
       args: ['--apply'],
       readJson: vi.fn(() => inventory()),
       inspectCloud: vi.fn(async () => approvedCloudInventory()),
       runReleaseGate: vi.fn(async () => ({ status: 'passed' })),
-      inspectCloudBuild: vi.fn(async () => ({ status: 'ready', buildHash })),
+      inspectCloudBuild: vi.fn(async () => ({
+        status: 'ready',
+        buildHash,
+        testToolRoute: verifiedTestToolRoute,
+        testToolApi: verifiedTestToolApi,
+      })),
       uploadHosting,
       verifyLiveRoutes: vi.fn(async () => ({
         status: 'verified',
         routes: ['/', '/history', '/stats', '/sign-in'],
       })),
       readHostingVersions: vi.fn(async () => []),
+      authenticateTester,
       write: vi.fn(),
     }
 
@@ -1195,6 +1372,7 @@ describe('exact beta release evidence and rollback', () => {
       runBetaReleaseCli({ environment: approvedEnvironment(), ...base }),
     ).rejects.toMatchObject({ code: 'first_release_confirmation_required' })
     expect(uploadHosting).not.toHaveBeenCalled()
+    expect(authenticateTester).not.toHaveBeenCalled()
 
     const result = await runBetaReleaseCli({
       environment: {
@@ -1207,7 +1385,9 @@ describe('exact beta release evidence and rollback', () => {
     expect(result).toMatchObject({
       status: 'deployed',
       history: { bootstrap: true, rollbackAvailable: false, rollbackVersion: null },
+      testerAuthentication: { alias: 'tester-1', status: 'authenticated' },
     })
+    expect(authenticateTester).toHaveBeenCalledWith(['tester-1'])
     expect(uploadHosting).toHaveBeenCalledOnce()
   })
 
@@ -1256,6 +1436,7 @@ describe('exact beta release evidence and rollback', () => {
       history,
       testerStages: [{ alias: 'tester-1', status: 'passed' }],
       checks,
+      testToolApi,
       now: () => new Date('2026-08-11T06:30:00.000Z'),
     })
 
@@ -1268,6 +1449,7 @@ describe('exact beta release evidence and rollback', () => {
       rollbackAvailable: history.rollbackAvailable,
       rollbackVersion: history.rollbackVersion,
       verifiedAt: '2026-08-11T06:30:00.000Z',
+      testToolApi,
       testerStages: [{ alias: 'tester-1', status: 'passed' }],
       checks,
     })
@@ -1295,6 +1477,7 @@ describe('exact beta release evidence and rollback', () => {
         history: { bootstrap: true, rollbackAvailable: false, rollbackVersion: null },
         testerStages,
         checks: unsafeChecks,
+        testToolApi,
         now: () => new Date('2026-08-11T06:30:00.000Z'),
       }),
     ).toThrowError(expect.objectContaining({ code: 'smoke_failed' }))
@@ -1305,6 +1488,9 @@ describe('exact beta release evidence and rollback', () => {
       createFailedBetaReleaseEvidence({
         hostingVersion: deployedVersion,
         rollbackVersion: priorVersion,
+        buildHash,
+        testToolApi,
+        now: () => new Date('2026-08-11T06:45:00.000Z'),
         code: 'hosting_unavailable',
         checks: { availability: 'failed' },
       }),
@@ -1314,13 +1500,62 @@ describe('exact beta release evidence and rollback', () => {
       hostingSite: 'petcare-c7483',
       hostingVersion: deployedVersion,
       rollbackVersion: priorVersion,
+      rollbackAvailable: true,
+      buildHash,
+      testToolApi,
+      verifiedAt: '2026-08-11T06:45:00.000Z',
       code: 'hosting_unavailable',
       checks: { availability: 'failed' },
     })
   })
 
+  it('records rollback unavailable explicitly when failed evidence has no prior version', () => {
+    expect(createFailedBetaReleaseEvidence({
+      hostingVersion: deployedVersion,
+      rollbackVersion: null,
+      buildHash,
+      testToolApi,
+      now: () => new Date('2026-08-11T06:45:00.000Z'),
+      code: 'test_tool_route_restoration_failed',
+      checks: { signedOutReturnPath: 'failed' },
+    })).toMatchObject({
+      status: 'failed',
+      rollbackAvailable: false,
+      rollbackVersion: null,
+    })
+  })
+
+  it.each([
+    ['missing API identity', undefined],
+    ['foreign API project', { ...testToolApi, projectId: 'other-project' }],
+    ['mutable API digest', { ...testToolApi, imageDigest: 'latest' }],
+    ['credential-bearing API origin', { ...testToolApi, verifiedOrigin: 'https://user:pass@example.run.app' }],
+  ])('rejects %s from healthy and failed evidence', (_case, invalidApi) => {
+    expect(() => createBetaReleaseRecord({
+      deployment: { status: 'deployed', buildHash, hostingVersion: deployedVersion },
+      history: { bootstrap: false, rollbackAvailable: true, rollbackVersion: priorVersion },
+      testerStages: [{ alias: 'tester-1', status: 'passed' }],
+      checks,
+      testToolApi: invalidApi,
+      now: () => new Date('2026-08-11T06:30:00.000Z'),
+    })).toThrowError(expect.objectContaining({ code: 'smoke_failed' }))
+    expect(() => createFailedBetaReleaseEvidence({
+      hostingVersion: deployedVersion,
+      rollbackVersion: priorVersion,
+      buildHash,
+      testToolApi: invalidApi,
+      now: () => new Date('2026-08-11T06:45:00.000Z'),
+      code: 'hosting_unavailable',
+      checks: { availability: 'failed' },
+    })).toThrowError(expect.objectContaining({ code: 'smoke_failed' }))
+  })
+
   it('refuses missing or ambiguous rollback targets without guessing', () => {
-    for (const rollbackVersions of [[], [priorVersion, deployedVersion]]) {
+    for (const rollbackVersions of [
+      [],
+      [deployedVersion],
+      [priorVersion, deployedVersion],
+    ]) {
       expect(() =>
         createBetaRollbackDryRun({
           currentVersion: deployedVersion,
@@ -1415,6 +1650,13 @@ describe('single-tester beta release runbook', () => {
       'email',
       'UID',
       'credential',
+      'PEECARE_TEST_TOOL_RELEASE_RECORD',
+      'testToolApi',
+      'test_tool_route_absent',
+      'signed-out return path',
+      'exact Hosting version and build hash',
+      'failed evidence',
+      'no automatic rollback',
     ]) {
       expect(runbook).toContain(required)
     }

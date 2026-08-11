@@ -26,7 +26,7 @@ export function readMountedIngestionSecret(path: string): string {
     descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     const metadata = fstatSync(descriptor);
     if (!metadata.isFile()) throw new MountedIngestionSecretError('file');
-    if ((metadata.mode & 0o777) !== 0o600) {
+    if ((metadata.mode & 0o777) !== 0o400) {
       throw new MountedIngestionSecretError('mode');
     }
     const raw = readFileSync(descriptor, 'utf8');

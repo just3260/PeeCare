@@ -41,11 +41,15 @@ const APPROVED_TEST_TOOL_API = Object.freeze({
   runtimeIdentity:
     'peecare-test-tool-runtime@petcare-c7483.iam.gserviceaccount.com',
   origin:
-    'https://peecare-test-tool-development-348528459946.asia-east1.run.app',
+    'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app',
 })
 const TEST_TOOL_RELEASE_MAX_AGE_MS = 24 * 60 * 60 * 1_000
 const TEST_TOOL_RELEASE_FUTURE_TOLERANCE_MS = 5 * 60 * 1_000
 const TEST_TOOL_REVISION_PATTERN = /^peecare-test-tool-development-[a-z0-9-]+$/
+const VERIFIED_TEST_TOOL_ROUTE = Object.freeze({
+  path: '/test-tool',
+  status: 'verified',
+})
 const IMMUTABLE_IMAGE_PATTERN =
   /^asia-east1-docker\.pkg\.dev\/petcare-c7483\/peecare\/test-tool-api@sha256:[0-9a-f]{64}$/
 const REQUIRED_TEST_TOOL_SMOKE_CHECKS = Object.freeze([
@@ -269,8 +273,11 @@ function validateTestToolRelease(environment, releaseRecord, now) {
     unverifiedTestToolRelease()
   }
   return Object.freeze({
+    projectId: releaseRecord.projectId,
+    region: releaseRecord.region,
     service: releaseRecord.service,
     revision: releaseRecord.revision,
+    imageDigest: releaseRecord.imageDigest,
     verifiedOrigin,
   })
 }
@@ -370,6 +377,12 @@ function inspectArtifacts(normalized) {
       'Hosting bundle must contain the development discriminator, approved project, and verified Test Tool API origin.',
     )
   }
+  if (!bundleText.includes(VERIFIED_TEST_TOOL_ROUTE.path)) {
+    throw new WebDeploymentError(
+      'test_tool_route_absent',
+      'Hosting bundle does not register the protected /test-tool route.',
+    )
+  }
 
   const hash = createHash('sha256')
   for (const artifact of normalized) {
@@ -381,6 +394,7 @@ function inspectArtifacts(normalized) {
   return Object.freeze({
     buildHash: `sha256:${hash.digest('hex')}`,
     files: Object.freeze(normalized.map((artifact) => artifact.path)),
+    testToolRoute: VERIFIED_TEST_TOOL_ROUTE,
   })
 }
 
@@ -445,6 +459,7 @@ function summary(status, dryRun, inspection, testToolApi, cleanupWarning) {
     ...APPROVED_TARGET,
     buildHash: inspection.buildHash,
     files: inspection.files,
+    testToolRoute: inspection.testToolRoute,
     firebaseServices: Object.freeze({
       environment: 'development',
       projectId: APPROVED_TARGET.projectId,

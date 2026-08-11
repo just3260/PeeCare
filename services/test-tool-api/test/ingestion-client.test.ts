@@ -41,7 +41,7 @@ afterEach(() => {
   }
 });
 
-function temporaryFile(value = `${SECRET}\n`, mode = 0o600): string {
+function temporaryFile(value = `${SECRET}\n`, mode = 0o400): string {
   const directory = mkdtempSync(join(tmpdir(), 'peecare-ingestion-client-'));
   temporaryDirectories.push(directory);
   const path = join(directory, 'secret');

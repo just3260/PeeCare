@@ -1,0 +1,25 @@
+{
+  "status": "healthy",
+  "projectId": "petcare-c7483",
+  "region": "asia-east1",
+  "service": "peecare-test-tool-development",
+  "revision": "peecare-test-tool-development-00002-rte",
+  "image": "asia-east1-docker.pkg.dev/petcare-c7483/peecare/test-tool-api@sha256:2c851bfe35753ab6a345f8fca387b9e6dc228e14ff0c0173189ac0b00d0eee3f",
+  "imageDigest": "sha256:2c851bfe35753ab6a345f8fca387b9e6dc228e14ff0c0173189ac0b00d0eee3f",
+  "runtimeIdentity": "peecare-test-tool-runtime@petcare-c7483.iam.gserviceaccount.com",
+  "verifiedOrigin": "https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app",
+  "verifiedAt": "2026-08-11T19:18:33.892Z",
+  "smoke": {
+    "publicHealth": "passed",
+    "exactCors": "passed",
+    "unauthorizedZeroWrite": "passed",
+    "unmarkedDeviceDenial": "passed",
+    "foreignDeviceDenial": "passed",
+    "urinationStored": "passed",
+    "batteryStored": "passed",
+    "rateLimit": "passed",
+    "firestoreProjection": "passed",
+    "webProjection": "passed",
+    "logPrivacy": "passed"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "status": "ready",
+  "dryRun": true,
+  "projectId": "petcare-c7483",
+  "region": "asia-east1",
+  "service": "peecare-test-tool-development",
+  "revision": "peecare-test-tool-development-00002-rte",
+  "image": "asia-east1-docker.pkg.dev/petcare-c7483/peecare/test-tool-api@sha256:2c851bfe35753ab6a345f8fca387b9e6dc228e14ff0c0173189ac0b00d0eee3f",
+  "deviceId": "PC-DEV-000001",
+  "productModel": "pc-mini",
+  "checks": [
+    "publicHealth",
+    "exactCors",
+    "unauthorizedZeroWrite",
+    "foreignDeviceDenial",
+    "unmarkedDeviceDenial",
+    "urinationStored",
+    "batteryStored",
+    "rateLimit",
+    "firestoreProjection",
+    "webProjection",
+    "logPrivacy"
+  ]
+}

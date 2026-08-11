@@ -28,6 +28,13 @@ git check-ignore --no-index deploy/development/beta-tester-inventory.local.json
 
 The ignored inventory is an assignment marker, not an identity or credential store.
 
+Export `PEECARE_TEST_TOOL_RELEASE_RECORD` as the absolute path to the current
+sanitized healthy Test Tool API release record. The record must identify the
+approved project, region, `peecare-test-tool-development` service, immutable
+revision and image digest, exact HTTPS origin, verification timestamp, and
+passed smoke statuses. A missing, stale, foreign, mutable, credential-bearing,
+or otherwise mismatched record stops before build and Hosting mutation.
+
 ## 1. Read-only dry-run
 
 Run the release gate, inspected cloud build, exact cloud inventory checks, and sanitized plan without uploading:
@@ -36,7 +43,13 @@ Run the release gate, inspected cloud build, exact cloud inventory checks, and s
 npm run web:development:beta:dry-run
 ```
 
-Review the single JSON plan. It must name only the approved project, site, target, Web app, Auth domain, region, Member API origin, tester alias, and counts. Stop if it contains an email, UID, credential, token, device payload, custom name, or event payload.
+Review the single JSON plan. It must name only the approved project, site,
+target, Web app, Auth domain, region, Member API origin, tester alias, counts,
+the allowlisted `testToolApi` identity, build hash, and exact
+`{ "path": "/test-tool", "status": "verified" }` route proof. Stop on
+`test_tool_route_absent`, a stale or foreign API identity, or any email, UID,
+credential, token, device payload, custom name, or event payload. A dry-run
+must report zero Hosting mutation.
 
 ## 2. Apply and verify
 
@@ -52,17 +65,34 @@ Then run:
 npm run web:development:beta:release
 ```
 
-Tester email and password enter only through the hidden interactive TTY prompts. The release must pass the Emulator non-owner denial gate before upload, then verify the live shell at `/`, `/history`, `/stats`, and `/sign-in`; the `tester-1` Owner overview, history, stats, rename/clear round trip, protected-route reload, exact ownership boundary, sign-out, and browser-state teardown must all pass.
+Tester email and password enter only through the hidden interactive TTY
+prompts. The release must pass the Emulator non-owner denial gate before
+upload, then bind verification to the exact Hosting version and build hash. A
+fresh signed-out `/test-tool` direct load must preserve the signed-out return path
+`/sign-in?returnTo=/test-tool`; the authenticated direct open and reload
+must remain on `/test-tool`, expose exactly the assigned eligible device,
+complete one bounded event and Web projection, then pass sign-out/offline
+Cache Storage exclusion and browser teardown. Resolving to the home route is a
+failed restoration even when the Hosting shell is reachable.
 
-A healthy record contains one sanitized tester stage and explicit check statuses. A bootstrap record must contain `rollbackAvailable: false` and `rollbackVersion: null`. A later release must contain the exact prior Hosting version.
+A healthy record contains one sanitized tester stage, the exact `testToolApi`
+revision identity, exact Hosting version and build hash, verification
+timestamp, and explicit statuses for route registration, signed-out return
+path, authenticated reload, eligible-device boundary, event projection, and
+test-tool cache exclusion. A bootstrap record must contain
+`rollbackAvailable: false` and `rollbackVersion: null`. A later release must
+contain the exact distinct prior healthy Hosting version.
 
 ## 3. Failure containment
 
-Any preflight failure means zero upload. If upload succeeds but smoke verification fails, preserve only sanitized failed evidence and do not call the release healthy.
+Any preflight failure means zero upload. If upload succeeds but smoke
+verification fails, preserve only sanitized failed evidence containing the
+approved identities, exact versions, timestamp, stable failure code, and check
+statuses; do not call the release healthy and perform no automatic rollback.
 
 If marker clearing fails, record `cleanup required`, stop tester handoff, manually clear the marker, and rerun verification. If browser teardown fails, close the context and clear Auth persistence, IndexedDB, Cache Storage, and service-worker member state before retrying.
 
-Never run an automatic rollback. First generate and review the exact target:
+There is no automatic rollback. First generate and review the exact target:
 
 ```sh
 npm run web:development:beta:rollback

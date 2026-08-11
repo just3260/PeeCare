@@ -22,8 +22,8 @@ function secretFile(contents = 'mounted-development-secret\n'): string {
   const directory = mkdtempSync(join(tmpdir(), 'peecare-test-tool-config-'));
   temporaryDirectories.push(directory);
   const path = join(directory, 'ingestion-secret');
-  writeFileSync(path, contents, { mode: 0o600 });
-  chmodSync(path, 0o600);
+  writeFileSync(path, contents, { mode: 0o400 });
+  chmodSync(path, 0o400);
   return path;
 }
 
@@ -113,6 +113,17 @@ describe('Test Tool API production configuration', () => {
     expect(readProductionConfig(productionEnv({ PORT: undefined })).port).toBe(8080);
   });
 
+  it('accepts the exact owner-only read-only mode produced by Cloud Run', () => {
+    const path = secretFile();
+    chmodSync(path, 0o400);
+
+    expect(
+      readProductionConfig(
+        productionEnv({ PEECARE_INGESTION_SECRET_FILE: path }),
+      ).ingestionSecretFile,
+    ).toBe(path);
+  });
+
   it('rejects a relative secret path', () => {
     expect(() =>
       readProductionConfig(productionEnv({ PEECARE_INGESTION_SECRET_FILE: 'secret.txt' })),
@@ -132,14 +143,14 @@ describe('Test Tool API production configuration', () => {
     ).toThrow('secret file');
   });
 
-  it.each([0o400, 0o640, 0o644, 0o666])(
-    'rejects mounted secret mode %s instead of exact 0600',
+  it.each([0o600, 0o640, 0o644, 0o666])(
+    'rejects mounted secret mode %s instead of exact 0400',
     (mode) => {
       const path = secretFile();
       chmodSync(path, mode);
       expect(() =>
         readProductionConfig(productionEnv({ PEECARE_INGESTION_SECRET_FILE: path })),
-      ).toThrow('0600');
+      ).toThrow('0400');
     },
   );
 

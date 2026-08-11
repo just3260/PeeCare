@@ -71,7 +71,7 @@ function revisionRecord(overrides: {
     name: 'ingestion-secret',
     secret: {
       secretName: 'peecare-emqx-webhook-current',
-      items: overrides.items ?? [{ key: '7', path: 'ingestion-secret', mode: 384 }],
+      items: overrides.items ?? [{ key: '7', path: 'ingestion-secret', mode: 256 }],
     },
   }
   return {
@@ -134,7 +134,7 @@ describe('development Test Tool API deployment', () => {
       secretMount: {
         secretName: 'peecare-emqx-webhook-current',
         runtimePath: '/var/run/secrets/peecare/ingestion-secret',
-        defaultMode: 384,
+        defaultMode: 256,
       },
     })
   })
@@ -259,7 +259,7 @@ describe('development Test Tool API deployment', () => {
     expect(result.secretRef).toBe(secretRef)
   })
 
-  it('generates a platform-compatible gen1 0600 numeric secret volume', () => {
+  it('generates a platform-compatible gen1 0400 numeric secret volume', () => {
     const manifest = loadTestToolManifest()
     const spec = createCloudRunServiceSpec(
       manifest, image, suffix, { reference: secretRef, version: '7' },
@@ -270,7 +270,7 @@ describe('development Test Tool API deployment', () => {
         containers: [{ volumeMounts: [{
           name: 'ingestion-secret', mountPath: '/var/run/secrets/peecare',
         }] }],
-        volumes: [{ secret: { items: [{ key: '7', path: 'ingestion-secret', mode: 384 }] } }],
+        volumes: [{ secret: { items: [{ key: '7', path: 'ingestion-secret', mode: 256 }] } }],
       },
     })
   })
@@ -336,7 +336,7 @@ describe('development Test Tool API deployment', () => {
             containers: [{ image }],
             volumes: [{ secret: {
               secretName: 'peecare-emqx-webhook-current',
-              items: [{ key: '7', path: 'ingestion-secret', mode: 384 }],
+              items: [{ key: '7', path: 'ingestion-secret', mode: 256 }],
             } }],
           },
         },
@@ -347,6 +347,27 @@ describe('development Test Tool API deployment', () => {
     expect(execute.mock.calls.some(([, args]) =>
       args.includes('run') && args.includes('services') &&
       args.includes('add-iam-policy-binding'))).toBe(false)
+  })
+
+  it('accepts an enabled existing identity when gcloud omits the default false disabled field', () => {
+    const email = 'peecare-test-tool-runtime@petcare-c7483.iam.gserviceaccount.com'
+    const execute = successfulExecute(email)
+    execute.mockImplementation((_command, args) => {
+      if (args.includes('service-accounts') && args.includes('describe')) {
+        return { status: 0, stdout: JSON.stringify({ email }) }
+      }
+      if (args.includes('service-accounts') && args.includes('keys')) {
+        return { status: 0, stdout: '[]' }
+      }
+      return successfulExecute(email)(_command, args)
+    })
+
+    expect(runTestToolDeploy({
+      environment: environment(),
+      args: ['--apply', '--image', image, '--revision-suffix', suffix],
+      manifest: loadTestToolManifest(), execute, write: vi.fn(),
+      stage: vi.fn(() => ({ path: '/private/tmp/service.json', cleanup: vi.fn() })),
+    })).toMatchObject({ status: 'deployed' })
   })
 
   it.each([
@@ -591,10 +612,10 @@ describe('development Test Tool API deployment', () => {
 
   it.each([
     ['decoy numeric item', { items: [
-      { key: '7', path: 'decoy', mode: 384 },
-      { key: '8', path: 'ingestion-secret', mode: 384 },
+      { key: '7', path: 'decoy', mode: 256 },
+      { key: '8', path: 'ingestion-secret', mode: 256 },
     ] }],
-    ['wrong path', { items: [{ key: '7', path: 'decoy', mode: 384 }] }],
+    ['wrong path', { items: [{ key: '7', path: 'decoy', mode: 256 }] }],
     ['wrong mode', { items: [{ key: '7', path: 'ingestion-secret', mode: 292 }] }],
     ['wrong mount', { mounts: [{ name: 'ingestion-secret', mountPath: '/other' }] }],
     ['gen2', { annotation: 'gen2' }],

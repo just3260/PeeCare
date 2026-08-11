@@ -6,7 +6,7 @@ import {
 } from './test-tool-api-config'
 
 const approvedOrigin =
-  'https://peecare-test-tool-development-348528459946.asia-east1.run.app'
+  'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app'
 
 function validEnv() {
   return {
@@ -32,8 +32,8 @@ describe('Test Tool API Web configuration', () => {
 
   it.each([
     'not-a-url',
-    'http://peecare-test-tool-development-348528459946.asia-east1.run.app',
-    'https://user:password@peecare-test-tool-development-348528459946.asia-east1.run.app',
+    'http://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app',
+    'https://user:password@peecare-test-tool-development-5hvpf2z3tq-de.a.run.app',
     `${approvedOrigin}/v1`,
     `${approvedOrigin}?source=release`,
     `${approvedOrigin}#tool`,

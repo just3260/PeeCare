@@ -44,7 +44,7 @@ function validEnvironment(): Record<string, string> {
     VITE_FIREBASE_APP_ID: '1:348528459946:web:abc123',
     VITE_MEMBER_API_URL: 'https://peecare-member-development.example.run.app',
     VITE_TEST_TOOL_API_URL:
-      'https://peecare-test-tool-development-348528459946.asia-east1.run.app',
+      'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app',
   }
 }
 
@@ -64,7 +64,7 @@ function healthyTestToolRelease(overrides: Record<string, unknown> = {}) {
     runtimeIdentity:
       'peecare-test-tool-runtime@petcare-c7483.iam.gserviceaccount.com',
     verifiedOrigin:
-      'https://peecare-test-tool-development-348528459946.asia-east1.run.app',
+      'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app',
     verifiedAt: '2026-08-11T07:30:00.000Z',
     smoke: {
       publicHealth: 'passed',
@@ -103,7 +103,7 @@ function cleanArtifacts() {
     {
       path: 'assets/index-a1b2c3d4.js',
       contents:
-        'const environment="development",projectId="petcare-c7483",testTool="https://peecare-test-tool-development-348528459946.asia-east1.run.app"',
+        'const environment="development",projectId="petcare-c7483",testTool="https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app",route="/test-tool"',
     },
     { path: 'index.html', contents: '<div id="app"></div>' },
   ]
@@ -121,18 +121,33 @@ describe('runWebDeploy development target preflight', () => {
       expect.objectContaining({
         environment: expect.objectContaining({
           VITE_TEST_TOOL_API_URL:
-            'https://peecare-test-tool-development-348528459946.asia-east1.run.app',
+            'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app',
         }),
       }),
     )
     expect(result).toMatchObject({
       testToolApi: {
+        projectId: 'petcare-c7483',
+        region: 'asia-east1',
         service: 'peecare-test-tool-development',
         revision: 'peecare-test-tool-development-00001-abc',
+        imageDigest: `sha256:${'a'.repeat(64)}`,
         verifiedOrigin:
-          'https://peecare-test-tool-development-348528459946.asia-east1.run.app',
+          'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app',
       },
+      testToolRoute: { path: '/test-tool', status: 'verified' },
     })
+    expect(Object.keys(result.testToolApi)).toEqual([
+      'projectId',
+      'region',
+      'service',
+      'revision',
+      'imageDigest',
+      'verifiedOrigin',
+    ])
+    expect(JSON.stringify(result.testToolApi)).not.toMatch(
+      /runtimeIdentity|image(?:"|Url)|smoke|credential|token|secret/i,
+    )
   })
 
   it('revalidates release freshness after the build and refuses a now-stale upload', () => {
@@ -198,10 +213,10 @@ describe('runWebDeploy development target preflight', () => {
   it.each([
     ['missing URL', { VITE_TEST_TOOL_API_URL: undefined }, healthyTestToolRelease()],
     ['missing release record', {}, undefined],
-    ['HTTP', {}, healthyTestToolRelease({ verifiedOrigin: 'http://peecare-test-tool-development-348528459946.asia-east1.run.app' })],
+    ['HTTP', {}, healthyTestToolRelease({ verifiedOrigin: 'http://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app' })],
     ['loopback', {}, healthyTestToolRelease({ verifiedOrigin: 'https://127.0.0.1:8088' })],
-    ['credentials', {}, healthyTestToolRelease({ verifiedOrigin: 'https://user:pass@peecare-test-tool-development-348528459946.asia-east1.run.app' })],
-    ['path', {}, healthyTestToolRelease({ verifiedOrigin: 'https://peecare-test-tool-development-348528459946.asia-east1.run.app/v1' })],
+    ['credentials', {}, healthyTestToolRelease({ verifiedOrigin: 'https://user:pass@peecare-test-tool-development-5hvpf2z3tq-de.a.run.app' })],
+    ['path', {}, healthyTestToolRelease({ verifiedOrigin: 'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app/v1' })],
     ['wrong project', {}, healthyTestToolRelease({ projectId: 'other-project' })],
     ['wrong service', {}, healthyTestToolRelease({ service: 'peecare-member-development' })],
     ['wrong origin binding', { VITE_TEST_TOOL_API_URL: 'https://other.invalid' }, healthyTestToolRelease()],
@@ -468,6 +483,33 @@ describe('runWebDeploy development target preflight', () => {
         write: vi.fn(),
       }),
     ).toThrowError(expect.objectContaining({ code: 'cloud_adapter_not_verified' }))
+    expect(execute).not.toHaveBeenCalledWith('firebase', expect.anything(), expect.anything())
+  })
+
+  it('rejects a production bundle that can serve the shell but omits /test-tool', () => {
+    const execute = vi.fn(() => ({ status: 0 }))
+
+    expect(() =>
+      runWebDeploy({
+        environment: validEnvironment(),
+        args: ['--apply'],
+        firebaseConfig: approvedFirebaseConfig,
+        firebaseRc: approvedFirebaseRc,
+        testToolReleaseRecord: healthyTestToolRelease(),
+        now: () => now,
+        execute,
+        readBuildArtifacts: () => [
+          {
+            path: 'assets/index-a1b2c3d4.js',
+            contents:
+              'const environment="development",projectId="petcare-c7483",testTool="https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app"',
+          },
+          { path: 'index.html', contents: '<div id="app"></div>' },
+        ],
+        write: vi.fn(),
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'test_tool_route_absent' }))
+    expect(execute).toHaveBeenCalledTimes(1)
     expect(execute).not.toHaveBeenCalledWith('firebase', expect.anything(), expect.anything())
   })
 

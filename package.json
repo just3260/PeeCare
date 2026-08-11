@@ -41,6 +41,7 @@
     "member:development:web-build": "node deploy/development/verify-member.mjs --web-build-apply",
     "test-tool:development:deploy": "node deploy/development/deploy-test-tool.mjs",
     "test-tool:development:verify": "node deploy/development/verify-test-tool.mjs",
+    "test-tool:development:verify:operator": "node deploy/development/verify-test-tool-operator.mjs",
     "test-tool:development:rollback": "node deploy/development/deploy-test-tool.mjs --rollback-dry-run",
     "web:development:dry-run": "node deploy/development/deploy-web.mjs --dry-run",
     "web:development:deploy": "node deploy/development/deploy-web.mjs --apply",

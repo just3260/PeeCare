@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-08-11T17:01:25.379Z",
+  "target": {
+    "origin": "https://petcare-c7483.web.app",
+    "requestedPath": "/test-tool"
+  },
+  "browserContext": {
+    "session": "signed-out",
+    "storage": "isolated",
+    "savedCookies": false,
+    "savedTokens": false,
+    "savedMemberData": false
+  },
+  "expected": {
+    "path": "/sign-in",
+    "search": "?returnTo=/test-tool",
+    "routeName": "sign-in"
+  },
+  "actual": {
+    "path": "/",
+    "search": "",
+    "routeName": "home",
+    "renderedHeadingAssertion": "home_summary_present",
+    "signInViewPresent": false,
+    "testToolViewPresent": false
+  },
+  "status": "reproduced",
+  "failureCode": "test_tool_home_fallback"
+}
