@@ -4,6 +4,12 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
+import {
+  loadBuildManifest,
+  validateEmbeddedAssets,
+  validatePinnedBuildTooling,
+} from './test-tool-macos-build.mjs'
+
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 export const RELEASE_TRACKED_FILES = [
@@ -15,7 +21,23 @@ export const RELEASE_TRACKED_FILES = [
   'services/ingestion-api/package-lock.json',
   'services/test-tool-api/package.json',
   'services/test-tool-api/package-lock.json',
+  'scripts/test-tool-macos-build.json',
+  'scripts/test-tool-macos-build.mjs',
+  'scripts/test-tool-macos-verify.mjs',
+  'scripts/TEST_TOOL_MACOS_RUNBOOK.md',
 ]
+
+const PACKAGING_PRIVACY_FILES = Object.freeze([
+  'scripts/test-tool-operator-entry.mjs',
+  'scripts/test-tool-operator.mjs',
+  'scripts/test-tool.mjs',
+  'scripts/test-tool-macos-build.mjs',
+  'scripts/test-tool-macos-verify.mjs',
+  'scripts/test-tool-macos-build.json',
+  'scripts/test-tool.html',
+  'scripts/machine.png',
+  'scripts/dog.png',
+])
 
 const LOCKFILE_DRIFT_STAGE = { name: 'lockfile:drift', workspace: 'repository' }
 
@@ -27,12 +49,61 @@ export const RELEASE_STAGES = [
     args: ['run', 'check:all'],
   },
   {
+    name: 'test-tool:source-boundary',
+    workspace: 'repository',
+    run: runPackagingSourceGate,
+  },
+  {
     name: 'audit:production',
     workspace: 'root,member-api,ingestion-api,test-tool-api',
     command: process.execPath,
     args: [resolve(PROJECT_ROOT, 'scripts/audit-production-dependencies.mjs')],
   },
 ]
+
+export function scanPackagingPrivacy(files) {
+  if (!Array.isArray(files)) return ['privacy_input_invalid']
+  const findings = []
+  for (const file of files) {
+    if (typeof file?.path !== 'string' || !Buffer.isBuffer(file.bytes)) {
+      findings.push('privacy_input_invalid')
+      continue
+    }
+    const text = file.bytes.toString('utf8')
+    if (
+      /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/u.test(text) ||
+      /"private_key"\s*:\s*"[^"\n]+"/u.test(text) ||
+      /ya29\.[A-Za-z0-9_-]{16,}/u.test(text) ||
+      /Authorization:\s*Bearer\s+[A-Za-z0-9_-]{16,}/u.test(text)
+    ) {
+      findings.push(file.path)
+    }
+  }
+  return [...new Set(findings)].sort()
+}
+
+export function runPackagingSourceGate() {
+  try {
+    const manifest = loadBuildManifest()
+    const packageLock = JSON.parse(readFileSync(resolve(PROJECT_ROOT, 'package-lock.json'), 'utf8'))
+    validatePinnedBuildTooling(manifest, packageLock)
+    validateEmbeddedAssets(new Map(
+      manifest.assets.map((asset) => [
+        asset.key,
+        readFileSync(resolve(PROJECT_ROOT, asset.source)),
+      ]),
+    ))
+    const findings = scanPackagingPrivacy(
+      PACKAGING_PRIVACY_FILES.map((path) => ({
+        path,
+        bytes: readFileSync(resolve(PROJECT_ROOT, path)),
+      })),
+    )
+    return { status: findings.length === 0 ? 0 : 1 }
+  } catch {
+    return { status: 1 }
+  }
+}
 
 function executeStage(stage) {
   return spawnSync(stage.command, stage.args, { cwd: PROJECT_ROOT, stdio: 'inherit' })

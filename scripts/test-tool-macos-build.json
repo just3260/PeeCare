@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "nodeVersion": "22.23.2",
+  "bundler": {
+    "package": "esbuild",
+    "version": "0.25.12",
+    "integrity": "sha512-bbPBYYrtZbkt6Os6FiTLCTFxvq4tt3JKall1vRwshA3fdVztsLAatFaZobhkBC8/BrPetoa0oksYoKXoG4ryJg=="
+  },
+  "injector": {
+    "package": "postject",
+    "version": "1.0.0-alpha.6",
+    "integrity": "sha512-b9Eb8h2eVqNE8edvKdwqkrY6O7kAwmI8kcnBv1NScolYJbo59XUF0noFq+lxbC1yN20bmC0WBEbDC5H/7ASb0A=="
+  },
+  "sea": {
+    "useSnapshot": false,
+    "useCodeCache": false
+  },
+  "assets": [
+    {
+      "key": "test-tool.html",
+      "source": "scripts/test-tool.html",
+      "contentType": "text/html; charset=utf-8"
+    },
+    {
+      "key": "machine.png",
+      "source": "scripts/machine.png",
+      "contentType": "image/png"
+    },
+    {
+      "key": "dog.png",
+      "source": "scripts/dog.png",
+      "contentType": "image/png"
+    }
+  ],
+  "architectures": {
+    "arm64": {
+      "minimumMacOS": "14.8.8",
+      "archiveUrl": "https://nodejs.org/download/release/v22.23.2/node-v22.23.2-darwin-arm64.tar.xz",
+      "archiveSha256": "5eff7a9011895aae3f29d06f167b84a62b028a591370c7cafb59103559fd26e1",
+      "outputName": "peecare-test-tool-macos-arm64"
+    },
+    "x64": {
+      "minimumMacOS": "14.6.0",
+      "archiveUrl": "https://nodejs.org/download/release/v22.23.2/node-v22.23.2-darwin-x64.tar.xz",
+      "archiveSha256": "96dff79f4e19a78715da559ec7cac2028f4985a175ea0c3454625a269c21deb7",
+      "outputName": "peecare-test-tool-macos-x64"
+    }
+  }
+}

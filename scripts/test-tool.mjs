@@ -5,8 +5,8 @@
 
 import { readFileSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const DEFAULT_PORT = 5055;
 const LISTEN_HOST = '127.0.0.1';
@@ -20,15 +20,116 @@ const APPROVED_MEMBER_ORIGIN =
 const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
 const CLOUD_CONFIG_ERROR = 'Development-cloud test tool configuration is invalid.';
 const CLOUD_OPERATION_ERROR = 'Cloud operation is not allowed.';
-const CONFIG_SECRETS = new WeakMap();
+const CONFIG_SECRET_HOLDERS = new WeakMap();
 const VALID_CONFIGS = new WeakSet();
+const SCRIPT_DIRECTORY = dirname(fileURLToPath(import.meta.url));
+const ASSET_PATHS = Object.freeze({
+  'test-tool.html': resolve(SCRIPT_DIRECTORY, 'test-tool.html'),
+  'machine.png': resolve(SCRIPT_DIRECTORY, 'machine.png'),
+  'dog.png': resolve(SCRIPT_DIRECTORY, 'dog.png'),
+});
+
+function createPrivateSecretHolder(initialValue) {
+  let value = initialValue;
+  return Object.freeze({
+    withSecret(consumer) {
+      if (typeof value !== 'string' || typeof consumer !== 'function') {
+        throw new Error(CLOUD_CONFIG_ERROR);
+      }
+      return consumer(value);
+    },
+    clear() {
+      value = undefined;
+    },
+  });
+}
+
+function isSecretHolder(value) {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    typeof value.withSecret === 'function' &&
+    typeof value.clear === 'function'
+  );
+}
+
+export function createSourceAssetProvider({ readAsset = readFileSync } = {}) {
+  if (typeof readAsset !== 'function') throw new Error('Invalid asset provider.');
+  return Object.freeze({
+    read(key) {
+      const path = ASSET_PATHS[key];
+      if (path === undefined) throw new Error('Invalid asset key.');
+      return Buffer.from(readAsset(path));
+    },
+  });
+}
+
+export function createSeaAssetProvider({ getAsset } = {}) {
+  if (typeof getAsset !== 'function') throw new Error('Invalid asset provider.');
+  return Object.freeze({
+    read(key) {
+      if (!(key in ASSET_PATHS)) throw new Error('Invalid asset key.');
+      return Buffer.from(getAsset(key));
+    },
+  });
+}
+
+export function createRuntimeAssetProvider({
+  sea = false,
+  getAsset,
+  readAsset = readFileSync,
+} = {}) {
+  if (sea === true) return createSeaAssetProvider({ getAsset });
+  if (sea === false) return createSourceAssetProvider({ readAsset });
+  throw new Error('Invalid asset runtime.');
+}
+
+export async function loadRuntimeTestToolAssets({ sea = false, readAsset } = {}) {
+  if (sea === false) {
+    return loadTestToolAssets(createSourceAssetProvider({ readAsset }));
+  }
+  if (sea !== true) throw new Error('Invalid asset runtime.');
+  const seaSpecifier = 'node:sea';
+  const seaRuntime = await import(seaSpecifier);
+  if (seaRuntime.isSea() !== true) throw new Error('Invalid asset runtime.');
+  return loadTestToolAssets(
+    createSeaAssetProvider({ getAsset: seaRuntime.getAsset }),
+  );
+}
+
+export function loadTestToolAssets(provider = createRuntimeAssetProvider()) {
+  if (provider === null || typeof provider?.read !== 'function') {
+    throw new Error('Invalid asset provider.');
+  }
+  const htmlBytes = provider.read('test-tool.html');
+  const machinePng = provider.read('machine.png');
+  const dogPng = provider.read('dog.png');
+  if (
+    !Buffer.isBuffer(htmlBytes) ||
+    !Buffer.isBuffer(machinePng) ||
+    !Buffer.isBuffer(dogPng) ||
+    htmlBytes.length === 0 ||
+    machinePng.length === 0 ||
+    dogPng.length === 0
+  ) {
+    throw new Error('Invalid embedded asset.');
+  }
+  let html;
+  try {
+    html = new TextDecoder('utf-8', { fatal: true }).decode(htmlBytes);
+  } catch {
+    throw new Error('Invalid embedded asset.');
+  }
+  if (html.length === 0) throw new Error('Invalid embedded asset.');
+  return Object.freeze({
+    html,
+    machinePng: Buffer.from(machinePng),
+    dogPng: Buffer.from(dogPng),
+  });
+}
 
 function loadAssets() {
-  return {
-    html: readFileSync(new URL('./test-tool.html', import.meta.url), 'utf8'),
-    machinePng: readFileSync(new URL('./machine.png', import.meta.url)),
-    dogPng: readFileSync(new URL('./dog.png', import.meta.url)),
-  };
+  return loadTestToolAssets(createSourceAssetProvider());
 }
 
 function isLoopback(target) {
@@ -112,14 +213,39 @@ export function loadTestToolConfig(
     ),
   });
   const config = Object.freeze({ profile, origins });
-  CONFIG_SECRETS.set(
+  CONFIG_SECRET_HOLDERS.set(
     config,
-    readOperatorSecret(
-      environment.PEECARE_TEST_TOOL_INGESTION_SECRET_FILE,
-      readSecretFile,
-      inspectSecretFile,
+    createPrivateSecretHolder(
+      readOperatorSecret(
+        environment.PEECARE_TEST_TOOL_INGESTION_SECRET_FILE,
+        readSecretFile,
+        inspectSecretFile,
+      ),
     ),
   );
+  VALID_CONFIGS.add(config);
+  return config;
+}
+
+export function createOperatorTestToolConfig({ profile, secretHolder } = {}) {
+  if (profile === LOCAL_PROFILE) {
+    if (secretHolder !== undefined) throw new Error(CLOUD_CONFIG_ERROR);
+    const config = Object.freeze({ profile });
+    VALID_CONFIGS.add(config);
+    return config;
+  }
+  if (profile !== DEVELOPMENT_CLOUD_PROFILE || !isSecretHolder(secretHolder)) {
+    throw new Error(CLOUD_CONFIG_ERROR);
+  }
+  const config = Object.freeze({
+    profile,
+    origins: Object.freeze({
+      web: APPROVED_WEB_ORIGIN,
+      ingestion: APPROVED_INGESTION_ORIGIN,
+      member: APPROVED_MEMBER_ORIGIN,
+    }),
+  });
+  CONFIG_SECRET_HOLDERS.set(config, secretHolder);
   VALID_CONFIGS.add(config);
   return config;
 }
@@ -217,28 +343,27 @@ function approvedCloudRequest(config, request) {
     typeof body === 'string' &&
     headerValue(headers, 'content-type') === 'application/json'
   ) {
-    const secret = CONFIG_SECRETS.get(config);
-    if (typeof secret !== 'string') return null;
-    return {
-      kind: 'event',
-      method: 'POST',
-      url,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${secret}`,
-      },
-      body,
-    };
+    const holder = CONFIG_SECRET_HOLDERS.get(config);
+    if (!isSecretHolder(holder)) return null;
+    try {
+      return holder.withSecret((secret) => ({
+        kind: 'event',
+        method: 'POST',
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${secret}`,
+        },
+        body,
+      }));
+    } catch {
+      return null;
+    }
   }
   return null;
 }
 
-function redactSecret(text, secret) {
-  if (typeof secret !== 'string' || secret === '') return text;
-  return text.split(secret).join('[REDACTED]');
-}
-
-function sanitizeCloudResponseBody(kind, text, secret, requestBody) {
+function sanitizeCloudResponseBody(kind, text, requestBody) {
   try {
     const parsed = JSON.parse(text);
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return '{}';
@@ -253,14 +378,12 @@ function sanitizeCloudResponseBody(kind, text, secret, requestBody) {
     if (
       typeof parsed.eventId === 'string' &&
       parsed.eventId === expectedEventId &&
-      !parsed.eventId.includes(secret) &&
       /^[A-Za-z0-9._:-]{1,256}$/u.test(parsed.eventId)
     ) {
       safe.eventId = parsed.eventId;
     }
     if (
       typeof parsed.requestId === 'string' &&
-      !parsed.requestId.includes(secret) &&
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(parsed.requestId)
     ) {
       safe.requestId = parsed.requestId;
@@ -312,10 +435,9 @@ async function proxyRequest(config, payload, fetchImpl) {
         ? sanitizeCloudResponseBody(
             operation.kind,
             upstreamText,
-            CONFIG_SECRETS.get(config),
             operation.body,
           )
-        : redactSecret(upstreamText, CONFIG_SECRETS.get(config)),
+        : upstreamText,
     },
   };
 }
@@ -325,7 +447,7 @@ export function createTestToolServer({ config, fetchImpl = fetch, assets } = {})
     throw new Error('A validated test tool configuration is required.');
   }
 
-  return createServer(async (req, res) => {
+  const server = createServer(async (req, res) => {
     if (req.method === 'GET' && (req.url === '/' || req.url === '/index.html')) {
       const resolvedAssets = assets ?? loadAssets();
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -376,6 +498,11 @@ export function createTestToolServer({ config, fetchImpl = fetch, assets } = {})
     res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('not found');
   });
+  const secretHolder = CONFIG_SECRET_HOLDERS.get(config);
+  if (isSecretHolder(secretHolder)) {
+    server.once('close', () => secretHolder.clear());
+  }
+  return server;
 }
 
 export function startTestTool({ environment = process.env } = {}) {

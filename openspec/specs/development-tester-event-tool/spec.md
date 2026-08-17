@@ -129,117 +129,45 @@ tests:
 ---
 ### Requirement: Local server-side development secret boundary
 
-In `development-cloud` profile, the local Node server SHALL read the Ingestion credential only from the configured operator-only secret file and SHALL inject it only for the approved Ingestion event operation. The secret MUST NOT appear in the HTML, sanitized configuration response, DOM, browser request, localStorage, curl preview, proxy response, standard output, standard error, or structured test-tool log. Missing, empty, or unreadable secret files and invalid cloud origins MUST fail before the server starts listening.
+In `development-cloud` profile, the local test-tool server SHALL receive the Ingestion credential from exactly one validated operator credential provider: an authenticated personal gcloud session accessing an exact positive numeric version of the fixed development Ingestion secret in project `petcare-c7483`, or the existing configured operator-only secret file. The gcloud provider MUST invoke gcloud without a shell, MUST reject service-account identity, foreign or unset project, inherited service-account key or Emulator configuration, nonnumeric version, and unexpected output before listening, and MUST keep the resolved credential only in process memory. The file provider MUST preserve the existing owner-only file validation. The server SHALL inject the credential only for the approved Ingestion event operation. The secret MUST NOT appear in the executable, HTML, sanitized configuration response, DOM, browser request, localStorage, curl preview, proxy response, command arguments, environment, filesystem output, standard output, standard error, or structured test-tool log. Missing, invalid, ambiguous, inaccessible, empty, or malformed credential input and invalid cloud origins MUST fail before the server starts listening.
 
-#### Scenario: Inject the credential server-side
+#### Scenario: Inject a gcloud-resolved credential server-side
 
-- **WHEN** the browser submits an approved development event without an Authorization header
-- **THEN** the Node server SHALL add the mounted credential to the single approved upstream request and SHALL return a response that contains no credential material
+- **WHEN** an authorized personal operator starts development-cloud mode with one exact numeric secret version and the browser submits an approved development event without an Authorization header
+- **THEN** the server SHALL add the in-memory credential to the single approved upstream request, return a response containing no credential material, and clear the credential when the server closes
 
-#### Scenario: Fail closed before listening
+#### Scenario: Preserve the owner-only file provider
 
-- **WHEN** the development profile has a missing, empty, or unreadable secret file or an invalid required origin
-- **THEN** startup SHALL exit non-zero before binding the loopback port and SHALL NOT print the invalid value or secret
+- **WHEN** development-cloud mode starts with one valid owner-only secret file and no gcloud secret-version option
+- **THEN** the server SHALL preserve the existing file validation and approved event injection behavior without invoking gcloud
+
+#### Scenario: Reject an unsafe gcloud boundary before listening
+
+- **WHEN** gcloud is unavailable or unauthenticated, the active identity is absent, multiple, or a service account, the project is not `petcare-c7483`, the secret version is not a positive integer, Secret Manager access fails, or the resolved value is invalid
+- **THEN** startup SHALL exit non-zero before binding the loopback port, SHALL clear captured credential buffers, and SHALL NOT print raw gcloud output, identity data, invalid values, or secret material
+
+#### Scenario: Reject ambiguous credential providers before listening
+
+- **WHEN** development-cloud mode receives both a secret-version option and a secret-file option or receives neither
+- **THEN** startup SHALL fail with `invalid_arguments` before invoking gcloud, reading a secret file, binding the loopback port, or opening the browser
+
+#### Scenario: Preserve local profile isolation
+
+- **WHEN** local profile starts without credential options
+- **THEN** it SHALL preserve the existing loopback Emulator workflow and SHALL perform no gcloud or Secret Manager operation
 
 
 <!-- @trace
-source: publish-development-tester-event-tool
-updated: 2026-08-11
+source: package-macos-operator-test-tool
+updated: 2026-08-18
 code:
-  - src/App.vue
-  - env.d.ts
-  - services/test-tool-api/tsconfig.test.json
-  - deploy/development/verify-test-tool.mjs
-  - services/test-tool-api/src/events/test-event-service.ts
-  - scripts/install-workspaces.mjs
-  - scripts/test-tool.mjs
-  - scripts/check-release.mjs
-  - services/test-tool-api/src/security/firebase-id-token-verifier.ts
-  - src/features/test-tool/test-tool-api.ts
-  - services/test-tool-api/scripts/scan-privacy.mjs
-  - deploy/development/deploy-web.mjs
-  - services/test-tool-api/tsconfig.json
   - package.json
-  - deploy/development/deploy-test-tool.mjs
-  - src/main.ts
-  - firebase.json
-  - src/views/TestToolView.vue
-  - services/test-tool-api/src/devices/test-device-repository.ts
-  - deploy/development/TEST_TOOL_RUNBOOK.md
-  - src/features/auth/protected-resource-registry.ts
-  - scripts/audit-production-dependencies.mjs
-  - scripts/test-tool.development.env.example
-  - deploy/development/verify-web.mjs
-  - firebase/local/README.md
-  - services/test-tool-api/src/usage/usage-ledger.ts
-  - services/test-tool-api/src/events/test-event-request.ts
-  - deploy/development/test-tool-service.json
-  - services/test-tool-api/cloudbuild.json
-  - services/test-tool-api/src/security/privacy-scan.ts
-  - services/test-tool-api/src/server.ts
-  - deploy/development/BETA_RELEASE_RUNBOOK.md
-  - services/test-tool-api/src/config.ts
-  - .env.example
-  - src/router/index.ts
-  - services/test-tool-api/src/http/response-contract.ts
-  - vitest.config.ts
-  - services/test-tool-api/package.json
-  - services/test-tool-api/Dockerfile
-  - services/test-tool-api/vitest.config.ts
-  - services/test-tool-api/src/security/mounted-ingestion-secret.ts
-  - scripts/test-firebase.mjs
-  - deploy/development/beta-tester-inventory.schema.json
-  - services/test-tool-api/src/app.ts
-  - deploy/development/fixtures/test-tool-rollback-release.json
-  - src/features/test-tool/test-tool-api-key.ts
-  - deploy/development/release-web-beta.mjs
-  - scripts/test-tool.html
-  - src/features/test-tool/test-tool-api-config.ts
-  - deploy/development/beta-tester-inventory.example.json
-  - services/test-tool-api/src/ingestion/ingestion-client.ts
+  - scripts/TEST_TOOL_MACOS_RUNBOOK.md
+  - scripts/test-tool-operator.mjs
+  - scripts/test-tool.mjs
 tests:
-  - src/router/test-tool-route.spec.ts
-  - deploy/development/release-web-beta.spec.ts
-  - scripts/test-tool.spec.ts
-  - services/test-tool-api/test/app-ingestion-errors.test.ts
-  - services/test-tool-api/test/test-event-service.test.ts
-  - src/features/auth/protected-resource-registry.spec.ts
-  - services/test-tool-api/test/app-response-privacy.test.ts
-  - services/test-tool-api/test/server.test.ts
-  - firebase/local/firestore.rules.spec.ts
-  - services/test-tool-api/test/test-event-request.test.ts
-  - src/features/test-tool/test-tool-api.spec.ts
-  - scripts/test-firebase.spec.ts
-  - scripts/install-workspaces.spec.ts
-  - services/test-tool-api/test/usage-ledger.test.ts
-  - scripts/audit-production-dependencies.spec.ts
-  - services/test-tool-api/test/app-ledger-errors.test.ts
-  - src/router/auth-guard.spec.ts
-  - deploy/development/verify-test-tool.spec.ts
-  - src/pwa-build.spec.ts
-  - services/test-tool-api/test/app-event-boundary.test.ts
-  - scripts/check-release.spec.ts
+  - scripts/test-tool-operator.spec.ts
   - scripts/test-tool-server.spec.ts
-  - services/test-tool-api/test/app.test.ts
-  - services/test-tool-api/test/ingestion-client.test.ts
-  - services/test-tool-api/test/privacy-scan.test.ts
-  - services/test-tool-api/test/container.test.ts
-  - deploy/development/verify-web.spec.ts
-  - src/features/test-tool/test-tool-api-config.spec.ts
-  - deploy/development/deploy-web.spec.ts
-  - src/App.auth.spec.ts
-  - src/views/TestToolView.spec.ts
-  - services/test-tool-api/test/app-auth.test.ts
-  - services/test-tool-api/test/app-complete-matrix.test.ts
-  - services/test-tool-api/test/test-device-repository.test.ts
-  - src/App.spec.ts
-  - services/ingestion-api/test/test-tool-event-to-projection.integration.test.ts
-  - services/test-tool-api/test/firebase-id-token-verifier.test.ts
-  - services/test-tool-api/test/test-device-firestore.integration.test.ts
-  - src/router/index.spec.ts
-  - services/test-tool-api/test/app-device-authorization.test.ts
-  - services/test-tool-api/test/config.test.ts
-  - deploy/development/deploy-test-tool.spec.ts
 -->
 
 ---

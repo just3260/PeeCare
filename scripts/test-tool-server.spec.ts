@@ -1,11 +1,15 @@
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { request as httpRequest, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  createOperatorTestToolConfig,
+  createRuntimeAssetProvider,
+  createSourceAssetProvider,
   createTestToolServer,
+  loadTestToolAssets,
   loadTestToolConfig,
 } from './test-tool.mjs'
 
@@ -103,6 +107,43 @@ afterEach(async () => {
   }
 })
 
+describe('test tool asset providers', () => {
+  it('loads the adjacent source assets through one provider', () => {
+    const assets = loadTestToolAssets(createSourceAssetProvider())
+
+    expect(Buffer.from(assets.html, 'utf8')).toEqual(
+      readFileSync(resolve('scripts/test-tool.html')),
+    )
+    expect(assets.machinePng).toEqual(readFileSync(resolve('scripts/machine.png')))
+    expect(assets.dogPng).toEqual(readFileSync(resolve('scripts/dog.png')))
+  })
+
+  it('loads embedded assets without reading adjacent files', () => {
+    const embedded = new Map([
+      ['test-tool.html', readFileSync(resolve('scripts/test-tool.html'))],
+      ['machine.png', readFileSync(resolve('scripts/machine.png'))],
+      ['dog.png', readFileSync(resolve('scripts/dog.png'))],
+    ])
+    const readAsset = vi.fn(() => { throw new Error('adjacent asset missing') })
+    const provider = createRuntimeAssetProvider({
+      sea: true,
+      getAsset(key: string) {
+        const bytes = embedded.get(key)
+        if (bytes === undefined) throw new Error('missing embedded asset')
+        return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+      },
+      readAsset,
+    })
+
+    const assets = loadTestToolAssets(provider)
+
+    expect(readAsset).not.toHaveBeenCalled()
+    expect(Buffer.from(assets.html, 'utf8')).toEqual(embedded.get('test-tool.html'))
+    expect(assets.machinePng).toEqual(embedded.get('machine.png'))
+    expect(assets.dogPng).toEqual(embedded.get('dog.png'))
+  })
+})
+
 describe('test tool startup profiles', () => {
   it('defaults to the existing local profile and rejects unknown profiles', () => {
     expect(loadTestToolConfig({})).toEqual({ profile: 'local' })
@@ -168,6 +209,53 @@ describe('test tool startup profiles', () => {
 })
 
 describe('development-cloud request boundary', () => {
+  it('consumes an in-memory operator credential only for an approved event and clears it on close', async () => {
+    let heldSecret: string | undefined = SECRET
+    const secretHolder = {
+      withSecret: vi.fn((consumer: (secret: string) => unknown) => {
+        if (heldSecret === undefined) throw new Error('secret cleared')
+        return consumer(heldSecret)
+      }),
+      clear: vi.fn(() => { heldSecret = undefined }),
+    }
+    const fetchImpl = vi.fn(async () =>
+      new Response(JSON.stringify({ eventId: 'event-1' }), { status: 201 }),
+    )
+    const config = createOperatorTestToolConfig({
+      profile: 'development-cloud',
+      secretHolder,
+    })
+    const { origin } = await startServer(config, fetchImpl)
+
+    expect((await fetch(`${origin}/api/config`)).status).toBe(200)
+    expect((await send(origin, { method: 'GET', url: `${INGESTION_ORIGIN}/health` })).status).toBe(200)
+    expect(secretHolder.withSecret).not.toHaveBeenCalled()
+
+    const eventBody = JSON.stringify({ payload: { eventId: 'event-1' } })
+    expect((await send(origin, {
+      method: 'POST',
+      url: `${INGESTION_ORIGIN}/v1/emqx/events`,
+      headers: { 'content-type': 'application/json' },
+      body: eventBody,
+    })).status).toBe(200)
+
+    expect(secretHolder.withSecret).toHaveBeenCalledTimes(1)
+    expect(fetchImpl).toHaveBeenLastCalledWith(
+      `${INGESTION_ORIGIN}/v1/emqx/events`,
+      expect.objectContaining({
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${SECRET}`,
+        },
+      }),
+    )
+
+    const server = openServers.pop()
+    await new Promise<void>((resolve) => server?.close(() => resolve()))
+    expect(secretHolder.clear).toHaveBeenCalledTimes(1)
+    expect(heldSecret).toBeUndefined()
+  })
+
   it('serves only sanitized profile and approved origins from config', async () => {
     const config = loadTestToolConfig(cloudEnvironment(secretFile()))
     const { origin } = await startServer(config)

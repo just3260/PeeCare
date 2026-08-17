@@ -5,6 +5,8 @@ node_modules/
 # Vue / Vite build output and caches
 dist/
 dist-ssr/
+artifacts/test-tool-macos/staging/
+artifacts/test-tool-macos/release/
 *.local
 deploy/development/beta-tester-inventory.local.json
 .DS_Store
