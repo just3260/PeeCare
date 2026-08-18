@@ -15,12 +15,12 @@ const validInventory = {
   devices: [
     {
       hardwareLabel: 'PeeCare development unit 1',
-      deviceId: 'PC-000001',
+      deviceId: 'PC-DEV-000001',
       productModel: 'pc-mini',
-      mqttPrincipal: 'device-PC-000001',
+      mqttPrincipal: 'device-PC-DEV-000001',
       firestore: {
         projectId: 'petcare-c7483',
-        documentPath: 'devices/PC-000001',
+        documentPath: 'devices/PC-DEV-000001',
         ingestionStatus: 'enabled',
       },
     },
@@ -29,16 +29,16 @@ const validInventory = {
 
 const validFirmware = {
   schemaVersion: 1,
-  deviceId: 'PC-000001',
+  deviceId: 'PC-DEV-000001',
   productModel: 'pc-mini',
-  clientId: 'PC-000001',
-  username: 'device-PC-000001',
+  clientId: 'PC-DEV-000001',
+  username: 'device-PC-DEV-000001',
   topics: {
-    urination: 'products/pc-mini/devices/PC-000001/events/urination',
-    battery: 'products/pc-mini/devices/PC-000001/status/battery',
+    urination: 'products/pc-mini/devices/PC-DEV-000001/events/urination',
+    battery: 'products/pc-mini/devices/PC-DEV-000001/status/battery',
   },
   payloadIdentity: {
-    deviceId: 'PC-000001',
+    deviceId: 'PC-DEV-000001',
     productModel: 'pc-mini',
   },
 }
@@ -48,7 +48,7 @@ describe('development device inventory', () => {
     expect(validateDeviceInventory(validInventory)).toEqual(validInventory.devices)
   })
 
-  it('returns duplicate_device_id before mutation for duplicate PC-000001 entries', () => {
+  it('returns duplicate_device_id before mutation for duplicate PC-DEV-000001 entries', () => {
     const duplicateInventory = {
       ...validInventory,
       devices: [validInventory.devices[0], { ...validInventory.devices[0], hardwareLabel: 'second unit' }],

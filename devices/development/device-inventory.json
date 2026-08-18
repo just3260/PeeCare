@@ -3,12 +3,12 @@
   "devices": [
     {
       "hardwareLabel": "PeeCare development unit 1",
-      "deviceId": "PC-000001",
+      "deviceId": "PC-DEV-000001",
       "productModel": "pc-mini",
-      "mqttPrincipal": "device-PC-000001",
+      "mqttPrincipal": "device-PC-DEV-000001",
       "firestore": {
         "projectId": "petcare-c7483",
-        "documentPath": "devices/PC-000001",
+        "documentPath": "devices/PC-DEV-000001",
         "ingestionStatus": "enabled"
       }
     }

@@ -21,13 +21,13 @@ describe('firmware publish configuration', () => {
 
     expect(validateFirmwareConfiguration(inventory, firmware)).toEqual(
       expect.objectContaining({
-        deviceId: 'PC-000001',
+        deviceId: 'PC-DEV-000001',
         productModel: 'pc-mini',
-        clientId: 'PC-000001',
-        username: 'device-PC-000001',
+        clientId: 'PC-DEV-000001',
+        username: 'device-PC-DEV-000001',
       }),
     )
-    expect(firmware.payloadIdentity).toEqual({ deviceId: 'PC-000001' })
+    expect(firmware.payloadIdentity).toEqual({ deviceId: 'PC-DEV-000001' })
     expect(firmware).not.toHaveProperty('password')
   })
 
@@ -104,7 +104,7 @@ describe('retry after disconnect fixture', () => {
 
     expect(validateRetryAfterDisconnect(fixture)).toEqual({ ok: true })
     expect(fixture.original.topic).toBe(
-      'products/pc-mini/devices/PC-000001/events/urination',
+      'products/pc-mini/devices/PC-DEV-000001/events/urination',
     )
     expect(fixture.retry.topic).toBe(fixture.original.topic)
     expect(fixture.retry.payload).toEqual(fixture.original.payload)
@@ -112,7 +112,7 @@ describe('retry after disconnect fixture', () => {
       schemaVersion: 1,
       eventId: 'evt-000001',
       eventType: 'urination',
-      deviceId: 'PC-000001',
+      deviceId: 'PC-DEV-000001',
       sequence: 42,
       recordedAtMs: 1785168000000,
       firmwareVersion: '1.2.0',

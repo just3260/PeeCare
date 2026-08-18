@@ -11,9 +11,9 @@ import {
 } from './provision-device.mjs'
 
 const device = {
-  deviceId: 'PC-000001',
+  deviceId: 'PC-DEV-000001',
   productModel: 'pc-mini',
-  mqttPrincipal: 'device-PC-000001',
+  mqttPrincipal: 'device-PC-DEV-000001',
 }
 
 function dependencies(overrides: Record<string, unknown> = {}) {
@@ -49,14 +49,14 @@ const aclRules = [
   {
     permission: 'allow',
     action: 'publish',
-    topic: 'products/pc-mini/devices/PC-000001/events/urination',
+    topic: 'products/pc-mini/devices/PC-DEV-000001/events/urination',
     qos: [1],
     retain: false,
   },
   {
     permission: 'allow',
     action: 'publish',
-    topic: 'products/pc-mini/devices/PC-000001/status/battery',
+    topic: 'products/pc-mini/devices/PC-DEV-000001/status/battery',
     qos: [1],
     retain: false,
   },
@@ -78,8 +78,8 @@ describe('provision-device', () => {
 
     expect(summary).toEqual({
       mode: 'apply',
-      deviceId: 'PC-000001',
-      principal: 'device-PC-000001',
+      deviceId: 'PC-DEV-000001',
+      principal: 'device-PC-DEV-000001',
       status: 'unsafe_handoff',
       verifications: ['inventory', 'firmware', 'emqx-access-control', 'acl-policy'],
     })
@@ -107,7 +107,7 @@ describe('provision-device', () => {
       expect(deps.randomBytes).toHaveBeenCalledWith(32)
       expect(generatedPassword).toMatch(/^[A-Za-z0-9_-]{43}$/)
       expect(mutation).toHaveBeenCalledWith({
-        username: 'device-PC-000001',
+        username: 'device-PC-DEV-000001',
         password: generatedPassword,
         isSuperuser: false,
       })
@@ -136,7 +136,7 @@ describe('provision-device', () => {
       dependencies: deps,
     })
 
-    expect(emqx.deleteCredential).toHaveBeenCalledWith('device-PC-000001')
+    expect(emqx.deleteCredential).toHaveBeenCalledWith('device-PC-DEV-000001')
     expect(summary.status).toBe('mutation_failed_rolled_back')
     const tty = await deps.openSecretTty.mock.results[0].value
     expect(tty.writeSecret).not.toHaveBeenCalled()
@@ -158,8 +158,8 @@ describe('provision-device', () => {
       dependencies: deps,
     })
 
-    expect(deps.emqx.deleteCredential).toHaveBeenCalledWith('device-PC-000001')
-    expect(deps.emqx.deleteAcl).toHaveBeenCalledWith('device-PC-000001')
+    expect(deps.emqx.deleteCredential).toHaveBeenCalledWith('device-PC-DEV-000001')
+    expect(deps.emqx.deleteAcl).toHaveBeenCalledWith('device-PC-DEV-000001')
     expect(summary.status).toBe('handoff_failed_rolled_back')
     expect(tty.writeSecret).toHaveBeenCalledOnce()
   })
@@ -200,20 +200,20 @@ describe('provision-device', () => {
     })
 
     await adapter.createCredential({
-      username: 'device-PC-000001',
+      username: 'device-PC-DEV-000001',
       password: 'generated-device-password',
       isSuperuser: false,
     })
-    await adapter.putAcl('device-PC-000001', [{ permission: 'deny', action: 'all', topic: '#' }])
-    await adapter.deleteAcl('device-PC-000001')
+    await adapter.putAcl('device-PC-DEV-000001', [{ permission: 'deny', action: 'all', topic: '#' }])
+    await adapter.deleteAcl('device-PC-DEV-000001')
 
     expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
       'https://emqx.development.example/api/v5/authentication/password_based%3Abuilt_in_database/users',
-      'https://emqx.development.example/api/v5/authorization/sources/built_in_database/rules/users/device-PC-000001',
-      'https://emqx.development.example/api/v5/authorization/sources/built_in_database/rules/users/device-PC-000001',
+      'https://emqx.development.example/api/v5/authorization/sources/built_in_database/rules/users/device-PC-DEV-000001',
+      'https://emqx.development.example/api/v5/authorization/sources/built_in_database/rules/users/device-PC-DEV-000001',
     ])
     expect(JSON.parse(fetchImpl.mock.calls[0][1].body)).toEqual({
-      user_id: 'device-PC-000001',
+      user_id: 'device-PC-DEV-000001',
       password: 'generated-device-password',
       is_superuser: false,
     })
@@ -252,8 +252,8 @@ describe('provision-device', () => {
 
     emitProvisionSummary(output, {
       mode: 'apply',
-      deviceId: 'PC-000001',
-      principal: 'device-PC-000001',
+      deviceId: 'PC-DEV-000001',
+      principal: 'device-PC-DEV-000001',
       status: 'applied',
       verifications: ['inventory'],
       password: 'sentinel-secret',
@@ -261,7 +261,7 @@ describe('provision-device', () => {
     })
 
     expect(output.write).toHaveBeenCalledWith(
-      '{"mode":"apply","deviceId":"PC-000001","principal":"device-PC-000001","status":"applied","verifications":["inventory"]}\n',
+      '{"mode":"apply","deviceId":"PC-DEV-000001","principal":"device-PC-DEV-000001","status":"applied","verifications":["inventory"]}\n',
     )
     expect(output.write.mock.calls.flat().join('')).not.toContain('sentinel-secret')
   })

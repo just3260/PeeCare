@@ -37,7 +37,7 @@ export function createFirestoreRegistryReader({ Firestore, environment = process
 
   return {
     async readDevice({ projectId, documentPath }) {
-      if (projectId !== 'petcare-c7483' || documentPath !== 'devices/PC-000001') {
+      if (projectId !== 'petcare-c7483' || documentPath !== 'devices/PC-DEV-000001') {
         fail('unapproved_registry_target', 'Registry reader accepts only the approved development document')
       }
       let firestore = clients.get(projectId)

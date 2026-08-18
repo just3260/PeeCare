@@ -13,9 +13,9 @@ import {
 } from './verify-device-acl.mjs'
 
 const canonical = {
-  deviceId: 'PC-000001',
+  deviceId: 'PC-DEV-000001',
   productModel: 'pc-mini',
-  username: 'device-PC-000001',
+  username: 'device-PC-DEV-000001',
   mqttUrl: 'mqtts://mqtt.development.example:8883',
 }
 
@@ -23,14 +23,14 @@ const expectedRules = [
   {
     permission: 'allow',
     action: 'publish',
-    topic: 'products/pc-mini/devices/PC-000001/events/urination',
+    topic: 'products/pc-mini/devices/PC-DEV-000001/events/urination',
     qos: [1],
     retain: false,
   },
   {
     permission: 'allow',
     action: 'publish',
-    topic: 'products/pc-mini/devices/PC-000001/status/battery',
+    topic: 'products/pc-mini/devices/PC-DEV-000001/status/battery',
     qos: [1],
     retain: false,
   },
@@ -43,7 +43,7 @@ describe('device ACL policy', () => {
       await readFile(resolve(process.cwd(), 'devices/development/acl-policy.json'), 'utf8'),
     )
 
-    expect(policy).toEqual({ username: 'device-PC-000001', rules: expectedRules })
+    expect(policy).toEqual({ username: 'device-PC-DEV-000001', rules: expectedRules })
     expect(validateAclPolicy(policy, canonical)).toEqual(expectedRules)
   })
 
@@ -59,7 +59,7 @@ describe('device ACL policy', () => {
     ],
     [
       'overbroad_acl_rule',
-      [{ ...expectedRules[0], topic: 'products/pc-mini/devices/PC-000001/#' }, expectedRules[1], expectedRules[2]],
+      [{ ...expectedRules[0], topic: 'products/pc-mini/devices/PC-DEV-000001/#' }, expectedRules[1], expectedRules[2]],
     ],
   ])('fails closed with %s', (code, rules) => {
     expect(() => validateAclPolicy({ username: canonical.username, rules }, canonical)).toThrowError(
@@ -72,7 +72,7 @@ describe('device ACL policy', () => {
       {
         name: 'publish-urination',
         operation: 'publish',
-        topic: 'products/pc-mini/devices/PC-000001/events/urination',
+        topic: 'products/pc-mini/devices/PC-DEV-000001/events/urination',
         qos: 1,
         retained: false,
         expected: 'allowed',
@@ -80,7 +80,7 @@ describe('device ACL policy', () => {
       {
         name: 'publish-battery-status',
         operation: 'publish',
-        topic: 'products/pc-mini/devices/PC-000001/status/battery',
+        topic: 'products/pc-mini/devices/PC-DEV-000001/status/battery',
         qos: 1,
         retained: false,
         expected: 'allowed',
@@ -88,7 +88,7 @@ describe('device ACL policy', () => {
       {
         name: 'deny-events-battery',
         operation: 'publish',
-        topic: 'products/pc-mini/devices/PC-000001/events/battery',
+        topic: 'products/pc-mini/devices/PC-DEV-000001/events/battery',
         qos: 1,
         retained: false,
         expected: 'denied',
@@ -104,7 +104,7 @@ describe('device ACL policy', () => {
       {
         name: 'deny-legacy-topic',
         operation: 'publish',
-        topic: 'devices/PC-000001/events/urination',
+        topic: 'devices/PC-DEV-000001/events/urination',
         qos: 1,
         retained: false,
         expected: 'denied',
@@ -112,7 +112,7 @@ describe('device ACL policy', () => {
       {
         name: 'deny-command-publish',
         operation: 'publish',
-        topic: 'products/pc-mini/devices/PC-000001/commands/restart',
+        topic: 'products/pc-mini/devices/PC-DEV-000001/commands/restart',
         qos: 1,
         retained: false,
         expected: 'denied',
@@ -120,14 +120,14 @@ describe('device ACL policy', () => {
       {
         name: 'deny-command-subscribe',
         operation: 'subscribe',
-        topic: 'products/pc-mini/devices/PC-000001/commands/#',
+        topic: 'products/pc-mini/devices/PC-DEV-000001/commands/#',
         qos: 1,
         expected: 'denied',
       },
       {
         name: 'deny-retained-urination',
         operation: 'publish',
-        topic: 'products/pc-mini/devices/PC-000001/events/urination',
+        topic: 'products/pc-mini/devices/PC-DEV-000001/events/urination',
         qos: 1,
         retained: true,
         expected: 'denied',
@@ -181,7 +181,7 @@ describe('MQTT 5 TLS ACL probe', () => {
         ...canonical,
         password: 'tty-supplied-password',
         operation: 'publish',
-        topic: 'products/pc-mini/devices/PC-000001/events/urination',
+        topic: 'products/pc-mini/devices/PC-DEV-000001/events/urination',
         qos: 1,
         retained: false,
         payload: { eventType: 'urination', sequence: 1 },
@@ -228,7 +228,7 @@ describe('MQTT 5 TLS ACL probe', () => {
         ...canonical,
         password: 'tty-supplied-password',
         operation: 'subscribe',
-        topic: 'products/pc-mini/devices/PC-000001/commands/#',
+        topic: 'products/pc-mini/devices/PC-DEV-000001/commands/#',
         qos: 1,
       }),
     ).resolves.toBe('denied')
@@ -280,7 +280,7 @@ describe('MQTT 5 TLS ACL probe', () => {
         ...canonical,
         password: 'tty-supplied-password',
         operation: 'publish',
-        topic: 'products/pc-mini/devices/PC-000001/events/urination',
+        topic: 'products/pc-mini/devices/PC-DEV-000001/events/urination',
         qos: 1,
         retained: false,
       }),
@@ -296,7 +296,7 @@ describe('MQTT 5 TLS ACL probe', () => {
         ...canonical,
         password: 'tty-supplied-password',
         operation: 'publsih',
-        topic: 'products/pc-mini/devices/PC-000001/events/urination',
+        topic: 'products/pc-mini/devices/PC-DEV-000001/events/urination',
         qos: 1,
         retained: false,
       }),
@@ -346,7 +346,7 @@ describe('ACL verification CLI', () => {
               mqttPrincipal: canonical.username,
               firestore: {
                 projectId: 'petcare-c7483',
-                documentPath: 'devices/PC-000001',
+                documentPath: 'devices/PC-DEV-000001',
                 ingestionStatus: 'enabled',
               },
             },
