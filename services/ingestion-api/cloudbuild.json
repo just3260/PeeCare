@@ -12,6 +12,18 @@
         "${_IMAGE}",
         "."
       ]
+    },
+    {
+      "name": "gcr.io/cloud-builders/docker",
+      "args": [
+        "run",
+        "--rm",
+        "${_IMAGE}",
+        "node",
+        "--input-type=module",
+        "--eval",
+        "import('@peecare/device-events-contract').then(({ loadValidators }) => loadValidators())"
+      ]
     }
   ],
   "images": ["${_IMAGE}"]

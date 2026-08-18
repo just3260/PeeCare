@@ -1,13 +1,16 @@
-import { Buffer } from 'node:buffer'
-import { spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-
-import { buildWebhookRequest } from './configure-emqx-webhook.mjs'
 import { readCurrentPasswordFromInteractiveTty } from '../../devices/development/credential-lifecycle.mjs'
+import { validateDeviceInventory } from '../../devices/development/device-configuration.mjs'
 import { createMqtt5TlsProbe } from '../../devices/development/verify-device-acl.mjs'
 
+const APPROVED_PROJECT = 'petcare-c7483'
+const APPROVED_REGION = 'asia-east1'
+const APPROVED_MQTT_HOST = 'd1f775fd.ala.asia-southeast1.emqxsl.com'
 const SECRET_REFERENCE_PATTERN =
-  /^projects\/(?:petcare-c7483|348528459946)\/secrets\/[A-Za-z0-9_-]+\/versions\/[1-9][0-9]*$/
+  /^projects\/(?:petcare-c7483|348528459946)\/secrets\/peecare-emqx-webhook-current\/versions\/[1-9][0-9]*$/
 const TOPIC_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
 
 export class EmqxWebhookVerificationError extends Error {
@@ -22,362 +25,154 @@ function fail(code, message) {
   throw new EmqxWebhookVerificationError(code, message)
 }
 
-function validatedHttpsOrigin(rawUrl, code, label) {
+function validatedMqttEndpoint(rawUrl) {
   let url
   try {
     url = new URL(rawUrl)
   } catch {
-    fail(code, `${label} must be a credential-free HTTPS origin.`)
-  }
-  if (
-    url.protocol !== 'https:' ||
-    url.username ||
-    url.password ||
-    url.pathname !== '/' ||
-    url.search ||
-    url.hash
-  ) {
-    fail(code, `${label} must be a credential-free HTTPS origin.`)
-  }
-  return url.origin
-}
-
-function validatedMqttUrl(rawUrl) {
-  let url
-  try {
-    url = new URL(rawUrl)
-  } catch {
-    fail('unsafe_mqtt_endpoint', 'MQTT verification requires mqtts:// on port 8883.')
+    fail('unsafe_mqtt_endpoint', 'MQTT URL must be a credential-free mqtts endpoint.')
   }
   if (
     url.protocol !== 'mqtts:' ||
     url.port !== '8883' ||
-    !url.hostname ||
+    url.hostname !== APPROVED_MQTT_HOST ||
     url.username ||
     url.password ||
     (url.pathname !== '' && url.pathname !== '/') ||
     url.search ||
     url.hash
   ) {
-    fail('unsafe_mqtt_endpoint', 'MQTT verification requires mqtts:// on port 8883.')
+    fail('unsafe_mqtt_endpoint', 'MQTT URL must be a credential-free mqtts endpoint.')
   }
-  return url.toString()
+  return url.href
 }
 
-function normalizedMetrics(response) {
-  const metrics = response?.metrics ?? response
-  const counters = {
-    matched: metrics?.matched,
-    success: metrics?.success,
-    failed: metrics?.failed,
-    dropped: metrics?.dropped,
-    lateReply: metrics?.late_reply ?? metrics?.lateReply,
-  }
+function validateMqttIdentity(deviceId, username, password) {
   if (
-    Object.values(counters).some(
-      (value) => !Number.isSafeInteger(value) || value < 0,
-    )
+    typeof deviceId !== 'string' ||
+    !TOPIC_SEGMENT_PATTERN.test(deviceId) ||
+    username !== `device-${deviceId}` ||
+    typeof password !== 'string' ||
+    password.length === 0
   ) {
-    fail('invalid_delivery_counters', 'EMQX action counters are missing or invalid.')
+    fail('device_credential_precondition_unmet', 'Registered device credentials are required.')
   }
-  return Object.freeze(counters)
 }
 
-function mutableAction(action, authorization) {
-  const allowed = [
-    'connector',
-    'description',
-    'enable',
-    'local_topic',
-    'name',
-    'parameters',
-    'resource_opts',
-    'type',
-  ]
-  const body = Object.fromEntries(
-    allowed.filter((key) => action?.[key] !== undefined).map((key) => [key, structuredClone(action[key])]),
-  )
-  if (!body.parameters?.headers || typeof body.parameters.headers !== 'object') {
-    fail('invalid_live_action', 'Live EMQX HTTP action is missing its header configuration.')
+function validateDocumentIdentity(deviceId, eventId) {
+  if (
+    typeof deviceId !== 'string' ||
+    !TOPIC_SEGMENT_PATTERN.test(deviceId) ||
+    typeof eventId !== 'string' ||
+    eventId.length < 1 ||
+    eventId.length > 128 ||
+    /[\/\0]/.test(eventId)
+  ) {
+    fail('invalid_probe_identity', 'Firestore probe identity is missing or unsafe.')
   }
-  for (const name of Object.keys(body.parameters.headers)) {
-    if (name.toLowerCase() === 'authorization') delete body.parameters.headers[name]
-  }
-  body.parameters.headers.authorization = authorization
-  return body
-}
-
-function defaultExecute(command, args) {
-  return spawnSync(command, args, {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
 }
 
 export function createEmqxWebhookVerificationAdapter({
-  managementUrl,
-  apiKey,
-  apiSecret,
-  ingestionOrigin,
   mqttUrl,
-  mqttPassword,
-  fetchImpl = globalThis.fetch,
-  execute = defaultExecute,
-  publishMqtt,
-  wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
-  requestTimeoutMs = 10_000,
-  observationWindowMs = 1_000,
+  deviceId,
+  username,
+  password,
+  projectId,
+  mqttProbe = createMqtt5TlsProbe(),
+  firestore,
 }) {
-  const baseUrl = validatedHttpsOrigin(
-    managementUrl,
-    'unsafe_management_endpoint',
-    'EMQX management URL',
-  )
-  const targetOrigin = validatedHttpsOrigin(
-    ingestionOrigin,
-    'invalid_target',
-    'Development ingestion URL',
-  )
-  const brokerUrl = validatedMqttUrl(mqttUrl)
-  if (
-    typeof apiKey !== 'string' ||
-    apiKey.length === 0 ||
-    typeof apiSecret !== 'string' ||
-    apiSecret.length === 0 ||
-    /[\r\n\0]/.test(`${apiKey}${apiSecret}`)
-  ) {
-    fail('missing_management_credentials', 'Scoped EMQX API credentials are required.')
+  const validatedMqttUrl = validatedMqttEndpoint(mqttUrl)
+  validateMqttIdentity(deviceId, username, password)
+  if (projectId !== APPROVED_PROJECT) {
+    fail('target_mismatch', 'Firestore project must match the approved development project.')
   }
-  if (
-    typeof mqttPassword !== 'string' ||
-    mqttPassword.length === 0 ||
-    /[\r\n\0]/.test(mqttPassword)
-  ) {
-    fail('unsafe_credential_input', 'A non-empty MQTT device password is required.')
-  }
-  if (typeof publishMqtt !== 'function') {
-    fail('mqtt_publisher_required', 'A TLS MQTT publisher is required for live verification.')
-  }
-  if (
-    typeof fetchImpl !== 'function' ||
-    typeof execute !== 'function' ||
-    typeof wait !== 'function' ||
-    !Number.isInteger(requestTimeoutMs) ||
-    requestTimeoutMs <= 0 ||
-    !Number.isInteger(observationWindowMs) ||
-    observationWindowMs <= 0
-  ) {
+  if (typeof mqttProbe !== 'function') {
     fail('invalid_verification_adapter', 'Verification adapter dependencies are invalid.')
   }
+  const firestorePromise = firestore
+    ? Promise.resolve(firestore)
+    : import('@google-cloud/firestore').then(
+        ({ Firestore }) => new Firestore({ projectId }),
+      )
 
-  const actionPath = '/api/v5/actions/http%3Apeecare_development_ingestion'
-  const authorization = `Basic ${Buffer.from(`${apiKey}:${apiSecret}`, 'utf8').toString('base64')}`
-  let lastCounters
-  let selectedSecret
-
-  async function request(path, { method = 'GET', body, expectedStatuses = [200] } = {}) {
-    let response
-    try {
-      response = await fetchImpl(`${baseUrl}${path}`, {
-        method,
-        signal: AbortSignal.timeout(requestTimeoutMs),
-        headers: {
-          accept: 'application/json',
-          authorization,
-          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-        },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      })
-    } catch {
-      fail('emqx_network_failure', 'EMQX management request failed.')
-    }
-    if (!expectedStatuses.includes(response.status)) {
-      fail('emqx_unexpected_status', `EMQX returned unexpected HTTP status ${response.status}.`)
-    }
-    if (response.status === 204) return null
-    try {
-      return await response.json()
-    } catch {
-      fail('emqx_unexpected_response', 'EMQX response was not valid JSON.')
-    }
-  }
-
-  async function readCounters() {
-    lastCounters = normalizedMetrics(await request(`${actionPath}/metrics`))
-    return lastCounters
-  }
-
-  return {
-    async inspectConfiguration() {
-      const [rule, action, counters] = await Promise.all([
-        request('/api/v5/rules/peecare_development_telemetry'),
-        request(actionPath),
-        readCounters(),
-      ])
-      return Object.freeze({
-        rule: rule?.enable === true ? 'enabled' : 'disabled',
-        action: action?.status === 'connected' ? 'connected' : 'disconnected',
-        counters,
-      })
-    },
-    async switchSecret(reference) {
-      if (typeof reference !== 'string' || !SECRET_REFERENCE_PATTERN.test(reference)) {
-        fail('invalid_rotation_references', 'A numeric Secret Manager version reference is required.')
+  return Object.freeze({
+    async publishProbe({ topic, qos, payload }) {
+      if (
+        typeof topic !== 'string' ||
+        topic.length < 1 ||
+        topic.length > 512 ||
+        ![0, 1, 2].includes(qos) ||
+        payload === null ||
+        typeof payload !== 'object' ||
+        Array.isArray(payload) ||
+        typeof payload.deviceId !== 'string' ||
+        !TOPIC_SEGMENT_PATTERN.test(payload.deviceId)
+      ) {
+        fail('invalid_probe', 'MQTT probe is malformed.')
       }
-      const segments = reference.split('/')
-      const result = execute('gcloud', [
-        'secrets',
-        'versions',
-        'access',
-        segments[5],
-        '--secret',
-        segments[3],
-        '--project',
-        segments[1],
-      ])
-      const secret = typeof result?.stdout === 'string' ? result.stdout.replace(/\r?\n$/, '') : ''
-      if (result?.status !== 0 || secret.length === 0 || /[\r\n\0]/.test(secret)) {
-        fail('secret_access_failed', 'Unable to access a safe webhook secret version.')
-      }
-      const action = await request(actionPath)
-      await request(actionPath, {
-        method: 'PUT',
-        body: mutableAction(action, `Bearer ${secret}`),
-        expectedStatuses: [200, 204],
-      })
-      selectedSecret = secret
-    },
-    async probe(testCase) {
-      const deviceId = testCase?.payload?.deviceId
-      const username = `device-${deviceId}`
-      if (testCase?.name === 'array-payload') {
-        try {
-          buildWebhookRequest({
-            topic: testCase.topic,
-            clientid: deviceId,
-            username,
-            qos: testCase.qos,
-            flags: { retain: testCase.retained },
-            publish_received_at: Date.now(),
-            payload: testCase.payload,
-          })
-        } catch (error) {
-          if (error?.code === 'invalid_payload') {
-            return { webhookStatus: null, contractError: 'invalid_payload', counters: lastCounters }
-          }
-          throw error
-        }
-        fail('payload_boundary_failed', 'Array payload unexpectedly passed contract validation.')
-      }
-      if (testCase?.name === 'retained-rejection') {
-        if (typeof selectedSecret !== 'string') {
-          fail('rotation_not_initialized', 'Select a webhook secret before retained verification.')
-        }
-        const rendered = buildWebhookRequest({
-          topic: testCase.topic,
-          clientid: deviceId,
+      let outcome
+      try {
+        outcome = await mqttProbe({
+          operation: 'publish',
+          mqttUrl: validatedMqttUrl,
+          deviceId,
           username,
-          qos: testCase.qos,
-          flags: { retain: true },
-          publish_received_at: Date.now(),
-          payload: testCase.payload,
+          password,
+          topic,
+          qos,
+          retained: false,
+          payload,
         })
-        let response
-        try {
-          response = await fetchImpl(`${targetOrigin}${rendered.path}`, {
-            method: rendered.method,
-            signal: AbortSignal.timeout(requestTimeoutMs),
-            headers: {
-              ...rendered.headers,
-              authorization: `Bearer ${selectedSecret}`,
-            },
-            body: JSON.stringify(rendered.body),
-          })
-        } catch {
-          fail('webhook_network_failure', 'Retained webhook verification request failed.')
-        }
-        let body
-        try {
-          body = await response.json()
-        } catch {
-          body = null
-        }
-        return {
-          webhookStatus: response.status,
-          errorCode: body?.error?.code,
-          counters: lastCounters,
-        }
+      } catch (error) {
+        if (typeof error?.code === 'string') throw error
+        fail('mqtt_publish_failed', 'MQTT probe failed.')
       }
-      if (testCase?.name !== 'legacy-non-delivery') {
-        buildWebhookRequest({
-          topic: testCase.topic,
-          clientid: deviceId,
-          username,
-          qos: testCase.qos,
-          flags: { retain: testCase.retained },
-          publish_received_at: Date.now(),
-          payload: testCase.payload,
-        })
-      }
-      const baseline = lastCounters ?? (await readCounters())
-      if (testCase.name === 'legacy-non-delivery') {
-        await request('/api/v5/publish', {
-          method: 'POST',
-          body: {
-            topic: testCase.topic,
-            qos: testCase.qos,
-            retain: false,
-            payload: JSON.stringify(testCase.payload),
-          },
-          expectedStatuses: [200, 202],
-        })
-        await wait(observationWindowMs)
-        return { webhookStatus: null, counters: await readCounters() }
-      }
-      const outcome = await publishMqtt({
-        operation: 'publish',
-        mqttUrl: brokerUrl,
-        deviceId,
-        username,
-        password: mqttPassword,
-        topic: testCase.topic,
-        qos: testCase.qos,
-        retained: testCase.retained,
-        payload: testCase.payload,
-      })
-      if (outcome !== 'allowed') {
-        fail('mqtt_publish_failed', 'MQTT verification publish was not acknowledged.')
-      }
-      await wait(observationWindowMs)
-      const counters = await readCounters()
-      return {
-        webhookStatus:
-          counters.success === baseline.success + 1 && counters.failed === baseline.failed
-            ? 200
-            : null,
-        counters,
+      if (outcome === 'allowed') return 'accepted'
+      if (outcome === 'denied') return 'rejected'
+      if (outcome === 'closed') return 'ambiguous'
+      fail('invalid_verification_adapter', 'MQTT probe returned an invalid outcome.')
+    },
+
+    async readEventDocument({ deviceId, eventId }) {
+      validateDocumentIdentity(deviceId, eventId)
+      try {
+        const client = await firestorePromise
+        const snapshot = await client
+          .doc(`devices/${deviceId}/events/${eventId}`)
+          .get()
+        return Object.freeze({ count: snapshot.exists ? 1 : 0 })
+      } catch {
+        fail('firestore_read_failed', 'Unable to read the probe event document.')
       }
     },
-  }
+  })
 }
 
 function validateEnvironment(environment) {
-  const previousReference = environment?.PEECARE_EMQX_WEBHOOK_SECRET_PREVIOUS_REF
-  const currentReference = environment?.PEECARE_EMQX_WEBHOOK_SECRET_CURRENT_REF
-  const deviceId = environment?.PEECARE_DEVELOPMENT_DEVICE_ID
-  const productModel = environment?.PEECARE_DEVELOPMENT_PRODUCT_MODEL
   if (
-    typeof previousReference !== 'string' ||
-    typeof currentReference !== 'string' ||
-    !SECRET_REFERENCE_PATTERN.test(previousReference) ||
-    !SECRET_REFERENCE_PATTERN.test(currentReference) ||
-    previousReference === currentReference
+    environment?.PEECARE_DEVELOPMENT_PROJECT_ID !== APPROVED_PROJECT ||
+    environment?.PEECARE_DEVELOPMENT_FIRESTORE_REGION !== APPROVED_REGION
   ) {
-    fail(
-      'invalid_rotation_references',
-      'Distinct numeric previous and current Secret Manager version references are required.',
-    )
+    fail('target_mismatch', 'Verification inventory must match development project and region.')
   }
+  const currentReference = environment.PEECARE_INGESTION_SECRET_CURRENT_REF
+  const previousReference = environment.PEECARE_INGESTION_SECRET_PREVIOUS_REF
+  if (
+    typeof currentReference !== 'string' ||
+    !SECRET_REFERENCE_PATTERN.test(currentReference)
+  ) {
+    fail('invalid_secret_reference', 'A numeric current ingestion secret reference is required.')
+  }
+  if (
+    previousReference !== undefined &&
+    (typeof previousReference !== 'string' ||
+      !SECRET_REFERENCE_PATTERN.test(previousReference) ||
+      previousReference.split('/').at(-1) === currentReference.split('/').at(-1))
+  ) {
+    fail('invalid_rotation_references', 'Previous ingestion secret reference is invalid.')
+  }
+  const deviceId = environment.PEECARE_DEVELOPMENT_DEVICE_ID
+  const productModel = environment.PEECARE_DEVELOPMENT_PRODUCT_MODEL
   if (
     typeof deviceId !== 'string' ||
     typeof productModel !== 'string' ||
@@ -386,186 +181,181 @@ function validateEnvironment(environment) {
   ) {
     fail('invalid_probe_identity', 'Probe device identity is missing or unsafe.')
   }
-  return Object.freeze({ previousReference, currentReference, deviceId, productModel })
+  return Object.freeze({
+    deviceId,
+    productModel,
+    rotation:
+      previousReference === undefined
+        ? Object.freeze({
+            status: 'precondition_unmet',
+            code: 'previous_secret_not_deployed',
+          })
+        : Object.freeze({ status: 'precondition_satisfied' }),
+  })
 }
 
-function assertCounters(counters, code = 'invalid_delivery_counters') {
-  if (
-    !counters ||
-    !Number.isSafeInteger(counters.matched) ||
-    counters.matched < 0 ||
-    !Number.isSafeInteger(counters.success) ||
-    counters.success < 0 ||
-    !Number.isSafeInteger(counters.failed) ||
-    counters.failed < 0 ||
-    !Number.isSafeInteger(counters.dropped) ||
-    counters.dropped < 0 ||
-    !Number.isSafeInteger(counters.lateReply) ||
-    counters.lateReply < 0
-  ) {
-    fail(code, 'EMQX action counters are missing or invalid.')
-  }
-  return counters
-}
-
-function expectNoDropOrLateReply(counters, before) {
-  if (
-    counters.dropped !== before.dropped ||
-    counters.lateReply !== before.lateReply
-  ) {
-    fail(
-      'delivery_health_degraded',
-      'Verification produced a dropped or late-reply delivery.',
-    )
-  }
-}
-
-function expectSuccessfulDelivery(result, before) {
-  const counters = assertCounters(result?.counters)
-  expectNoDropOrLateReply(counters, before)
-  if (
-    !Number.isInteger(result?.webhookStatus) ||
-    result.webhookStatus < 200 ||
-    result.webhookStatus >= 300
-  ) {
-    fail('webhook_probe_failed', 'Canonical webhook probe did not receive a 2xx response.')
-  }
-  if (counters.success !== before.success + 1 || counters.failed !== before.failed) {
-    fail('delivery_counter_stalled', 'Canonical delivery did not increment success exactly once.')
-  }
-  return counters
-}
-
-function eventPayload(eventType, deviceId, now, sequence) {
+function eventPayload(eventType, deviceId, timestamp, runId, sequence, eventIdLabel = eventType) {
   const common = {
     schemaVersion: 1,
-    eventId: `${deviceId}:webhook-verify:${sequence}`,
+    eventId: `emqx-e2e-${eventIdLabel}-${timestamp}-${runId}`,
     eventType,
     deviceId,
     sequence,
-    recordedAtMs: now - 1_000,
+    recordedAtMs: timestamp - 1_000,
     firmwareVersion: '1.0.0',
   }
   return eventType === 'urination'
-    ? { ...common, flushDurationMs: 3_000, pumpDurationMs: 5_000 }
+    ? { ...common, flushDurationMs: 1_000, pumpDurationMs: 2_000 }
     : { ...common, batteryLevelPercent: 75, batteryVoltageMv: 3_975 }
 }
 
-function sanitizedSummary(initial, final) {
-  return Object.freeze({
-    status: 'healthy',
-    rule: 'enabled',
-    action: 'connected',
-    rotation: Object.freeze({ previous: 'verified', current: 'verified' }),
-    deliveries: Object.freeze({
-      urination: 1,
-      battery: 1,
-      legacy: 0,
-      retainedRejected: 1,
-      invalidPayload: 1,
-    }),
-    counterDelta: Object.freeze({
-      success: final.success - initial.success,
-      failed: final.failed - initial.failed,
-      dropped: final.dropped - initial.dropped,
-      lateReply: final.lateReply - initial.lateReply,
-    }),
-  })
+function assertDocumentCount(result) {
+  if (!result || !Number.isSafeInteger(result.count) || result.count < 0) {
+    fail('invalid_firestore_result', 'Firestore adapter returned an invalid document count.')
+  }
+  return result.count
 }
 
-export async function runEmqxWebhookVerification({ environment, adapter, now = Date.now, write }) {
-  const { previousReference, currentReference, deviceId, productModel } =
-    validateEnvironment(environment)
+async function publishCanonical(adapter, probe) {
+  const outcome = await adapter.publishProbe(probe)
+  if (outcome !== 'accepted') {
+    fail('mqtt_publish_failed', 'MQTT broker did not accept the canonical probe.')
+  }
+}
+
+async function expectCanonicalDocument({
+  adapter,
+  deviceId,
+  eventId,
+  pollAttempts,
+  pollIntervalMs,
+  wait,
+}) {
+  for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
+    const count = assertDocumentCount(
+      await adapter.readEventDocument({ deviceId, eventId }),
+    )
+    if (count === 1) return
+    if (count > 1) {
+      fail('canonical_delivery_failed', 'Canonical probe produced more than one document.')
+    }
+    if (attempt + 1 < pollAttempts) await wait(pollIntervalMs)
+  }
+  fail('canonical_delivery_failed', 'Canonical probe did not land within bounded polling.')
+}
+
+async function expectLegacyNonDelivery({
+  adapter,
+  deviceId,
+  eventId,
+  pollAttempts,
+  pollIntervalMs,
+  wait,
+}) {
+  for (let attempt = 0; attempt < pollAttempts; attempt += 1) {
+    const count = assertDocumentCount(
+      await adapter.readEventDocument({ deviceId, eventId }),
+    )
+    if (count !== 0) {
+      fail('legacy_delivery_detected', 'Legacy topic unexpectedly produced an event document.')
+    }
+    if (attempt + 1 < pollAttempts) await wait(pollIntervalMs)
+  }
+}
+
+export async function runEmqxWebhookVerification({
+  environment,
+  adapter,
+  now = Date.now,
+  createRunId = randomUUID,
+  pollAttempts = 5,
+  pollIntervalMs = 1_000,
+  wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+  write,
+}) {
+  const { deviceId, productModel, rotation } = validateEnvironment(environment)
+  if (
+    typeof adapter?.publishProbe !== 'function' ||
+    typeof adapter?.readEventDocument !== 'function' ||
+    typeof wait !== 'function' ||
+    !Number.isInteger(pollAttempts) ||
+    pollAttempts < 1 ||
+    !Number.isInteger(pollIntervalMs) ||
+    pollIntervalMs < 0
+  ) {
+    fail('invalid_verification_adapter', 'Verification dependencies are invalid.')
+  }
   const timestamp = now()
-  if (!Number.isSafeInteger(timestamp) || timestamp < 1_000) {
-    fail('invalid_probe_time', 'Verification clock must return positive epoch milliseconds.')
+  const runId = createRunId()
+  if (
+    !Number.isSafeInteger(timestamp) ||
+    timestamp < 1_000 ||
+    typeof runId !== 'string' ||
+    !/^[A-Za-z0-9-]{1,64}$/.test(runId)
+  ) {
+    fail('invalid_probe_identity', 'Probe run identity is invalid.')
   }
-  const inspected = await adapter.inspectConfiguration()
-  if (inspected?.rule !== 'enabled' || inspected?.action !== 'connected') {
-    fail('configuration_unhealthy', 'Webhook rule and action must be enabled and connected.')
-  }
-  const initial = assertCounters(inspected.counters)
 
   const canonicalPrefix = `products/${productModel}/devices/${deviceId}`
-  let previousResult
-  await adapter.switchSecret(previousReference)
-  try {
-    previousResult = await adapter.probe({
-      name: 'previous-urination',
-      topic: `${canonicalPrefix}/events/urination`,
-      qos: 1,
-      retained: false,
-      payload: eventPayload('urination', deviceId, timestamp, 1),
-    })
-  } finally {
-    await adapter.switchSecret(currentReference)
-  }
-  let counters = expectSuccessfulDelivery(previousResult, initial)
+  const urination = eventPayload('urination', deviceId, timestamp, runId, 1)
+  const battery = eventPayload('battery', deviceId, timestamp, runId, 2)
+  const legacy = eventPayload('urination', deviceId, timestamp, runId, 3, 'legacy')
 
-  const currentResult = await adapter.probe({
-    name: 'current-battery',
+  await publishCanonical(adapter, {
+    topic: `${canonicalPrefix}/events/urination`,
+    qos: 1,
+    payload: urination,
+  })
+  await expectCanonicalDocument({
+    adapter,
+    deviceId,
+    eventId: urination.eventId,
+    pollAttempts,
+    pollIntervalMs,
+    wait,
+  })
+
+  await publishCanonical(adapter, {
     topic: `${canonicalPrefix}/status/battery`,
     qos: 1,
-    retained: false,
-    payload: eventPayload('battery', deviceId, timestamp, 2),
+    payload: battery,
   })
-  counters = expectSuccessfulDelivery(currentResult, counters)
+  await expectCanonicalDocument({
+    adapter,
+    deviceId,
+    eventId: battery.eventId,
+    pollAttempts,
+    pollIntervalMs,
+    wait,
+  })
 
-  const legacyResult = await adapter.probe({
-    name: 'legacy-non-delivery',
-    topic: `devices/${deviceId}/events/urination`,
+  const legacyOutcome = await adapter.publishProbe({
+    topic: 'peecare/device/1/status',
     qos: 1,
-    retained: false,
-    payload: eventPayload('urination', deviceId, timestamp, 3),
+    payload: legacy,
   })
-  const legacyCounters = assertCounters(legacyResult?.counters)
-  expectNoDropOrLateReply(legacyCounters, counters)
-  if (
-    legacyResult.webhookStatus !== null ||
-    legacyCounters.success !== counters.success ||
-    legacyCounters.failed !== counters.failed
-  ) {
-    fail('legacy_delivery_detected', 'Legacy topic unexpectedly produced a webhook delivery.')
+  if (legacyOutcome === 'accepted' || legacyOutcome === 'ambiguous') {
+    await expectLegacyNonDelivery({
+      adapter,
+      deviceId,
+      eventId: legacy.eventId,
+      pollAttempts,
+      pollIntervalMs,
+      wait,
+    })
+  } else if (legacyOutcome !== 'rejected') {
+    fail('invalid_verification_adapter', 'MQTT probe returned an invalid outcome.')
   }
 
-  const retainedResult = await adapter.probe({
-    name: 'retained-rejection',
-    topic: `${canonicalPrefix}/events/urination`,
-    qos: 1,
-    retained: true,
-    payload: eventPayload('urination', deviceId, timestamp, 4),
+  const summary = Object.freeze({
+    status: 'healthy',
+    deliveries: Object.freeze({
+      urination: 'delivered',
+      battery: 'delivered',
+      legacy: 'not_delivered',
+    }),
+    rotation,
   })
-  const retainedCounters = assertCounters(retainedResult?.counters)
-  expectNoDropOrLateReply(retainedCounters, legacyCounters)
-  if (
-    retainedResult.webhookStatus !== 422 ||
-    retainedResult.errorCode !== 'retained_event' ||
-    retainedCounters.success !== counters.success ||
-    ![counters.failed, counters.failed + 1].includes(retainedCounters.failed)
-  ) {
-    fail('retained_probe_failed', 'Retained probe did not produce the expected rejection.')
-  }
-  counters = retainedCounters
-
-  const arrayResult = await adapter.probe({
-    name: 'array-payload',
-    topic: `${canonicalPrefix}/events/urination`,
-    qos: 1,
-    retained: false,
-    payload: [{ deviceId }],
-  })
-  const arrayCounters = assertCounters(arrayResult?.counters)
-  expectNoDropOrLateReply(arrayCounters, counters)
-  if (
-    arrayResult.webhookStatus !== null ||
-    arrayResult.contractError !== 'invalid_payload' ||
-    arrayCounters.success !== counters.success ||
-    arrayCounters.failed !== counters.failed
-  ) {
-    fail('payload_boundary_failed', 'Array payload was not recorded as a contract failure.')
-  }
-
-  const summary = sanitizedSummary(initial, arrayCounters)
   write(JSON.stringify(summary))
   return summary
 }
@@ -581,33 +371,57 @@ export async function runEmqxWebhookVerificationCli({
   environment = process.env,
   stdout = process.stdout,
   stderr = process.stderr,
-  readPassword = readCurrentPasswordFromInteractiveTty,
   createAdapter = createEmqxWebhookVerificationAdapter,
-  publishMqtt = createMqtt5TlsProbe(),
+  artifacts,
+  readPassword = readCurrentPasswordFromInteractiveTty,
+  now = Date.now,
+  createRunId = randomUUID,
+  wait,
 } = {}) {
   try {
     if (argv.length !== 0) {
       fail('invalid_arguments', 'Webhook verification accepts no command arguments.')
     }
     if (Object.keys(environment).some((key) => /(?:DEVICE.*PASSWORD|PASSWORD.*DEVICE)/i.test(key))) {
-      fail(
-        'device_password_input_forbidden',
-        'Device password must come from the hidden TTY prompt.',
-      )
+      fail('device_password_input_forbidden', 'Device password must come from the hidden TTY prompt.')
     }
-    const mqttPassword = await readPassword()
+    const loadedArtifacts = artifacts ?? {
+      inventory: JSON.parse(
+        await readFile(resolve(process.cwd(), 'devices/development/device-inventory.json'), 'utf8'),
+      ),
+    }
+    const devices = validateDeviceInventory(loadedArtifacts.inventory)
+    if (devices.length !== 1) {
+      fail('invalid_device_inventory', 'Webhook verification requires one inventory device.')
+    }
+    const [device] = devices
+    validatedMqttEndpoint(environment.PEECARE_DEVICE_MQTT_URL)
+    let password
+    try {
+      password = await readPassword()
+    } catch {
+      fail('device_credential_precondition_unmet', 'Device password is required from hidden TTY.')
+    }
+    if (typeof password !== 'string' || password.length === 0) {
+      fail('device_credential_precondition_unmet', 'Device password is required from hidden TTY.')
+    }
     const adapter = createAdapter({
-      managementUrl: environment.PEECARE_EMQX_API_URL,
-      apiKey: environment.PEECARE_EMQX_API_KEY,
-      apiSecret: environment.PEECARE_EMQX_API_SECRET,
-      ingestionOrigin: environment.PEECARE_DEVELOPMENT_INGESTION_ORIGIN,
       mqttUrl: environment.PEECARE_DEVICE_MQTT_URL,
-      mqttPassword,
-      publishMqtt,
+      deviceId: device.deviceId,
+      username: device.mqttPrincipal,
+      password,
+      projectId: environment.PEECARE_DEVELOPMENT_PROJECT_ID,
     })
     await runEmqxWebhookVerification({
-      environment,
+      environment: {
+        ...environment,
+        PEECARE_DEVELOPMENT_DEVICE_ID: device.deviceId,
+        PEECARE_DEVELOPMENT_PRODUCT_MODEL: device.productModel,
+      },
       adapter,
+      now,
+      createRunId,
+      ...(wait ? { wait } : {}),
       write: (line) => stdout.write(`${line}\n`),
     })
     return 0

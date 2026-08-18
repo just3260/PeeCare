@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 
 import {
   buildWebhookRequest,
-  createEmqxWebhookManagementAdapter,
   loadWebhookTemplate,
   matchesCanonicalTopic,
   runEmqxWebhookConfiguration,
@@ -10,58 +10,14 @@ import {
 } from './configure-emqx-webhook.mjs'
 
 const currentSecretReference =
-  'projects/petcare-c7483/secrets/emqx-webhook-current/versions/7'
+  'projects/petcare-c7483/secrets/peecare-emqx-webhook-current/versions/7'
 
-function approvedApiSpec() {
+function forbiddenAdapter() {
   return {
-    paths: {
-      '/api/v5/actions': {
-        post: {
-          requestBody: {
-            content: {
-              'application/json': {
-                schema: { $ref: '#/components/schemas/http_action' },
-              },
-            },
-          },
-        },
-      },
-    },
-    components: {
-      schemas: {
-        http_action: {
-          properties: {
-            resource_opts: {
-              properties: {
-                query_mode: {},
-                worker_pool_size: {},
-                inflight_window: {},
-                max_buffer_bytes: {},
-                request_ttl: {},
-                health_check_interval: {},
-              },
-            },
-          },
-        },
-      },
-    },
-  }
-}
-
-function configurationAdapter(apiSpec = approvedApiSpec()) {
-  return {
-    readApiSpec: vi.fn(async () => apiSpec),
-    planConfiguration: vi.fn(async () => ({
-      connector: 'create',
-      action: 'create',
-      rule: 'create',
-    })),
-    accessSecret: vi.fn(async () => 'sentinel-current-secret'),
-    applyConfiguration: vi.fn(async () => ({
-      connector: 'connected',
-      action: 'connected',
-      rule: 'enabled',
-    })),
+    readApiSpec: vi.fn(async () => { throw new Error('forbidden') }),
+    planConfiguration: vi.fn(async () => { throw new Error('forbidden') }),
+    accessSecret: vi.fn(async () => { throw new Error('forbidden') }),
+    applyConfiguration: vi.fn(async () => { throw new Error('forbidden') }),
   }
 }
 
@@ -70,6 +26,8 @@ function configurationEnvironment(): NodeJS.ProcessEnv {
     PEECARE_DEVELOPMENT_INGESTION_ORIGIN:
       'https://peecare-ingestion-development-example.a.run.app',
     PEECARE_INGESTION_SECRET_CURRENT_REF: currentSecretReference,
+    PEECARE_EMQX_CONNECTOR_NAME: 'c-d1f775fd-ae8109',
+    PEECARE_EMQX_ACTION_NAME: 'a-d1f775fd-1a0b6a',
   }
 }
 
@@ -188,47 +146,47 @@ describe('development EMQX webhook configuration', () => {
     ).toThrowError(expect.objectContaining({ code: 'invalid_payload' }))
   })
 
-  it('defines the HTTP action as a JSON POST of the complete selected row', () => {
+  it('defines the Serverless action with only the fixed two-field body wrapper', () => {
     const template = loadWebhookTemplate()
+    const serialized = JSON.stringify(template)
 
     expect(template.action).toMatchObject({
       type: 'http',
-      connector: 'peecare_development_ingestion',
+      connector: '{{PEECARE_EMQX_CONNECTOR_NAME}}',
       parameters: {
         method: 'post',
         path: '/v1/emqx/events',
         headers: { 'content-type': 'application/json' },
-        body: '${.}',
+        body: '{"webhookAuthorization":"Bearer {{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}","event":${.}}',
       },
     })
-  })
-
-  it('stores only the current-secret token and the exact approved bounded delivery policy', () => {
-    const template = loadWebhookTemplate()
-    const serialized = JSON.stringify(template)
-
-    expect(template.action.parameters.headers).toEqual({
-      authorization: 'Bearer {{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}',
-      'content-type': 'application/json',
-    })
-    expect(template.action.resource_opts).toEqual({
-      query_mode: 'async',
-      worker_pool_size: 2,
-      inflight_window: 10,
-      max_buffer_bytes: '8MB',
-      request_ttl: '30s',
-      health_check_interval: '15s',
-    })
-    expect(template.alertThresholds).toEqual({
-      warning: { retried: 1, queuingSeconds: 60 },
-      critical: { failedInFiveMinutes: 3, dropped: 1, lateReply: 1 },
-    })
-    expect(serialized).not.toContain('retry_interval')
+    expect(serialized.toLowerCase()).not.toContain('authorization"')
     expect(serialized).not.toContain('sentinel-current-secret')
   })
 
-  it('emits a sanitized dry-run summary without resolving or mutating the secret', async () => {
-    const adapter = configurationAdapter()
+  it('constrains exactly the four connector delivery fields and records the TLS exception', () => {
+    const template = loadWebhookTemplate()
+
+    expect(template.connector).toMatchObject({
+      connect_timeout: '10s',
+      pool_size: 2,
+      enable_pipelining: 1,
+      health_check_interval: '15s',
+      ssl: { enable: true, verify: 'disabled' },
+    })
+    expect(template.action.resource_opts).toBeUndefined()
+    expect(template.unconstrainedActionFields).toEqual([
+      'query_mode',
+      'worker_pool_size',
+      'inflight_window',
+      'max_buffer_bytes',
+      'request_ttl',
+    ])
+    expect(JSON.stringify(template)).not.toContain('retry_interval')
+  })
+
+  it('performs zero API-spec, connector, action, or rule requests while emitting the checklist', async () => {
+    const adapter = forbiddenAdapter()
     const output: string[] = []
 
     const result = await runEmqxWebhookConfiguration({
@@ -236,115 +194,140 @@ describe('development EMQX webhook configuration', () => {
       environment: configurationEnvironment(),
       template: loadWebhookTemplate(),
       adapter,
+      write: (line) => output.push(line),
+    })
+
+    expect(adapter.readApiSpec).not.toHaveBeenCalled()
+    expect(adapter.planConfiguration).not.toHaveBeenCalled()
+    expect(adapter.accessSecret).not.toHaveBeenCalled()
+    expect(adapter.applyConfiguration).not.toHaveBeenCalled()
+    expect(output).toEqual([JSON.stringify(result)])
+  })
+
+  it.each([
+    ['c-d1f775fd-efa39d', 'a-d1f775fd-1a0b6a'],
+    ['peecare_development_ingestion', 'operator_action_1'],
+  ])('accepts bounded platform or operator identities %s / %s', async (connectorName, actionName) => {
+    const result = await runEmqxWebhookConfiguration({
+      mode: 'dry-run',
+      environment: {
+        ...configurationEnvironment(),
+        PEECARE_EMQX_CONNECTOR_NAME: connectorName,
+        PEECARE_EMQX_ACTION_NAME: actionName,
+      },
+      template: loadWebhookTemplate(),
+      adapter: forbiddenAdapter(),
+      write: vi.fn(),
+    })
+
+    expect(result).toMatchObject({ connectorName, actionName })
+  })
+
+  it.each([
+    ['empty', ''],
+    ['line feed', 'name\ninjected'],
+    ['whitespace', 'name with space'],
+    ['null', 'name\0injected'],
+  ])('rejects an unsafe %s identity before any request', async (_case, connectorName) => {
+    const adapter = forbiddenAdapter()
+    await expect(runEmqxWebhookConfiguration({
+      mode: 'dry-run',
+      environment: { ...configurationEnvironment(), PEECARE_EMQX_CONNECTOR_NAME: connectorName },
+      template: loadWebhookTemplate(),
+      adapter,
+      write: vi.fn(),
+    })).rejects.toMatchObject({ code: 'invalid_integration_identity' })
+    expect(adapter.readApiSpec).not.toHaveBeenCalled()
+    expect(adapter.planConfiguration).not.toHaveBeenCalled()
+  })
+
+  it('rejects an unapproved connector policy before any request', async () => {
+    const template = structuredClone(loadWebhookTemplate())
+    template.connector.pool_size = 16
+    const adapter = forbiddenAdapter()
+
+    await expect(runEmqxWebhookConfiguration({
+      mode: 'dry-run',
+      environment: configurationEnvironment(),
+      template,
+      adapter,
+      write: vi.fn(),
+    })).rejects.toMatchObject({ code: 'unapproved_delivery_policy' })
+    expect(adapter.readApiSpec).not.toHaveBeenCalled()
+    expect(adapter.planConfiguration).not.toHaveBeenCalled()
+  })
+
+  it('does not require action buffering fields that the Serverless console omits', () => {
+    const template = structuredClone(loadWebhookTemplate())
+    delete template.action.resource_opts
+    expect(() => validateWebhookTemplate(template)).not.toThrow()
+  })
+
+  it('rejects an independent retry interval', () => {
+    const template = structuredClone(loadWebhookTemplate())
+    template.connector.retry_interval = '5s'
+    expect(() => validateWebhookTemplate(template)).toThrowError(
+      expect.objectContaining({ code: 'unapproved_delivery_policy' }),
+    )
+  })
+
+  it('emits a sanitized expected-value checklist with no resolved secret', async () => {
+    const output: string[] = []
+    const result = await runEmqxWebhookConfiguration({
+      mode: 'dry-run',
+      environment: configurationEnvironment(),
+      template: loadWebhookTemplate(),
+      adapter: forbiddenAdapter(),
       write: (line) => output.push(line),
     })
 
     expect(result).toMatchObject({
       status: 'ready',
-      mode: 'dry-run',
+      mode: 'checklist',
+      connectorName: 'c-d1f775fd-ae8109',
+      actionName: 'a-d1f775fd-1a0b6a',
       secretReference: currentSecretReference,
-      secretToken: '{{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}',
-      plan: { connector: 'create', action: 'create', rule: 'create' },
+      deliveryPolicy: {
+        pool_size: 2,
+        enable_pipelining: 1,
+        connect_timeout: '10s',
+        health_check_interval: '15s',
+      },
+      checklist: {
+        connector: { tlsEnabled: true, tlsVerify: 'disabled' },
+        action: {
+          customHeaders: 'unsupported',
+          body: '{"webhookAuthorization":"Bearer {{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}","event":${.}}',
+        },
+      },
     })
-    expect(adapter.accessSecret).not.toHaveBeenCalled()
-    expect(adapter.applyConfiguration).not.toHaveBeenCalled()
     expect(output).toEqual([JSON.stringify(result)])
     expect(output[0]).not.toContain('sentinel-current-secret')
   })
 
-  it('rejects an oversized queue before secret access or any EMQX mutation', async () => {
-    const template = structuredClone(loadWebhookTemplate())
-    template.action.resource_opts.max_buffer_bytes = '256MB'
-    const adapter = configurationAdapter()
-
-    await expect(
-      runEmqxWebhookConfiguration({
-        mode: 'apply',
-        environment: configurationEnvironment(),
-        template,
-        adapter,
-        write: vi.fn(),
-      }),
-    ).rejects.toMatchObject({ code: 'unapproved_delivery_policy' })
-    expect(adapter.accessSecret).not.toHaveBeenCalled()
-    expect(adapter.applyConfiguration).not.toHaveBeenCalled()
-  })
-
-  it('requires the live EMQX API schema before secret access or mutation', async () => {
-    const apiSpec = approvedApiSpec()
-    delete apiSpec.components.schemas.http_action.properties.resource_opts.properties.request_ttl
-    const adapter = configurationAdapter(apiSpec)
-
-    await expect(
-      runEmqxWebhookConfiguration({
-        mode: 'apply',
-        environment: configurationEnvironment(),
-        template: loadWebhookTemplate(),
-        adapter,
-        write: vi.fn(),
-      }),
-    ).rejects.toMatchObject({ code: 'unsupported_emqx_schema' })
-    expect(adapter.accessSecret).not.toHaveBeenCalled()
-    expect(adapter.applyConfiguration).not.toHaveBeenCalled()
-  })
-
-  it('resolves the current secret only in memory for apply and keeps the result sanitized', async () => {
-    const adapter = configurationAdapter()
-    const output: string[] = []
-
-    const result = await runEmqxWebhookConfiguration({
+  it('rejects apply mode explicitly without secret access or API mutation', async () => {
+    const adapter = forbiddenAdapter()
+    await expect(runEmqxWebhookConfiguration({
       mode: 'apply',
       environment: configurationEnvironment(),
       template: loadWebhookTemplate(),
       adapter,
-      write: (line) => output.push(line),
-    })
-
-    expect(adapter.applyConfiguration).toHaveBeenCalledWith(
-      expect.objectContaining({
-        action: expect.objectContaining({
-          parameters: expect.objectContaining({
-            headers: expect.objectContaining({
-              authorization: 'Bearer sentinel-current-secret',
-            }),
-          }),
-        }),
-      }),
-    )
-    expect(result).toMatchObject({ status: 'applied', secretReference: currentSecretReference })
-    expect(JSON.stringify(result)).not.toContain('sentinel-current-secret')
-    expect(output.join('')).not.toContain('sentinel-current-secret')
+      write: vi.fn(),
+    })).rejects.toMatchObject({ code: 'serverless_api_write_unsupported' })
+    expect(adapter.accessSecret).not.toHaveBeenCalled()
+    expect(adapter.applyConfiguration).not.toHaveBeenCalled()
   })
 
-  it('creates connector, action, then rule through the scoped EMQX management API', async () => {
-    const fetchImpl = vi.fn(async (_url: string, options?: RequestInit) => {
-      if (options?.method === 'GET') {
-        return { status: 404, json: async () => ({ code: 'NOT_FOUND' }) }
-      }
-      return { status: 201, json: async () => ({}) }
-    })
-    const adapter = createEmqxWebhookManagementAdapter({
-      managementUrl: 'https://emqx.development.example',
-      apiKey: 'data-integration-key',
-      apiSecret: 'management-secret',
-      fetchImpl,
-      execute: vi.fn(() => ({ status: 0, stdout: 'sentinel-current-secret\n' })),
-    })
-    const configuration = structuredClone(loadWebhookTemplate())
-    configuration.connector.url =
-      'https://peecare-ingestion-development-example.a.run.app'
-    configuration.action.parameters.headers.authorization =
-      'Bearer sentinel-current-secret'
-
-    await adapter.applyConfiguration(configuration)
-
-    const mutations = fetchImpl.mock.calls
-      .filter(([, options]) => options?.method !== 'GET')
-      .map(([url, options]) => [url, options?.method])
-    expect(mutations).toEqual([
-      ['https://emqx.development.example/api/v5/connectors', 'POST'],
-      ['https://emqx.development.example/api/v5/actions', 'POST'],
-      ['https://emqx.development.example/api/v5/rules', 'POST'],
-    ])
+  it('provides a standalone Dashboard checklist with no secret value or custom-header instruction', () => {
+    const checklist = readFileSync('deploy/development/emqx-serverless-console-checklist.md', 'utf8')
+    expect(checklist).toContain('| Connection Pool Size | `2` |')
+    expect(checklist).toContain('| HTTP Pipelining | `1` |')
+    expect(checklist).toContain('| Connect Timeout | `10s` |')
+    expect(checklist).toContain('| Health Check Interval | `15s` |')
+    expect(checklist).toContain('`TLS Verify` | `disabled`')
+    expect(checklist).toContain('{{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}')
+    expect(checklist).toContain('custom headers are not persisted')
+    expect(checklist).not.toContain('sentinel-current-secret')
+    expect(checklist).not.toContain('credential in the URL')
   })
 })

@@ -6,6 +6,7 @@ const payload = { schemaVersion: 1, eventId: 'PC-000001:42', eventType: 'urinati
 const envelope = { topic: 'products/pc-mini/devices/PC-000001/events/urination', clientId: 'PC-000001', username: 'mqtt-user', qos: 1, retained: false, brokerReceivedAtMs: 1785168060000, payload };
 const batteryEnvelope = { topic: 'products/pc-mini/devices/PC-000001/status/battery', clientId: 'PC-000001', username: 'mqtt-user', qos: 1, retained: false, brokerReceivedAtMs: 1785168060000, payload: { schemaVersion: 1, eventId: 'PC-000001:43', eventType: 'battery', deviceId: 'PC-000001', sequence: 43, recordedAtMs: 1785168000000, firmwareVersion: '1.2.0', batteryLevelPercent: 75, batteryVoltageMv: 3975 } };
 const request = (body: unknown = envelope, authorization = 'Bearer current-secret') => ({ method: 'POST' as const, url: '/v1/emqx/events', headers: { authorization, 'content-type': 'application/json' }, payload: body });
+const serverlessRequest = (body: unknown) => ({ method: 'POST' as const, url: '/v1/emqx/events', headers: { 'content-type': 'application/json' }, payload: body });
 
 describe('ingestion application', () => {
   it('responds healthy without opening a port', async () => {
@@ -24,10 +25,84 @@ describe('ingestion application', () => {
     await app.close();
   });
 
+  it('exposes the broker root health surface without authentication', async () => {
+    const app = buildApp({ currentSecret: 'current-secret' });
+    const response = await app.inject({ method: 'GET', url: '/' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ status: 'ok' });
+    expect(response.headers['x-request-id']).toBeTruthy();
+    await app.close();
+  });
+
+  it('accepts the Serverless connector empty JSON root POST as a health probe', async () => {
+    let sinkCalls = 0;
+    const app = buildApp({ currentSecret: 'current-secret', sink: { accept: async () => { sinkCalls++; return 'stored'; } } });
+    const response = await app.inject({ method: 'POST', url: '/', headers: { 'content-type': 'application/json' } });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ status: 'ok' });
+    expect(response.headers['x-request-id']).toBeTruthy();
+    expect(sinkCalls).toBe(0);
+    await app.close();
+  });
+
+  it.each([
+    ['malformed JSON', { method: 'POST' as const, url: '/', headers: { 'content-type': 'application/json' }, payload: '{' }, 400, 'malformed_json'],
+    ['an oversized body', { method: 'POST' as const, url: '/', headers: { 'content-type': 'application/json' }, payload: JSON.stringify({ value: 'x'.repeat(65_536) }) }, 413, 'body_too_large'],
+    ['an empty webhook JSON body', { method: 'POST' as const, url: '/v1/emqx/events', headers: { authorization: 'Bearer current-secret', 'content-type': 'application/json' } }, 500, 'internal_error'],
+  ])('does not broaden the root health fallback for %s', async (_case, input, status, code) => {
+    let sinkCalls = 0;
+    const app = buildApp({ currentSecret: 'current-secret', sink: { accept: async () => { sinkCalls++; return 'stored'; } } });
+    const response = await app.inject(input);
+    expect(response.statusCode).toBe(status);
+    expect(response.json()).toEqual({ error: { code, requestId: response.headers['x-request-id'] } });
+    expect(sinkCalls).toBe(0);
+    await app.close();
+  });
+
+  it.each(['PUT', 'PATCH', 'DELETE', 'HEAD'] as const)('keeps %s / outside the broker health surface', async (method) => {
+    const app = buildApp({ currentSecret: 'current-secret' });
+    const response = await app.inject({ method, url: '/', headers: { 'content-type': 'application/json' } });
+    expect(response.statusCode).toBe(404);
+    expect(response.headers['x-request-id']).toBeTruthy();
+    expect(response.json()).toEqual({ error: { code: 'not_found', requestId: response.headers['x-request-id'] } });
+    await app.close();
+  });
+
   it.each(['Bearer current-secret', 'Bearer previous-secret'])('accepts either rotation secret', async (authorization) => {
     const sink: EventSink = { accept: async () => 'stored' };
     const app = buildApp({ currentSecret: 'current-secret', previousSecret: 'previous-secret', sink });
     expect((await app.inject(request(envelope, authorization))).statusCode).toBe(201);
+    await app.close();
+  });
+
+  it.each(['Bearer current-secret', 'Bearer previous-secret'])('accepts either rotation secret through the Serverless body credential transport', async (webhookAuthorization) => {
+    let calls = 0;
+    const app = buildApp({ currentSecret: 'current-secret', previousSecret: 'previous-secret', sink: { accept: async () => { calls++; return 'stored'; } } });
+    const response = await app.inject(serverlessRequest({ webhookAuthorization, event: envelope }));
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toEqual({ eventId: payload.eventId, requestId: expect.any(String) });
+    expect(calls).toBe(1);
+    await app.close();
+  });
+
+  it.each([
+    ['a missing credential', { event: envelope }, undefined],
+    ['a wrong credential', { webhookAuthorization: 'Bearer wrong-secret', event: envelope }, undefined],
+    ['a non-string credential', { webhookAuthorization: ['Bearer current-secret'], event: envelope }, undefined],
+    ['an extra top-level field', { webhookAuthorization: 'Bearer current-secret', event: envelope, extra: true }, undefined],
+    ['a non-object event', { webhookAuthorization: 'Bearer current-secret', event: [] }, undefined],
+    ['simultaneous credential transports', { webhookAuthorization: 'Bearer current-secret', event: envelope }, 'Bearer current-secret'],
+  ])('rejects %s with the same sanitized response and no sink side effect', async (_case, body, authorization) => {
+    let calls = 0;
+    const app = buildApp({ currentSecret: 'current-secret', sink: { accept: async () => { calls++; return 'stored'; } } });
+    const response = await app.inject({
+      ...serverlessRequest(body),
+      headers: { 'content-type': 'application/json', ...(authorization ? { authorization } : {}) },
+    });
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({ error: { code: 'unauthorized', requestId: expect.any(String) } });
+    expect(response.body).not.toContain('current-secret');
+    expect(calls).toBe(0);
     await app.close();
   });
 

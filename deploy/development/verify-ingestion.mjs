@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -10,8 +11,6 @@ const APPROVED_PROJECT = 'petcare-c7483'
 const APPROVED_REGION = 'asia-east1'
 const APPROVED_SERVICE = 'peecare-ingestion-development'
 const DEVICE_ID = 'PC-DEV-0001'
-const EVENT_ID = 'PC-DEV-0001:smoke-urination-1'
-const BATTERY_EVENT_ID = 'PC-DEV-0001:smoke-battery-1'
 const REVISION_PATTERN = /^peecare-ingestion-development-[0-9]{5}-[a-z0-9]{3}$/
 
 export class IngestionVerificationError extends Error {
@@ -96,7 +95,7 @@ function assertInspectedRevision(inspected, revision, manifest, requireServing =
   return serviceUrl.origin
 }
 
-function urinationFixture(now) {
+function urinationFixture(now, eventId) {
   return Object.freeze({
     topic: `products/pc-mini/devices/${DEVICE_ID}/events/urination`,
     clientId: DEVICE_ID,
@@ -106,7 +105,7 @@ function urinationFixture(now) {
     brokerReceivedAtMs: now,
     payload: Object.freeze({
       schemaVersion: 1,
-      eventId: EVENT_ID,
+      eventId,
       eventType: 'urination',
       deviceId: DEVICE_ID,
       sequence: 1,
@@ -118,7 +117,7 @@ function urinationFixture(now) {
   })
 }
 
-function batteryFixture(now) {
+function batteryFixture(now, eventId) {
   return Object.freeze({
     topic: `products/pc-mini/devices/${DEVICE_ID}/status/battery`,
     clientId: DEVICE_ID,
@@ -128,7 +127,7 @@ function batteryFixture(now) {
     brokerReceivedAtMs: now,
     payload: Object.freeze({
       schemaVersion: 1,
-      eventId: BATTERY_EVENT_ID,
+      eventId,
       eventType: 'battery',
       deviceId: DEVICE_ID,
       sequence: 2,
@@ -203,6 +202,7 @@ export async function runIngestionVerification({
   adapter,
   priorRelease,
   now = Date.now,
+  createRunId = randomUUID,
   write,
 }) {
   const revision = parseArguments(args)
@@ -221,8 +221,11 @@ export async function runIngestionVerification({
     adapter,
   )
   const smokeNow = now()
-  const fixture = urinationFixture(smokeNow)
-  const battery = batteryFixture(smokeNow)
+  const runId = createRunId()
+  const eventId = `${DEVICE_ID}:smoke-urination-${smokeNow}-${runId}`
+  const batteryEventId = `${DEVICE_ID}:smoke-battery-${smokeNow}-${runId}`
+  const fixture = urinationFixture(smokeNow, eventId)
+  const battery = batteryFixture(smokeNow, batteryEventId)
   const dayKey = asiaTaipeiDayKey(fixture.payload.recordedAtMs)
   const requestOptions = {
     method: 'POST',
@@ -238,7 +241,7 @@ export async function runIngestionVerification({
     adapter.readSmokeState({
       projectId: APPROVED_PROJECT,
       deviceId: DEVICE_ID,
-      eventIds: [EVENT_ID, BATTERY_EVENT_ID],
+      eventIds: [eventId, batteryEventId],
       dayKey,
     }),
   ])
@@ -252,8 +255,8 @@ export async function runIngestionVerification({
   )
   assertSmokeResponse(
     baselineState?.projectId === APPROVED_PROJECT &&
-      baselineState.events?.[EVENT_ID] === null &&
-      baselineState.events?.[BATTERY_EVENT_ID] === null,
+      baselineState.events?.[eventId] === null &&
+      baselineState.events?.[batteryEventId] === null,
     'Smoke event IDs already exist or baseline state is outside the approved project.',
   )
 
@@ -271,19 +274,19 @@ export async function runIngestionVerification({
     },
   })
   assertSmokeResponse(
-    authenticated.status === 201 && authenticated.body?.eventId === EVENT_ID,
+    authenticated.status === 201 && authenticated.body?.eventId === eventId,
     'Authenticated webhook smoke check failed.',
   )
 
   const storedEvent = await adapter.readEvent({
     projectId: APPROVED_PROJECT,
     deviceId: DEVICE_ID,
-    eventId: EVENT_ID,
+    eventId,
   })
   assertSmokeResponse(
     storedEvent?.projectId === APPROVED_PROJECT &&
-      storedEvent.path === `devices/${DEVICE_ID}/events/${EVENT_ID}` &&
-      storedEvent.data?.eventId === EVENT_ID &&
+      storedEvent.path === `devices/${DEVICE_ID}/events/${eventId}` &&
+      storedEvent.data?.eventId === eventId &&
       storedEvent.data?.deviceId === DEVICE_ID &&
       storedEvent.data?.eventType === 'urination',
     'Authenticated fixture was not found in the approved development Firestore project.',
@@ -292,7 +295,7 @@ export async function runIngestionVerification({
   const afterUrinationFirst = await adapter.readSmokeState({
     projectId: APPROVED_PROJECT,
     deviceId: DEVICE_ID,
-    eventIds: [EVENT_ID, BATTERY_EVENT_ID],
+    eventIds: [eventId, batteryEventId],
     dayKey,
   })
   const urinationReplay = await adapter.request({
@@ -306,11 +309,11 @@ export async function runIngestionVerification({
   const afterUrinationReplay = await adapter.readSmokeState({
     projectId: APPROVED_PROJECT,
     deviceId: DEVICE_ID,
-    eventIds: [EVENT_ID, BATTERY_EVENT_ID],
+    eventIds: [eventId, batteryEventId],
     dayKey,
   })
   assertSmokeResponse(
-    urinationReplay.status === 200 && urinationReplay.body?.eventId === EVENT_ID,
+    urinationReplay.status === 200 && urinationReplay.body?.eventId === eventId,
     'Urination replay did not return the duplicate response.',
   )
   assertSmokeResponse(
@@ -331,22 +334,22 @@ export async function runIngestionVerification({
   const afterBatteryFirst = await adapter.readSmokeState({
     projectId: APPROVED_PROJECT,
     deviceId: DEVICE_ID,
-    eventIds: [EVENT_ID, BATTERY_EVENT_ID],
+    eventIds: [eventId, batteryEventId],
     dayKey,
   })
   const batteryReplay = await adapter.request(batteryRequest)
   const afterBatteryReplay = await adapter.readSmokeState({
     projectId: APPROVED_PROJECT,
     deviceId: DEVICE_ID,
-    eventIds: [EVENT_ID, BATTERY_EVENT_ID],
+    eventIds: [eventId, batteryEventId],
     dayKey,
   })
   assertSmokeResponse(
-    batteryFirst.status === 201 && batteryFirst.body?.eventId === BATTERY_EVENT_ID,
+    batteryFirst.status === 201 && batteryFirst.body?.eventId === batteryEventId,
     'Battery first delivery did not create an event.',
   )
   assertSmokeResponse(
-    batteryReplay.status === 200 && batteryReplay.body?.eventId === BATTERY_EVENT_ID,
+    batteryReplay.status === 200 && batteryReplay.body?.eventId === batteryEventId,
     'Battery replay did not return the duplicate response.',
   )
   assertSmokeResponse(
@@ -359,11 +362,11 @@ export async function runIngestionVerification({
     Number.isSafeInteger(baselineCount) &&
       afterUrinationFirst?.projectId === APPROVED_PROJECT &&
       afterBatteryFirst?.projectId === APPROVED_PROJECT &&
-      assertEventFields(afterUrinationFirst.events?.[EVENT_ID], fixture.payload) &&
-      afterUrinationFirst.device?.latestUrinationEventId === EVENT_ID &&
+      assertEventFields(afterUrinationFirst.events?.[eventId], fixture.payload) &&
+      afterUrinationFirst.device?.latestUrinationEventId === eventId &&
       afterUrinationFirst.daily?.urinationCount === baselineCount + 1 &&
-      assertEventFields(afterBatteryFirst.events?.[BATTERY_EVENT_ID], battery.payload) &&
-      afterBatteryFirst.device?.latestBatteryEventId === BATTERY_EVENT_ID &&
+      assertEventFields(afterBatteryFirst.events?.[batteryEventId], battery.payload) &&
+      afterBatteryFirst.device?.latestBatteryEventId === batteryEventId &&
       afterBatteryFirst.daily?.urinationCount === baselineCount + 1,
     'Durable event documents, latest projections, or daily urination count are incorrect.',
   )
@@ -376,7 +379,7 @@ export async function runIngestionVerification({
     revision,
     imageDigest: inspected.image.slice(inspected.image.lastIndexOf('@') + 1),
     runtimeIdentity: inspected.runtimeIdentity,
-    eventId: EVENT_ID,
+    eventId,
     ...(priorHealthyRevision ? { priorHealthyRevision } : {}),
     checks: Object.freeze({
       health: health.status,

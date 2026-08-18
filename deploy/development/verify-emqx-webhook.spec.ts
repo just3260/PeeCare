@@ -1,6 +1,5 @@
-import { readFileSync } from 'node:fs'
-
 import { describe, expect, it, vi } from 'vitest'
+import { readFileSync } from 'node:fs'
 
 import {
   createEmqxWebhookVerificationAdapter,
@@ -8,376 +7,435 @@ import {
   runEmqxWebhookVerificationCli,
 } from './verify-emqx-webhook.mjs'
 
-const previousReference =
-  'projects/petcare-c7483/secrets/emqx-webhook-current/versions/6'
 const currentReference =
-  'projects/petcare-c7483/secrets/emqx-webhook-current/versions/7'
+  'projects/petcare-c7483/secrets/peecare-emqx-webhook-current/versions/1'
+const previousReference =
+  'projects/petcare-c7483/secrets/peecare-emqx-webhook-current/versions/2'
 
-function environment(): NodeJS.ProcessEnv {
+function environment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return {
-    PEECARE_EMQX_WEBHOOK_SECRET_PREVIOUS_REF: previousReference,
-    PEECARE_EMQX_WEBHOOK_SECRET_CURRENT_REF: currentReference,
-    PEECARE_DEVELOPMENT_DEVICE_ID: 'PC-000001',
+    PEECARE_DEVELOPMENT_PROJECT_ID: 'petcare-c7483',
+    PEECARE_DEVELOPMENT_FIRESTORE_REGION: 'asia-east1',
+    PEECARE_INGESTION_SECRET_CURRENT_REF: currentReference,
+    PEECARE_DEVELOPMENT_DEVICE_ID: 'PC-DEV-0001',
     PEECARE_DEVELOPMENT_PRODUCT_MODEL: 'pc-mini',
+    ...overrides,
   }
 }
 
-function adapter(overrides: Record<string, unknown> = {}) {
-  let success = 10
-  let failed = 2
-  const counters = () => ({
-    matched: success + failed,
-    success,
-    failed,
-    dropped: 0,
-    lateReply: 0,
-  })
+function deliveryAdapter(overrides: Record<string, unknown> = {}) {
+  const topicsByEventId = new Map<string, string>()
   return {
-    inspectConfiguration: vi.fn(async () => ({
-      rule: 'enabled',
-      action: 'connected',
-      counters: counters(),
-    })),
-    switchSecret: vi.fn(async () => undefined),
-    probe: vi.fn(async ({ name }) => {
-      if (name === 'previous-urination') {
-        success += 1
-        return { webhookStatus: 201, counters: counters() }
-      }
-      if (name === 'current-battery') {
-        success += 1
-        return { webhookStatus: 201, counters: counters() }
-      }
-      if (name === 'legacy-non-delivery') {
-        return { webhookStatus: null, counters: counters() }
-      }
-      if (name === 'retained-rejection') {
-        failed += 1
-        return {
-          webhookStatus: 422,
-          errorCode: 'retained_event',
-          counters: counters(),
-        }
-      }
-      if (name === 'array-payload') {
-        return {
-          webhookStatus: null,
-          contractError: 'invalid_payload',
-          counters: counters(),
-        }
-      }
-      throw new Error(`unexpected probe ${name}`)
+    publishProbe: vi.fn(async ({ topic, payload }) => {
+      topicsByEventId.set(payload.eventId, topic)
+      return 'accepted'
     }),
+    readEventDocument: vi.fn(async ({ eventId }) => ({
+      count: topicsByEventId.get(eventId) === 'peecare/device/1/status' ? 0 : 1,
+    })),
     ...overrides,
   }
 }
 
 describe('development EMQX webhook verification', () => {
-  it('uses live EMQX state, rotates only the action header, and observes canonical delivery counters', async () => {
-    const requests: Array<{ url: string; init?: RequestInit }> = []
-    let metricsReads = 0
-    const fetchImpl = vi.fn(async (url: string, init?: RequestInit) => {
-      requests.push({ url, init })
-      if (url.endsWith('/api/v5/rules/peecare_development_telemetry')) {
-        return Response.json({ enable: true })
-      }
-      if (url.endsWith('/api/v5/actions/http%3Apeecare_development_ingestion/metrics')) {
-        metricsReads += 1
-        return Response.json({
-          metrics: {
-            matched: metricsReads === 1 ? 12 : 13,
-            success: metricsReads === 1 ? 10 : 11,
-            failed: 2,
-            dropped: 0,
-            late_reply: 0,
-          },
-        })
-      }
-      if (url.endsWith('/api/v5/actions/http%3Apeecare_development_ingestion')) {
-        if (init?.method === 'PUT') return new Response(null, { status: 204 })
-        return Response.json({
-          name: 'peecare_development_ingestion',
-          type: 'http',
-          status: 'connected',
-          parameters: {
-            headers: {
-              Authorization: 'Bearer ******',
-              'content-type': 'application/json',
-            },
-          },
-          node_status: [{ node: 'emqx@127.0.0.1', status: 'connected' }],
-        })
-      }
-      if (url.endsWith('/api/v5/publish')) {
-        return Response.json({ id: '018f-webhook-legacy-probe' })
-      }
-      throw new Error(`unexpected request ${url}`)
-    })
-    const publishMqtt = vi.fn(async () => 'allowed')
-    const adapter = createEmqxWebhookVerificationAdapter({
-      managementUrl: 'https://emqx.example.test',
-      apiKey: 'scoped-key',
-      apiSecret: 'scoped-secret',
-      ingestionOrigin: 'https://ingestion.example.test',
-      mqttUrl: 'mqtts://mqtt.example.test:8883',
-      mqttPassword: 'device-password',
-      fetchImpl,
-      execute: vi.fn(() => ({ status: 0, stdout: 'sentinel-previous-secret\n' })),
-      publishMqtt,
-      wait: vi.fn(async () => undefined),
-    })
-
-    await expect(adapter.inspectConfiguration()).resolves.toEqual({
-      rule: 'enabled',
-      action: 'connected',
-      counters: { matched: 12, success: 10, failed: 2, dropped: 0, lateReply: 0 },
-    })
-    await expect(adapter.switchSecret(previousReference)).resolves.toBeUndefined()
-    await expect(
-      adapter.probe({
-        name: 'previous-urination',
-        topic: 'products/pc-mini/devices/PC-000001/events/urination',
-        qos: 1,
-        retained: false,
-        payload: {
-          schemaVersion: 1,
-          eventId: 'PC-000001:webhook-verify:1',
-          eventType: 'urination',
-          deviceId: 'PC-000001',
-          sequence: 1,
-          recordedAtMs: 1_786_358_599_000,
-          firmwareVersion: '1.0.0',
-          flushDurationMs: 3_000,
-          pumpDurationMs: 5_000,
-        },
-      }),
-    ).resolves.toMatchObject({
-      webhookStatus: 200,
-      counters: { success: 11, failed: 2 },
-    })
-    await expect(
-      adapter.probe({
-        name: 'legacy-non-delivery',
-        topic: 'devices/PC-000001/events/urination',
-        qos: 1,
-        retained: false,
-        payload: { deviceId: 'PC-000001', eventType: 'urination' },
-      }),
-    ).resolves.toMatchObject({
-      webhookStatus: null,
-      counters: { success: 11, failed: 2 },
-    })
-
-    expect(publishMqtt).toHaveBeenCalledWith(
-      expect.objectContaining({
-        mqttUrl: 'mqtts://mqtt.example.test:8883',
-        deviceId: 'PC-000001',
-        username: 'device-PC-000001',
-        password: 'device-password',
-        topic: 'products/pc-mini/devices/PC-000001/events/urination',
-        payload: expect.objectContaining({ eventType: 'urination' }),
-      }),
-    )
-    expect(publishMqtt).toHaveBeenCalledTimes(1)
-    expect(requests).toContainEqual(
-      expect.objectContaining({ url: 'https://emqx.example.test/api/v5/publish' }),
-    )
-    const update = requests.find(({ init }) => init?.method === 'PUT')
-    expect(JSON.parse(String(update?.init?.body))).toEqual({
-      name: 'peecare_development_ingestion',
-      type: 'http',
-      parameters: {
-        headers: {
-          authorization: 'Bearer sentinel-previous-secret',
-          'content-type': 'application/json',
-        },
-      },
-    })
-    expect(JSON.stringify(await adapter.inspectConfiguration())).not.toContain(
-      'sentinel-previous-secret',
-    )
-  })
-
-  it('verifies delivery, non-delivery, rejection, payload boundary, and rotation with a sanitized summary', async () => {
-    const verificationAdapter = adapter()
+  it('verifies two canonical deliveries and legacy non-delivery through injected adapters only', async () => {
+    const adapter = deliveryAdapter()
     const output: string[] = []
 
     const result = await runEmqxWebhookVerification({
       environment: environment(),
-      adapter: verificationAdapter,
-      now: () => 1_786_358_600_000,
+      adapter,
+      now: () => 1_786_989_800_000,
+      createRunId: () => 'run-1',
+      wait: vi.fn(async () => undefined),
       write: (line) => output.push(line),
     })
 
-    expect(verificationAdapter.switchSecret.mock.calls).toEqual([
-      [previousReference],
-      [currentReference],
+    expect(adapter.publishProbe.mock.calls.map(([probe]) => probe.topic)).toEqual([
+      'products/pc-mini/devices/PC-DEV-0001/events/urination',
+      'products/pc-mini/devices/PC-DEV-0001/status/battery',
+      'peecare/device/1/status',
     ])
-    expect(verificationAdapter.probe.mock.calls.map(([probe]) => probe.name)).toEqual([
-      'previous-urination',
-      'current-battery',
-      'legacy-non-delivery',
-      'retained-rejection',
-      'array-payload',
-    ])
+    expect(adapter.readEventDocument).toHaveBeenCalled()
     expect(result).toEqual({
       status: 'healthy',
-      rule: 'enabled',
-      action: 'connected',
-      rotation: { previous: 'verified', current: 'verified' },
       deliveries: {
-        urination: 1,
-        battery: 1,
-        legacy: 0,
-        retainedRejected: 1,
-        invalidPayload: 1,
+        urination: 'delivered',
+        battery: 'delivered',
+        legacy: 'not_delivered',
       },
-      counterDelta: { success: 2, failed: 1, dropped: 0, lateReply: 0 },
+      rotation: {
+        status: 'precondition_unmet',
+        code: 'previous_secret_not_deployed',
+      },
     })
     expect(output).toEqual([JSON.stringify(result)])
-    expect(output[0]).not.toContain('versions/6')
-    expect(output[0]).not.toContain('versions/7')
-    expect(output[0]).not.toContain('device-PC-000001')
     expect(output[0]).not.toContain('payload')
+    expect(output[0]).not.toContain('versions/1')
   })
 
-  it('fails when the legacy topic produces a webhook delivery', async () => {
-    const verificationAdapter = adapter({
-      probe: vi.fn(async ({ name }) => {
-        if (name === 'previous-urination') {
-          return {
-            webhookStatus: 201,
-            counters: { matched: 13, success: 11, failed: 2, dropped: 0, lateReply: 0 },
-          }
-        }
-        if (name === 'current-battery') {
-          return {
-            webhookStatus: 201,
-            counters: { matched: 14, success: 12, failed: 2, dropped: 0, lateReply: 0 },
-          }
-        }
-        return {
-          webhookStatus: 201,
-          counters: { matched: 15, success: 13, failed: 2, dropped: 0, lateReply: 0 },
-        }
-      }),
+  it('reports a satisfied dual-secret precondition without claiming rotation was verified', async () => {
+    const result = await runEmqxWebhookVerification({
+      environment: environment({ PEECARE_INGESTION_SECRET_PREVIOUS_REF: previousReference }),
+      adapter: deliveryAdapter(),
+      now: () => 1_786_989_800_000,
+      createRunId: () => 'run-2',
+      wait: vi.fn(async () => undefined),
+      write: vi.fn(),
     })
 
-    await expect(
-      runEmqxWebhookVerification({
-        environment: environment(),
-        adapter: verificationAdapter,
-        now: () => 1_786_358_600_000,
-        write: vi.fn(),
-      }),
-    ).rejects.toMatchObject({ code: 'legacy_delivery_detected' })
+    expect(result.rotation).toEqual({ status: 'precondition_satisfied' })
+    expect(JSON.stringify(result.rotation)).not.toContain('verified')
   })
 
-  it('fails when a successful probe does not increment the action success counter', async () => {
-    const verificationAdapter = adapter({
-      probe: vi.fn(async () => ({
-        webhookStatus: 201,
-        counters: { matched: 12, success: 10, failed: 2, dropped: 0, lateReply: 0 },
-      })),
+  it('rejects project aliases that reference the same numeric secret version', async () => {
+    await expect(runEmqxWebhookVerification({
+      environment: environment({
+        PEECARE_INGESTION_SECRET_PREVIOUS_REF:
+          'projects/348528459946/secrets/peecare-emqx-webhook-current/versions/1',
+      }),
+      adapter: deliveryAdapter(),
+      now: () => 1_786_989_800_000,
+      createRunId: () => 'run-alias',
+      wait: vi.fn(async () => undefined),
+      write: vi.fn(),
+    })).rejects.toMatchObject({ code: 'invalid_rotation_references' })
+  })
+
+  it('keeps probe event IDs within the contract for a maximum-length device ID', async () => {
+    const adapter = deliveryAdapter()
+    const deviceId = `P${'C'.repeat(63)}`
+
+    await runEmqxWebhookVerification({
+      environment: environment({ PEECARE_DEVELOPMENT_DEVICE_ID: deviceId }),
+      adapter,
+      now: () => 1_786_989_800_000,
+      createRunId: () => '99bfc343-ed23-416d-9b6a-d92a4cddded2',
+      wait: vi.fn(async () => undefined),
+      write: vi.fn(),
     })
 
-    await expect(
-      runEmqxWebhookVerification({
-        environment: environment(),
-        adapter: verificationAdapter,
-        now: () => 1_786_358_600_000,
-        write: vi.fn(),
-      }),
-    ).rejects.toMatchObject({ code: 'delivery_counter_stalled' })
+    const probes = adapter.publishProbe.mock.calls.map(([probe]) => probe)
+    expect(probes).toHaveLength(3)
+    expect(probes.map(({ payload }) => payload.deviceId)).toEqual([
+      deviceId,
+      deviceId,
+      deviceId,
+    ])
+    expect(probes.every(({ payload }) => payload.eventId.length <= 128)).toBe(true)
+    expect(new Set(probes.map(({ payload }) => payload.eventId)).size).toBe(3)
   })
 
-  it('fails when a probe increments dropped or late-reply counters', async () => {
-    let success = 10
-    const verificationAdapter = adapter({
-      probe: vi.fn(async ({ name }) => {
-        if (name === 'previous-urination') success += 1
-        return {
-          webhookStatus: name === 'previous-urination' ? 201 : null,
-          counters: {
-            matched: 13,
-            success,
-            failed: 2,
-            dropped: 1,
-            lateReply: 0,
-          },
-        }
-      }),
+  it('fails when a canonical event does not land after bounded polling', async () => {
+    const adapter = deliveryAdapter({
+      readEventDocument: vi.fn(async () => ({ count: 0 })),
     })
 
-    await expect(
-      runEmqxWebhookVerification({
-        environment: environment(),
-        adapter: verificationAdapter,
-        now: () => 1_786_358_600_000,
-        write: vi.fn(),
-      }),
-    ).rejects.toMatchObject({ code: 'delivery_health_degraded' })
+    await expect(runEmqxWebhookVerification({
+      environment: environment(),
+      adapter,
+      now: () => 1_786_989_800_000,
+      createRunId: () => 'run-3',
+      pollAttempts: 3,
+      wait: vi.fn(async () => undefined),
+      write: vi.fn(),
+    })).rejects.toMatchObject({ code: 'canonical_delivery_failed' })
+    expect(adapter.readEventDocument).toHaveBeenCalledTimes(3)
   })
 
-  it('runs the live CLI with a hidden MQTT password and emits only a sanitized summary', async () => {
+  it('fails when the legacy topic creates a Firestore document', async () => {
+    const adapter = deliveryAdapter({
+      readEventDocument: vi.fn(async () => ({ count: 1 })),
+    })
+
+    await expect(runEmqxWebhookVerification({
+      environment: environment(),
+      adapter,
+      now: () => 1_786_989_800_000,
+      createRunId: () => 'run-4',
+      wait: vi.fn(async () => undefined),
+      write: vi.fn(),
+    })).rejects.toMatchObject({ code: 'legacy_delivery_detected' })
+  })
+
+  it('accepts an ACL-rejected legacy publish as end-to-end non-delivery', async () => {
+    const adapter = deliveryAdapter()
+    adapter.publishProbe.mockImplementation(async ({ topic, payload }) => {
+      if (topic === 'peecare/device/1/status') return 'rejected'
+      return deliveryAdapter().publishProbe({ topic, payload })
+    })
+    adapter.readEventDocument.mockResolvedValue({ count: 1 })
+
+    await expect(runEmqxWebhookVerification({
+      environment: environment(),
+      adapter,
+      now: () => 1_786_989_800_000,
+      createRunId: () => 'run-legacy-acl',
+      wait: vi.fn(async () => undefined),
+      write: vi.fn(),
+    })).resolves.toMatchObject({ deliveries: { legacy: 'not_delivered' } })
+  })
+
+  it('polls Firestore when a legacy PUBACK is ambiguous after connection close', async () => {
+    const adapter = deliveryAdapter()
+    adapter.publishProbe
+      .mockResolvedValueOnce('accepted')
+      .mockResolvedValueOnce('accepted')
+      .mockResolvedValueOnce('ambiguous')
+    adapter.readEventDocument.mockImplementation(async ({ eventId }) => ({
+      count: eventId.includes('emqx-e2e-legacy') ? 0 : 1,
+    }))
+
+    await expect(runEmqxWebhookVerification({
+      environment: environment(),
+      adapter,
+      now: () => 1_786_989_800_000,
+      createRunId: () => 'run-legacy-close',
+      pollAttempts: 3,
+      wait: vi.fn(async () => undefined),
+      write: vi.fn(),
+    })).resolves.toMatchObject({ deliveries: { legacy: 'not_delivered' } })
+
+    expect(adapter.readEventDocument).toHaveBeenCalledTimes(5)
+  })
+
+  it('fails with a safe code when a canonical MQTT publish is rejected', async () => {
+    const adapter = deliveryAdapter({
+      publishProbe: vi.fn(async () => 'rejected'),
+    })
+
+    await expect(runEmqxWebhookVerification({
+      environment: environment(),
+      adapter,
+      now: () => 1_786_989_800_000,
+      createRunId: () => 'run-5',
+      wait: vi.fn(async () => undefined),
+      write: vi.fn(),
+    })).rejects.toMatchObject({ code: 'mqtt_publish_failed' })
+  })
+
+  it('uses a registered MQTT identity and Firestore in the live adapter', async () => {
+    const mqttProbe = vi.fn(async () => 'allowed')
+    const get = vi.fn(async () => ({ exists: true }))
+    const doc = vi.fn(() => ({ get }))
+    const adapter = createEmqxWebhookVerificationAdapter({
+      mqttUrl: 'mqtts://d1f775fd.ala.asia-southeast1.emqxsl.com:8883',
+      deviceId: 'PC-DEV-0001',
+      username: 'device-PC-DEV-0001',
+      password: 'sentinel-device-password',
+      projectId: 'petcare-c7483',
+      mqttProbe,
+      firestore: { doc },
+    })
+
+    await expect(adapter.publishProbe({
+      topic: 'products/pc-mini/devices/PC-DEV-0001/events/urination',
+      qos: 1,
+      payload: { eventId: 'PC-DEV-0001:probe-1', deviceId: 'PC-DEV-0001' },
+    })).resolves.toBe('accepted')
+    await expect(adapter.readEventDocument({
+      deviceId: 'PC-DEV-0001',
+      eventId: 'PC-DEV-0001:probe-1',
+    })).resolves.toEqual({ count: 1 })
+
+    expect(mqttProbe).toHaveBeenCalledWith({
+      operation: 'publish',
+      mqttUrl: 'mqtts://d1f775fd.ala.asia-southeast1.emqxsl.com:8883',
+      deviceId: 'PC-DEV-0001',
+      username: 'device-PC-DEV-0001',
+      password: 'sentinel-device-password',
+      topic: 'products/pc-mini/devices/PC-DEV-0001/events/urination',
+      qos: 1,
+      retained: false,
+      payload: { eventId: 'PC-DEV-0001:probe-1', deviceId: 'PC-DEV-0001' },
+    })
+    expect(doc).toHaveBeenCalledWith(
+      'devices/PC-DEV-0001/events/PC-DEV-0001:probe-1',
+    )
+  })
+
+  it('preserves an ACK-before-close ambiguity instead of reporting an ACL rejection', async () => {
+    const adapter = createEmqxWebhookVerificationAdapter({
+      mqttUrl: 'mqtts://d1f775fd.ala.asia-southeast1.emqxsl.com:8883',
+      deviceId: 'PC-DEV-0001',
+      username: 'device-PC-DEV-0001',
+      password: 'sentinel-device-password',
+      projectId: 'petcare-c7483',
+      mqttProbe: vi.fn(async () => 'closed'),
+      firestore: { doc: vi.fn() },
+    })
+
+    await expect(adapter.publishProbe({
+      topic: 'peecare/device/1/status',
+      qos: 1,
+      payload: { eventId: 'legacy-probe-1', deviceId: 'PC-DEV-0001' },
+    })).resolves.toBe('ambiguous')
+  })
+
+  it('reads the device password from hidden TTY and emits only a sanitized summary', async () => {
     const stdout = { write: vi.fn() }
     const stderr = { write: vi.fn() }
+    const createAdapter = vi.fn(() => deliveryAdapter())
     const readPassword = vi.fn(async () => 'sentinel-device-password')
-    const createAdapter = vi.fn(() => adapter())
 
-    await expect(
-      runEmqxWebhookVerificationCli({
-        argv: [],
-        environment: {
-          ...environment(),
-          PEECARE_EMQX_API_URL: 'https://emqx.example.test',
-          PEECARE_EMQX_API_KEY: 'scoped-key',
-          PEECARE_EMQX_API_SECRET: 'scoped-secret',
-          PEECARE_DEVELOPMENT_INGESTION_ORIGIN: 'https://ingestion.example.test',
-          PEECARE_DEVICE_MQTT_URL: 'mqtts://mqtt.example.test:8883',
+    await expect(runEmqxWebhookVerificationCli({
+      argv: [],
+      environment: {
+        ...environment(),
+        PEECARE_DEVICE_MQTT_URL:
+          'mqtts://d1f775fd.ala.asia-southeast1.emqxsl.com:8883',
+      },
+      stdout,
+      stderr,
+      createAdapter,
+      readPassword,
+      artifacts: {
+        inventory: {
+          schemaVersion: 1,
+          devices: [{
+            hardwareLabel: 'PeeCare development unit 1',
+            deviceId: 'PC-000001',
+            productModel: 'pc-mini',
+            mqttPrincipal: 'device-PC-000001',
+            firestore: {
+              projectId: 'petcare-c7483',
+              documentPath: 'devices/PC-000001',
+              ingestionStatus: 'enabled',
+            },
+          }],
         },
-        stdout,
-        stderr,
-        readPassword,
-        createAdapter,
-        publishMqtt: vi.fn(),
-      }),
-    ).resolves.toBe(0)
+      },
+      now: () => 1_786_989_800_000,
+      createRunId: () => 'run-cli',
+      wait: vi.fn(async () => undefined),
+    })).resolves.toBe(0)
 
     expect(readPassword).toHaveBeenCalledOnce()
-    expect(createAdapter).toHaveBeenCalledWith(
-      expect.objectContaining({ mqttPassword: 'sentinel-device-password' }),
-    )
+    expect(createAdapter).toHaveBeenCalledWith(expect.objectContaining({
+      mqttUrl: 'mqtts://d1f775fd.ala.asia-southeast1.emqxsl.com:8883',
+      deviceId: 'PC-000001',
+      username: 'device-PC-000001',
+      password: 'sentinel-device-password',
+      projectId: 'petcare-c7483',
+    }))
     expect(stderr.write).not.toHaveBeenCalled()
     const output = stdout.write.mock.calls.flat().join('')
     expect(output).toContain('"status":"healthy"')
     expect(output).not.toContain('sentinel-device-password')
-    expect(output).not.toContain('scoped-secret')
-    expect(output).not.toContain('versions/6')
-    expect(output).not.toContain('versions/7')
+    expect(output).not.toContain('payload')
   })
 
-  it('documents the executable verification and rollback-safe rotation sequence', () => {
-    const packageJson = JSON.parse(
-      readFileSync('package.json', 'utf8'),
-    )
-    const runbook = readFileSync('deploy/development/EMQX_RUNBOOK.md', 'utf8')
+  it('rejects device password environment variables before reading or publishing', async () => {
+    const createAdapter = vi.fn()
+    const readPassword = vi.fn()
+    const stderr = { write: vi.fn() }
 
+    await expect(runEmqxWebhookVerificationCli({
+      environment: {
+        ...environment(),
+        PEECARE_DEVICE_MQTT_URL:
+          'mqtts://d1f775fd.ala.asia-southeast1.emqxsl.com:8883',
+        PEECARE_DEVICE_PASSWORD: 'forbidden',
+      },
+      stderr,
+      stdout: { write: vi.fn() },
+      createAdapter,
+      readPassword,
+      artifacts: { inventory: { schemaVersion: 1, devices: [] } },
+    })).resolves.toBe(1)
+
+    expect(readPassword).not.toHaveBeenCalled()
+    expect(createAdapter).not.toHaveBeenCalled()
+    expect(stderr.write).toHaveBeenCalledWith(
+      '{"status":"error","code":"device_password_input_forbidden"}\n',
+    )
+  })
+
+  it('rejects an unapproved MQTT host before reading the device password', async () => {
+    const createAdapter = vi.fn()
+    const readPassword = vi.fn()
+    const stderr = { write: vi.fn() }
+
+    await expect(runEmqxWebhookVerificationCli({
+      environment: {
+        ...environment(),
+        PEECARE_DEVICE_MQTT_URL: 'mqtts://attacker.example:8883',
+      },
+      stderr,
+      stdout: { write: vi.fn() },
+      createAdapter,
+      readPassword,
+      artifacts: {
+        inventory: {
+          schemaVersion: 1,
+          devices: [{
+            hardwareLabel: 'PeeCare development unit 1',
+            deviceId: 'PC-000001',
+            productModel: 'pc-mini',
+            mqttPrincipal: 'device-PC-000001',
+            firestore: {
+              projectId: 'petcare-c7483',
+              documentPath: 'devices/PC-000001',
+              ingestionStatus: 'enabled',
+            },
+          }],
+        },
+      },
+    })).resolves.toBe(1)
+
+    expect(readPassword).not.toHaveBeenCalled()
+    expect(createAdapter).not.toHaveBeenCalled()
+    expect(stderr.write).toHaveBeenCalledWith(
+      '{"status":"error","code":"unsafe_mqtt_endpoint"}\n',
+    )
+  })
+
+  it('documents the Serverless checklist, body transport, observability loss, and script entrypoints', () => {
+    const packageJson = JSON.parse(readFileSync('package.json', 'utf8'))
+    const runbook = readFileSync('deploy/development/EMQX_RUNBOOK.md', 'utf8')
+    const integration = readFileSync('docs/mqtt-server-integration.md', 'utf8')
+
+    expect(packageJson.scripts['emqx:development:checklist']).toBe(
+      'node deploy/development/configure-emqx-webhook.mjs --dry-run',
+    )
     expect(packageJson.scripts['emqx:development:verify']).toBe(
       'node deploy/development/verify-emqx-webhook.mjs',
     )
-    expect(runbook).toContain('npm run emqx:development:dry-run')
-    expect(runbook).toContain('npm run emqx:development:apply')
-    expect(runbook).toContain('npm run emqx:development:verify')
-    expect(runbook.indexOf('Cloud Run 同時接受 current 與 previous')).toBeLessThan(
-      runbook.indexOf('將 EMQX Action 切換到新 current'),
-    )
-    expect(runbook.indexOf('npm run emqx:development:verify')).toBeLessThan(
-      runbook.indexOf('移除 previous'),
-    )
-    const rollback = runbook.split('### Rotation rollback')[1]
-    expect(rollback).toContain('PEECARE_EMQX_WEBHOOK_SECRET_CURRENT_REF')
-    expect(rollback).toContain('PEECARE_EMQX_WEBHOOK_SECRET_PREVIOUS_REF')
-    expect(runbook).not.toContain('sentinel-previous-secret')
+    expect(packageJson.scripts['emqx:development:dry-run']).toBeUndefined()
+    expect(packageJson.scripts['emqx:development:apply']).toBeUndefined()
+
+    expect(runbook).toContain('peecare-emqx-webhook-current')
+    expect(runbook).toContain('{{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}')
+    expect(runbook).toContain('custom headers are not persisted')
+    expect(runbook).toContain('`TLS Verify`: `disabled`')
+    expect(runbook).toContain('previous: not deployed')
+    expect(runbook).toContain('broker-side queue depth and drops are not observable')
+    expect(runbook).toContain('Cloud Run structured logs')
+    expect(runbook).toContain('end-to-end probe')
+    expect(runbook).toContain('PEECARE_DEVICE_MQTT_URL')
+    expect(runbook).toContain('hidden interactive TTY')
+    expect(runbook).toContain('兩次 canonical probe')
+    expect(runbook).toContain('HTTP 422')
+    expect(runbook).toContain('publisher binding')
+    expect(runbook).not.toMatch(/PC-[A-Za-z0-9_-]+:emqx-[A-Za-z0-9:-]+/)
+    expect(runbook).not.toContain('PEECARE_EMQX_API_KEY')
+    expect(runbook).not.toContain('PEECARE_EMQX_API_SECRET')
+    expect(runbook).not.toContain('/api-spec.json')
+    expect(runbook).not.toContain('npm run emqx:development:apply')
+    expect(runbook).not.toContain('`retried > 0`')
+    expect(runbook).not.toContain('`failed >= 3`')
+
+    expect(integration).toContain('Dashboard')
+    expect(integration).toContain('peecare-emqx-webhook-current')
+    expect(integration).toContain('{{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}')
+    expect(integration).toContain('`TLS Verify` disabled')
+    expect(integration).toContain('PEECARE_DEVICE_MQTT_URL')
+    expect(integration).toContain('hidden interactive TTY')
+    expect(integration).not.toContain('/api/v5/connectors')
+    expect(integration).not.toContain('/api/v5/actions')
+    expect(integration).not.toContain('/api/v5/rules')
+    expect(integration).not.toContain('verify_peer')
+    expect(integration).not.toContain('headers.authorization')
+    expect(integration).not.toContain('npm run emqx:development:apply')
   })
 })

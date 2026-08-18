@@ -1,5 +1,3 @@
-import { Buffer } from 'node:buffer'
-import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -14,19 +12,23 @@ const APPROVED_TOPIC_FILTERS = Object.freeze([
 ])
 const CURRENT_SECRET_TOKEN = '{{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}'
 const INGESTION_ORIGIN_TOKEN = '{{PEECARE_DEVELOPMENT_INGESTION_ORIGIN}}'
+const CONNECTOR_NAME_TOKEN = '{{PEECARE_EMQX_CONNECTOR_NAME}}'
+const ACTION_NAME_TOKEN = '{{PEECARE_EMQX_ACTION_NAME}}'
+const SERVERLESS_ACTION_BODY =
+  `{"webhookAuthorization":"Bearer ${CURRENT_SECRET_TOKEN}","event":\${.}}`
 const APPROVED_DELIVERY_POLICY = Object.freeze({
-  query_mode: 'async',
-  worker_pool_size: 2,
-  inflight_window: 10,
-  max_buffer_bytes: '8MB',
-  request_ttl: '30s',
+  pool_size: 2,
+  enable_pipelining: 1,
+  connect_timeout: '10s',
   health_check_interval: '15s',
 })
-const APPROVED_ALERT_THRESHOLDS = Object.freeze({
-  warning: Object.freeze({ retried: 1, queuingSeconds: 60 }),
-  critical: Object.freeze({ failedInFiveMinutes: 3, dropped: 1, lateReply: 1 }),
-})
-const REQUIRED_API_FIELDS = Object.freeze(Object.keys(APPROVED_DELIVERY_POLICY))
+const UNCONSTRAINED_ACTION_FIELDS = Object.freeze([
+  'query_mode',
+  'worker_pool_size',
+  'inflight_window',
+  'max_buffer_bytes',
+  'request_ttl',
+])
 
 export class EmqxWebhookConfigurationError extends Error {
   constructor(code, message) {
@@ -110,46 +112,30 @@ function isDeepEqual(left, right) {
 }
 
 function validateDeliveryPolicy(template) {
+  const actual = Object.fromEntries(
+    Object.keys(APPROVED_DELIVERY_POLICY).map((key) => [key, template?.connector?.[key]]),
+  )
   if (
-    !isDeepEqual(template?.action?.resource_opts, APPROVED_DELIVERY_POLICY) ||
+    !isDeepEqual(actual, APPROVED_DELIVERY_POLICY) ||
     JSON.stringify(template).includes('retry_interval')
   ) {
     fail(
       'unapproved_delivery_policy',
-      'HTTP action delivery policy must exactly match the approved bounded values.',
-    )
-  }
-  if (!isDeepEqual(template?.alertThresholds, APPROVED_ALERT_THRESHOLDS)) {
-    fail(
-      'unapproved_alert_thresholds',
-      'Webhook alert thresholds must exactly match the approved warning and critical values.',
+      'HTTP connector delivery policy must exactly match the approved Serverless console values.',
     )
   }
 }
 
 function validateSecretToken(template) {
   if (
-    template?.action?.parameters?.headers?.authorization !==
-    `Bearer ${CURRENT_SECRET_TOKEN}`
+    template?.action?.parameters?.body !== SERVERLESS_ACTION_BODY ||
+    !isDeepEqual(template?.action?.parameters?.headers, {
+      'content-type': 'application/json',
+    })
   ) {
     fail(
       'invalid_secret_reference',
-      'The sanitized action must contain only the approved current-secret reference token.',
-    )
-  }
-}
-
-function validateApiSpec(apiSpec) {
-  const actionsPath =
-    apiSpec?.paths?.['/api/v5/actions'] ?? apiSpec?.paths?.['/actions']
-  const serialized = JSON.stringify(apiSpec)
-  if (
-    !actionsPath?.post ||
-    REQUIRED_API_FIELDS.some((field) => !serialized.includes(`"${field}"`))
-  ) {
-    fail(
-      'unsupported_emqx_schema',
-      'Live EMQX API schema does not support every approved HTTP action resource option.',
+      'The sanitized action must contain the fixed body-wrapper secret token and no custom header.',
     )
   }
 }
@@ -184,7 +170,7 @@ function validateEnvironment(environment) {
   const secretReference = environment.PEECARE_INGESTION_SECRET_CURRENT_REF
   if (
     typeof secretReference !== 'string' ||
-    !/^projects\/(?:petcare-c7483|348528459946)\/secrets\/[A-Za-z0-9_-]+\/versions\/[1-9][0-9]*$/.test(
+    !/^projects\/(?:petcare-c7483|348528459946)\/secrets\/peecare-emqx-webhook-current\/versions\/[1-9][0-9]*$/.test(
       secretReference,
     )
   ) {
@@ -193,251 +179,72 @@ function validateEnvironment(environment) {
       'A numeric current Secret Manager version reference in the development project is required.',
     )
   }
-  return Object.freeze({ origin, secretReference })
-}
-
-function fixedResource(resource) {
-  if (resource === null) return null
-  const copy = structuredClone(resource)
-  for (const key of [
-    'actions',
-    'action_details',
-    'created_at',
-    'from',
-    'last_modified_at',
-    'metadata',
-    'node_status',
-    'rules',
-    'status',
-    'status_reason',
-  ]) {
-    delete copy[key]
-  }
-  return copy
-}
-
-function containsDesired(actual, desired) {
-  if (Array.isArray(desired)) {
-    return (
-      Array.isArray(actual) &&
-      actual.length === desired.length &&
-      desired.every((value, index) => containsDesired(actual[index], value))
-    )
-  }
-  if (desired && typeof desired === 'object') {
-    return (
-      actual !== null &&
-      typeof actual === 'object' &&
-      Object.entries(desired).every(([key, value]) => {
-        if (
-          key === 'authorization' &&
-          value === `Bearer ${CURRENT_SECRET_TOKEN}` &&
-          typeof actual[key] === 'string' &&
-          actual[key].includes('******')
-        ) {
-          return true
-        }
-        return containsDesired(actual[key], value)
-      })
-    )
-  }
-  return actual === desired
-}
-
-function planOperation(current, desired) {
-  if (current === null) return 'create'
-  return containsDesired(fixedResource(current), desired) ? 'noop' : 'update'
-}
-
-function defaultExecute(command, args) {
-  return spawnSync(command, args, {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  })
-}
-
-export function createEmqxWebhookManagementAdapter({
-  managementUrl,
-  apiKey,
-  apiSecret,
-  fetchImpl = globalThis.fetch,
-  execute = defaultExecute,
-  requestTimeoutMs = 10_000,
-}) {
-  const baseUrl = validateHttpsOrigin(
-    managementUrl,
-    'unsafe_management_endpoint',
-    'EMQX management URL must be an HTTPS origin.',
+  const connectorName = validateIntegrationIdentity(
+    environment.PEECARE_EMQX_CONNECTOR_NAME,
   )
+  const actionName = validateIntegrationIdentity(environment.PEECARE_EMQX_ACTION_NAME)
+  return Object.freeze({ origin, secretReference, connectorName, actionName })
+}
+
+function validateIntegrationIdentity(value) {
   if (
-    typeof apiKey !== 'string' ||
-    apiKey.length === 0 ||
-    typeof apiSecret !== 'string' ||
-    apiSecret.length === 0 ||
-    /[\r\n\0]/.test(`${apiKey}${apiSecret}`)
+    typeof value !== 'string' ||
+    value.length < 1 ||
+    value.length > 128 ||
+    /[\s\0]/.test(value)
   ) {
-    fail('missing_management_credentials', 'Scoped EMQX API credentials are required.')
-  }
-  if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs <= 0) {
-    fail('invalid_management_timeout', 'EMQX management timeout must be a positive integer.')
-  }
-  const authorization = `Basic ${Buffer.from(`${apiKey}:${apiSecret}`, 'utf8').toString('base64')}`
-
-  async function request(path, { method = 'GET', body, expectedStatuses = [200] } = {}) {
-    let response
-    try {
-      response = await fetchImpl(`${baseUrl}${path}`, {
-        method,
-        signal: AbortSignal.timeout(requestTimeoutMs),
-        headers: {
-          accept: 'application/json',
-          authorization,
-          ...(body === undefined ? {} : { 'content-type': 'application/json' }),
-        },
-        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      })
-    } catch {
-      fail('emqx_network_failure', 'EMQX management request failed.')
-    }
-    if (!expectedStatuses.includes(response.status)) {
-      fail('emqx_unexpected_status', `EMQX returned unexpected HTTP status ${response.status}.`)
-    }
-    if (response.status === 204 || response.status === 404) return null
-    try {
-      return await response.json()
-    } catch {
-      fail('emqx_unexpected_response', 'EMQX response was not valid JSON.')
-    }
-  }
-
-  const resources = (configuration) => [
-    {
-      key: 'connector',
-      collection: '/api/v5/connectors',
-      id: `http:${configuration.connector.name}`,
-      body: configuration.connector,
-    },
-    {
-      key: 'action',
-      collection: '/api/v5/actions',
-      id: `http:${configuration.action.name}`,
-      body: configuration.action,
-    },
-    {
-      key: 'rule',
-      collection: '/api/v5/rules',
-      id: configuration.rule.id,
-      body: configuration.rule,
-    },
-  ]
-
-  async function planConfiguration(configuration) {
-    const definitions = resources(configuration)
-    const current = await Promise.all(
-      definitions.map(({ collection, id }) =>
-        request(`${collection}/${encodeURIComponent(id)}`, {
-          expectedStatuses: [200, 404],
-        }),
-      ),
-    )
-    return Object.fromEntries(
-      definitions.map(({ key, body }, index) => [
-        key,
-        planOperation(current[index], body),
-      ]),
+    fail(
+      'invalid_integration_identity',
+      'Connector and action identities must be bounded non-whitespace strings.',
     )
   }
-
-  return {
-    readApiSpec() {
-      return request('/api-spec.json')
-    },
-    planConfiguration,
-    accessSecret(reference) {
-      const segments = reference.split('/')
-      const result = execute('gcloud', [
-        'secrets',
-        'versions',
-        'access',
-        segments[5],
-        '--secret',
-        segments[3],
-        '--project',
-        segments[1],
-      ])
-      if (result.status !== 0 || typeof result.stdout !== 'string') {
-        fail('secret_access_failed', 'Unable to access the current webhook secret version.')
-      }
-      return result.stdout.replace(/\r?\n$/, '')
-    },
-    async applyConfiguration(configuration) {
-      const plan = await planConfiguration(configuration)
-      for (const resource of resources(configuration)) {
-        const operation = plan[resource.key]
-        if (operation === 'noop') continue
-        await request(
-          operation === 'create'
-            ? resource.collection
-            : `${resource.collection}/${encodeURIComponent(resource.id)}`,
-          {
-            method: operation === 'create' ? 'POST' : 'PUT',
-            body: resource.body,
-            expectedStatuses:
-              operation === 'create' ? [201, 204] : [200, 204],
-          },
-        )
-      }
-    },
-  }
+  return value
 }
 
-function resolvedConfiguration(template, origin, secret) {
-  if (
-    typeof secret !== 'string' ||
-    secret.length === 0 ||
-    /[\r\n\0]/.test(secret)
-  ) {
-    fail('invalid_secret_value', 'Resolved current secret is empty or unsafe for an HTTP header.')
-  }
-  const configuration = structuredClone(template)
-  configuration.connector.url = origin
-  configuration.action.parameters.headers.authorization = `Bearer ${secret}`
-  return configuration
-}
-
-function sanitizedConfiguration(template, origin) {
-  const configuration = structuredClone(template)
-  configuration.connector.url = origin
-  return configuration
-}
-
-function validatePlan(plan) {
-  const allowed = new Set(['create', 'update', 'noop'])
-  if (
-    !plan ||
-    !allowed.has(plan.connector) ||
-    !allowed.has(plan.action) ||
-    !allowed.has(plan.rule)
-  ) {
-    fail('invalid_dry_run_plan', 'EMQX configuration plan must classify every resource safely.')
-  }
+function configurationSummary(
+  template,
+  origin,
+  secretReference,
+  connectorName,
+  actionName,
+) {
   return Object.freeze({
-    connector: plan.connector,
-    action: plan.action,
-    rule: plan.rule,
-  })
-}
-
-function configurationSummary(mode, status, origin, secretReference, plan) {
-  return Object.freeze({
-    status,
-    mode,
+    status: 'ready',
+    mode: 'checklist',
     targetOrigin: origin,
     secretReference,
     secretToken: CURRENT_SECRET_TOKEN,
-    plan,
+    connectorName,
+    actionName,
     deliveryPolicy: APPROVED_DELIVERY_POLICY,
-    alertThresholds: APPROVED_ALERT_THRESHOLDS,
+    unconstrainedActionFields: UNCONSTRAINED_ACTION_FIELDS,
+    checklist: Object.freeze({
+      connector: Object.freeze({
+        name: connectorName,
+        origin,
+        type: 'HTTP Server',
+        https: true,
+        tlsEnabled: true,
+        tlsVerify: 'disabled',
+        tlsVerifyException: 'serverless_console_has_no_ca_bundle_field',
+        ...APPROVED_DELIVERY_POLICY,
+      }),
+      rule: Object.freeze({
+        id: template.rule.id,
+        enabled: true,
+        sql: template.rule.sql,
+        topicFilters: APPROVED_TOPIC_FILTERS,
+      }),
+      action: Object.freeze({
+        name: actionName,
+        connectorName,
+        method: 'POST',
+        path: '/v1/emqx/events',
+        contentType: 'application/json',
+        customHeaders: 'unsupported',
+        body: SERVERLESS_ACTION_BODY,
+      }),
+    }),
   })
 }
 
@@ -445,28 +252,27 @@ export async function runEmqxWebhookConfiguration({
   mode,
   environment,
   template,
-  adapter,
   write,
 }) {
-  if (mode !== 'dry-run' && mode !== 'apply') {
-    fail('explicit_mode_required', 'Configuration requires explicit dry-run or apply mode.')
+  if (mode === 'apply') {
+    fail(
+      'serverless_api_write_unsupported',
+      'Serverless data integration must be configured through the Dashboard.',
+    )
+  }
+  if (mode !== 'dry-run') {
+    fail('explicit_mode_required', 'Configuration checklist requires explicit dry-run mode.')
   }
   validateWebhookTemplate(template)
-  const { origin, secretReference } = validateEnvironment(environment)
-  validateApiSpec(await adapter.readApiSpec())
-  const plan = validatePlan(
-    await adapter.planConfiguration(sanitizedConfiguration(template, origin)),
+  const { origin, secretReference, connectorName, actionName } =
+    validateEnvironment(environment)
+  const summary = configurationSummary(
+    template,
+    origin,
+    secretReference,
+    connectorName,
+    actionName,
   )
-
-  if (mode === 'dry-run') {
-    const summary = configurationSummary(mode, 'ready', origin, secretReference, plan)
-    write(JSON.stringify(summary))
-    return summary
-  }
-
-  const secret = await adapter.accessSecret(secretReference)
-  await adapter.applyConfiguration(resolvedConfiguration(template, origin, secret))
-  const summary = configurationSummary(mode, 'applied', origin, secretReference, plan)
   write(JSON.stringify(summary))
   return summary
 }
@@ -483,6 +289,35 @@ export function validateWebhookTemplate(template) {
     throw new EmqxWebhookConfigurationError(
       'invalid_topic_filters',
       'Rule SQL must use only the approved urination and battery topic filters.',
+    )
+  }
+  if (
+    template?.connector?.name !== CONNECTOR_NAME_TOKEN ||
+    template?.connector?.url !== INGESTION_ORIGIN_TOKEN ||
+    template?.action?.name !== ACTION_NAME_TOKEN ||
+    template?.action?.connector !== CONNECTOR_NAME_TOKEN ||
+    !isDeepEqual(template?.rule?.actions, [`http:${ACTION_NAME_TOKEN}`])
+  ) {
+    fail(
+      'invalid_integration_identity',
+      'Template integration identities must use the approved environment tokens.',
+    )
+  }
+  if (
+    template?.connector?.ssl?.enable !== true ||
+    template?.connector?.ssl?.verify !== 'disabled'
+  ) {
+    fail(
+      'invalid_tls_exception',
+      'Serverless template must record HTTPS/TLS enabled with TLS Verify disabled.',
+    )
+  }
+  if (
+    !isDeepEqual(template?.unconstrainedActionFields, UNCONSTRAINED_ACTION_FIELDS)
+  ) {
+    fail(
+      'invalid_unconstrained_fields',
+      'Template must identify the action fields controlled by platform defaults.',
     )
   }
   validateSecretToken(template)
@@ -503,11 +338,6 @@ async function runCli() {
       mode,
       environment: process.env,
       template: loadWebhookTemplate(),
-      adapter: createEmqxWebhookManagementAdapter({
-        managementUrl: process.env.PEECARE_EMQX_API_URL,
-        apiKey: process.env.PEECARE_EMQX_API_KEY,
-        apiSecret: process.env.PEECARE_EMQX_API_SECRET,
-      }),
       write: (line) => process.stdout.write(`${line}\n`),
     })
   } catch (error) {

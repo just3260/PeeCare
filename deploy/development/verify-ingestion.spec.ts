@@ -13,12 +13,17 @@ const image =
   'asia-east1-docker.pkg.dev/petcare-c7483/peecare/ingestion-api@sha256:' +
   'b'.repeat(64)
 const serviceUrl = 'https://peecare-ingestion-development-example.a.run.app'
-const eventId = 'PC-DEV-0001:smoke-urination-1'
-const batteryEventId = 'PC-DEV-0001:smoke-battery-1'
+const smokeRunId = 1_786_358_600_000
+const verificationRunId = '00000000-0000-4000-8000-000000000001'
+const eventId = `PC-DEV-0001:smoke-urination-${smokeRunId}-${verificationRunId}`
+const batteryEventId = `PC-DEV-0001:smoke-battery-${smokeRunId}-${verificationRunId}`
 
 function adapter(
   overrides: Partial<IngestionVerificationAdapter> = {},
+  runId = verificationRunId,
 ): IngestionVerificationAdapter {
+  const eventId = `PC-DEV-0001:smoke-urination-${smokeRunId}-${runId}`
+  const batteryEventId = `PC-DEV-0001:smoke-battery-${smokeRunId}-${runId}`
   const deliveryCounts = new Map<string, number>()
   let stateRead = 0
   const urinationEvent = {
@@ -130,6 +135,7 @@ describe('development ingestion cloud verification', () => {
       manifest: loadIngestionManifest(),
       adapter: verificationAdapter,
       now: () => 1_786_358_600_000,
+      createRunId: () => verificationRunId,
       write: (line) => output.push(line),
     })
 
@@ -180,10 +186,44 @@ describe('development ingestion cloud verification', () => {
       manifest: loadIngestionManifest(),
       adapter: adapter(),
       now: () => 1_786_358_600_000,
+      createRunId: () => verificationRunId,
       write: vi.fn(),
     })
 
     expect(result.status).toBe('healthy')
+  })
+
+  it('keeps smoke event IDs distinct when two runs share the same timestamp', async () => {
+    const runIds = [
+      '00000000-0000-4000-8000-000000000002',
+      '00000000-0000-4000-8000-000000000003',
+    ]
+
+    const results = await Promise.all(
+      runIds.map((runId) =>
+        runIngestionVerification({
+          environment: {
+            PEECARE_DEVELOPMENT_PROJECT_ID: 'petcare-c7483',
+            PEECARE_DEVELOPMENT_FIRESTORE_REGION: 'asia-east1',
+            PEECARE_INGESTION_SECRET_CURRENT_REF:
+              'projects/petcare-c7483/secrets/emqx-webhook-current/versions/1',
+          },
+          args: ['--revision', revision],
+          manifest: loadIngestionManifest(),
+          adapter: adapter({}, runId),
+          now: () => smokeRunId,
+          createRunId: () => runId,
+          write: vi.fn(),
+        }),
+      ),
+    )
+
+    expect(results[0].eventId).not.toBe(results[1].eventId)
+    expect(results.map(({ eventId }) => eventId)).toEqual(
+      runIds.map(
+        (runId) => `PC-DEV-0001:smoke-urination-${smokeRunId}-${runId}`,
+      ),
+    )
   })
 
   it.each([
@@ -224,6 +264,7 @@ describe('development ingestion cloud verification', () => {
         manifest: loadIngestionManifest(),
         adapter: verificationAdapter,
         now: () => 1_786_358_600_000,
+        createRunId: () => verificationRunId,
         write: vi.fn(),
       }),
     ).rejects.toMatchObject({ code: 'revision_mismatch' })
@@ -251,6 +292,7 @@ describe('development ingestion cloud verification', () => {
         manifest: loadIngestionManifest(),
         adapter: verificationAdapter,
         now: () => 1_786_358_600_000,
+        createRunId: () => verificationRunId,
         write: vi.fn(),
       }),
     ).rejects.toMatchObject({ code: 'smoke_failed' })
@@ -302,6 +344,7 @@ describe('development ingestion cloud verification', () => {
         manifest: loadIngestionManifest(),
         adapter: verificationAdapter,
         now: () => 1_786_358_600_000,
+        createRunId: () => verificationRunId,
         write: vi.fn(),
       }),
     ).rejects.toMatchObject({ code: 'smoke_failed' })
@@ -355,6 +398,7 @@ describe('development ingestion cloud verification', () => {
         imageDigest: priorImageDigest,
       },
       now: () => 1_786_358_600_000,
+      createRunId: () => verificationRunId,
       write: vi.fn(),
     })
 

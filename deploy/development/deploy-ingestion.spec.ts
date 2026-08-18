@@ -575,8 +575,34 @@ describe('development ingestion deployment', () => {
             '.',
           ],
         },
+        {
+          name: 'gcr.io/cloud-builders/docker',
+          args: [
+            'run',
+            '--rm',
+            '${_IMAGE}',
+            'node',
+            '--input-type=module',
+            '--eval',
+            "import('@peecare/device-events-contract').then(({ loadValidators }) => loadValidators())",
+          ],
+        },
       ],
       images: ['${_IMAGE}'],
     })
+  })
+
+  it('installs production dependencies beside the linked event contract in the runtime image', () => {
+    const dockerfile = readFileSync(
+      'services/ingestion-api/Dockerfile',
+      'utf8',
+    )
+    const runtimeStage = dockerfile.slice(
+      dockerfile.lastIndexOf('FROM node:22-alpine'),
+    )
+
+    expect(runtimeStage).toContain(
+      'RUN npm --prefix /app/contracts/device-events ci --omit=dev',
+    )
   })
 })

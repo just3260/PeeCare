@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import type { AppConfig, FirestoreConfig } from './config.js';
-import { parseEnvelope } from './contracts/emqx-webhook-envelope.js';
+import { hasServerlessBodyCredential, parseEnvelope, parseServerlessCredentialWrapper } from './contracts/emqx-webhook-envelope.js';
 import { validateWebhookEvent } from './contracts/validate-emqx-webhook-event.js';
 import { fail } from './http/errors.js';
 import { isAuthorized } from './security/webhook-auth.js';
@@ -21,14 +21,25 @@ export function buildApp(options: Omit<AppConfig, 'firestore'> & { firestore?: F
     reply.header('x-request-id', request.id);
     return { status: 'ok' };
   };
+  app.get('/', { exposeHeadRoute: false }, healthHandler);
+  app.post('/', healthHandler);
   app.get('/healthz', healthHandler);
   app.get('/health', healthHandler);
   app.post('/v1/emqx/events', async (request, reply) => {
     reply.header('x-request-id', request.id);
     const contentType = request.headers['content-type'];
     if (typeof contentType !== 'string' || !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(contentType)) return fail(reply, 415, 'unsupported_media_type');
-    if (!isAuthorized(request.headers.authorization, options.currentSecret, options.previousSecret)) return fail(reply, 401, 'unauthorized');
-    const envelope = parseEnvelope(request.body);
+    const authorization = request.headers.authorization;
+    let envelopeBody: unknown;
+    if (authorization !== undefined) {
+      if (hasServerlessBodyCredential(request.body) || !isAuthorized(authorization, options.currentSecret, options.previousSecret)) return fail(reply, 401, 'unauthorized');
+      envelopeBody = request.body;
+    } else {
+      const wrapper = parseServerlessCredentialWrapper(request.body);
+      if (!wrapper || !isAuthorized(wrapper.webhookAuthorization, options.currentSecret, options.previousSecret)) return fail(reply, 401, 'unauthorized');
+      envelopeBody = wrapper.event;
+    }
+    const envelope = parseEnvelope(envelopeBody);
     if (!envelope.ok) return fail(reply, envelope.code === 'retained_event' ? 422 : 400, envelope.code);
     const event = validateWebhookEvent(envelope.value, now());
     if (!event.ok) return fail(reply, 422, event.code);
@@ -49,9 +60,13 @@ export function buildApp(options: Omit<AppConfig, 'firestore'> & { firestore?: F
   });
   app.setNotFoundHandler((request, reply) => fail(reply, 404, 'not_found'));
   app.setErrorHandler((error, request, reply) => {
-    if ((error as { code?: string }).code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE') return fail(reply, 415, 'unsupported_media_type');
-    if ((error as { code?: string }).code === 'FST_ERR_CTP_BODY_TOO_LARGE') return fail(reply, 413, 'body_too_large');
-    if ((error as { code?: string }).code === 'FST_ERR_CTP_INVALID_JSON_BODY') return fail(reply, 400, 'malformed_json');
+    const code = (error as { code?: string }).code;
+    if (code === 'FST_ERR_CTP_EMPTY_JSON_BODY' && request.url === '/') {
+      return request.method === 'POST' ? healthHandler(request, reply) : fail(reply, 404, 'not_found');
+    }
+    if (code === 'FST_ERR_CTP_INVALID_MEDIA_TYPE') return fail(reply, 415, 'unsupported_media_type');
+    if (code === 'FST_ERR_CTP_BODY_TOO_LARGE') return fail(reply, 413, 'body_too_large');
+    if (code === 'FST_ERR_CTP_INVALID_JSON_BODY') return fail(reply, 400, 'malformed_json');
     return fail(reply, 500, 'internal_error');
   });
   return app;

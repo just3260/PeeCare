@@ -10,7 +10,10 @@ RUN npm run build
 FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
-COPY contracts/device-events /app/contracts/device-events
+COPY contracts/device-events/package*.json /app/contracts/device-events/
+RUN npm --prefix /app/contracts/device-events ci --omit=dev
+COPY contracts/device-events/lib /app/contracts/device-events/lib
+COPY contracts/device-events/schemas /app/contracts/device-events/schemas
 COPY services/ingestion-api/package*.json ./services/ingestion-api/
 WORKDIR /app/services/ingestion-api
 RUN npm ci --omit=dev
