@@ -217,6 +217,80 @@ Serverless 不提供 action metrics，broker-side queue depth、retry 與 drops 
 營運偵測依賴 Cloud Run structured logs 與可重複執行的 end-to-end probe，不建立
 無法取數的 broker 告警門檻。
 
+### Development paired legacy status compatibility
+
+development-only compatibility route 是預設停用、可移除的測試設施；它以獨立
+Urination rule/action 與 Battery rule/action 接收精確 `peecare/device/1/status`，只共享
+既有 HTTPS connector，絕不把 legacy filter 加到 canonical rule。人工驗收拓撲必須顯示
+一個 Connected connector、兩條 enabled rules、兩個 Available actions，每條 rule 恰綁一個
+event-specific action。啟用需要：
+
+```sh
+export PEECARE_EMQX_LEGACY_COMPATIBILITY_MODE='enabled'
+export PEECARE_EMQX_COMPATIBILITY_ACTION_NAME='<dashboard-assigned-compatibility-action-name>'
+export PEECARE_EMQX_BATTERY_COMPATIBILITY_ACTION_NAME='<dashboard-assigned-battery-compatibility-action-name>'
+export PEECARE_APPROVED_LEGACY_MQTT_CLIENT_ID='<approved-client-id>'
+export PEECARE_APPROVED_LEGACY_MQTT_USERNAME='<approved-username>'
+```
+
+`PEECARE_EMQX_LEGACY_COMPATIBILITY_MODE` 省略或為 `disabled` 時維持 canonical-only。
+啟用前 `devices/68E274BD2A58` registry 必須是 `pc-mini` 且 ingestionStatus enabled，並需明確
+接受：`pumpSecondsToday is cumulative test data`、`daily stats will be modified`、
+`retries create distinct events`，並接受 Urination 會污染 event history/daily stats、Battery
+會污染 battery history/latest battery projection。每次 delivery 為兩種 event 各產生新
+eventId、sequence 固定為 `1`，不保證 retry identity、單次 duration 或 aggregate 正確。
+
+先在 Dashboard 建立 disabled 的獨立 action/rule，再執行 Dashboard SQL Test：
+
+| Case | Boundary | Expected |
+|---|---|---|
+| positive | approved identity、`online: true`、`pumpSecondsToday: 10.4` | one result，10400 ms |
+| lower / upper | `0` / `4294967.295` | one result |
+| overflow | `4294967.296` | zero results |
+| negative matrix | wrong topic/identity、offline、non-object、missing/string/negative/non-finite pump value | zero results |
+
+Battery rule 使用獨立 SQL boundary，不要求 Urination 的 identity、online、pump 或 retain
+predicates；topic authorization 由 development broker ACL 負責。Dashboard SQL Test matrix：
+
+| Battery case | `batteryV` | Expected |
+|---|---:|---|
+| accepted boundaries | `0` / `20` | one result，`0` / `20000` mV |
+| tiers | `6.9` / `7.0` / `7.5` / `8.0` / `8.5` | `0` / `25` / `50` / `75` / `100`% |
+| live example | `7.74` | one result，`7740` mV、`50`% |
+| rejected | missing / string / negative / `20.001` | zero results，no expression error |
+
+Dashboard SQL Test 無法輸入 `flags.retain`；Urination 只可在未儲存的測試草稿暫時省略該條件。
+正式 Urination rule 必須保留 `flags.retain = false`，並透過實際 MQTT retained publish 證明零
+delivery；Battery rule 依已驗收 contract 不加入 retain predicate。Urination SQL 先建立 decoded
+payload alias，再以 `CASE` 防護 duration arithmetic，使缺值或非數字輸入
+成為 zero results，而不是 `select_and_transform_error`。
+
+Urination envelope 固定為 `pc-mini` / `68E274BD2A58`、flush `0`、broker timestamps 與
+`compat:68E274BD2A58:` UUID eventId。Battery envelope 使用 canonical battery topic、固定
+username `Peecare` 與 `compatbattery:68E274BD2A58:` UUID eventId。兩者都不得複製完整
+legacy payload；任何負例產生 result 時都不得啟用。
+
+`68E274BD2A58` 是目前核准實機的 ESP32-derived identity；實體 development inventory
+只接受保留前導零、無分隔符的 12 碼大寫十六進位值。符合格式不等於可信硬體，仍須
+核對 registry、per-device credential、`device-68E274BD2A58` principal 與 publisher
+binding。合成 Test Tool 裝置繼續使用 `PC-DEV-######`，並只依精確
+`developmentTestTool` marker 授權；兩種流程不得依 ID 外觀互相代替。
+
+Operator 應由 approved Arduino publisher 外部觸發一筆已知值，並以
+`PEECARE_EXPECTED_LEGACY_PUMP_SECONDS_TODAY`、`PEECARE_EXPECTED_LEGACY_BATTERY_V` 與
+`PEECARE_EXPECTED_LEGACY_QOS` 宣告 verifier 預期，再於驗收紀錄人工佐證來源。Verifier
+找到恰一筆 Urination 與恰一筆 Battery compatibility event 時只回報
+`paired_shape_observed`與`human_attestation_required`；這不能證明 source provenance，因為
+Firestore shape本身不能排除持有webhook credential的synthetic publisher，因此不得把自動結果
+描述為approved Arduino provenance證明。
+
+完整 rollback 必須停用 Battery 與 Urination 兩條 rules；只停用一條是 degraded partial
+disable state。舊指引 `disable the compatibility rule first` 在此代表逐條操作，不能漏掉
+另一條。確認兩種 prefix 都停止新增後，remove the compatibility action, then the rule：
+先移除兩個 actions，再移除兩條 rules；shared connector 不變。此 removal does not automatically delete Firestore data；
+既有 compatibility events、daily aggregates、battery history 與 latest projection 保留，
+需另案核准才能清理。
+
 ---
 
 ## 七、Broker 端裝置身分與 ACL
@@ -226,18 +300,18 @@ Serverless 不提供 action metrics，broker-side queue depth、retry 與 drops 
 | Broker URL | `mqtts://<mqtt-host>:8883`（強制 TLS 憑證驗證，不可關閉） |
 | Management API | HTTPS，`/api/v5`，使用最小權限 API key（不可用 Dashboard 帳密） |
 | 認證方式 | EMQX built-in database，**username 身分**，非 superuser |
-| `clientId` | 等於 `deviceId`，例如 `PC-000001` |
-| `username` | `device-{deviceId}`，例如 `device-PC-000001` |
+| `clientId` | 等於 `deviceId`，目前實機為 `68E274BD2A58` |
+| `username` | `device-{deviceId}`，目前實機為 `device-68E274BD2A58` |
 | 發布政策 | QoS **1**、retained **false**（QoS 0/2 或 retained true 一律視為設定錯誤） |
 
 ACL（每個裝置只能發布自己的兩個 topic，其餘全拒）：
 
 ```json
 {
-  "username": "device-PC-000001",
+  "username": "device-68E274BD2A58",
   "rules": [
-    { "permission": "allow", "action": "publish", "topic": "products/pc-mini/devices/PC-000001/events/urination", "qos": [1], "retain": false },
-    { "permission": "allow", "action": "publish", "topic": "products/pc-mini/devices/PC-000001/status/battery", "qos": [1], "retain": false },
+    { "permission": "allow", "action": "publish", "topic": "products/pc-mini/devices/68E274BD2A58/events/urination", "qos": [1], "retain": false },
+    { "permission": "allow", "action": "publish", "topic": "products/pc-mini/devices/68E274BD2A58/status/battery", "qos": [1], "retain": false },
     { "permission": "deny", "action": "all", "topic": "#" }
   ]
 }
@@ -251,7 +325,7 @@ ACL（每個裝置只能發布自己的兩個 topic，其餘全拒）：
 
 | deviceId | productModel | MQTT principal | Firestore |
 |---|---|---|---|
-| `PC-000001` | `pc-mini` | `device-PC-000001` | `petcare-c7483/devices/PC-000001`，`ingestionStatus: enabled` |
+| `68E274BD2A58` | `pc-mini` | `device-68E274BD2A58` | `petcare-c7483/devices/68E274BD2A58`，`ingestionStatus: enabled` |
 
 ---
 
@@ -276,7 +350,7 @@ npm run emqx:development:checklist
 ```
 
 ```bash
-npm run emqx:development:verify
+npm run emqx:development:verify:canonical
 ```
 
 E2E verifier 從 `devices/development/device-inventory.json` 讀取既有 deviceId、

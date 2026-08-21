@@ -68,6 +68,122 @@ numeric secret version，只把 resolved 值代入 Dashboard Action Body 的 Bea
 位置。不要回顯 secret、不要把完整 resolved body 寫入檔案或 shell history；完成後只
 以重新開啟 editor 的 redacted view 核對 two-field shape。
 
+## Opt-in paired development-only compatibility routes
+
+此 development-only compatibility route 只供 Arduino 韌體改發 canonical topic 前的
+短期 smoke test。Paired topology 預設停用，實際 Dashboard 拓撲必須是 **一個 Connected
+HTTP Server connector、兩條 enabled legacy rules、兩個 Available HTTP actions**：Urination
+與 Battery 各有一條精確匹配 `peecare/device/1/status` 的 rule，且各 rule 恰綁定自己的
+event-specific action。兩個 actions 共用同一 connector；不得以單一 rule 綁兩個 actions，
+也不得把 legacy filter 加到 canonical rule。啟用前必須確認：
+
+- `align-emqx-webhook-with-serverless` 已 archive，canonical connector/action 與兩個
+  canonical deliveries 已驗收；
+- `devices/68E274BD2A58` 的 deviceId、productModel `pc-mini` 與
+  ingestionStatus `enabled` 完全相符；
+- approved legacy client ID、username 與兩個獨立 compatibility action names 已由操作者
+  核准，且不把 MQTT password 放進 environment、argv、文件或 log；
+- 操作者接受 `pumpSecondsToday is cumulative test data`、
+  `daily stats will be modified`、`retries create distinct events`，以及 Battery events
+  會污染 battery history 與 latest battery projection 四項限制。
+
+`68E274BD2A58` 是目前核准實機的 ESP32-derived identity；實體 inventory 僅接受保留
+前導零的 12 碼大寫十六進位值。格式本身不是信任證明，仍須同時核對 registry、
+`device-68E274BD2A58` credential/principal 與 approved source publisher binding。
+`PC-DEV-######` 保留給合成 Test Tool 裝置，且只由精確 `developmentTestTool` registry
+marker 授權；不得將它當作 compatibility 固定 target，也不得用實體 ID 格式取代 marker。
+
+設定 checklist 時明確選擇模式：
+
+```sh
+export PEECARE_EMQX_LEGACY_COMPATIBILITY_MODE='enabled'
+export PEECARE_EMQX_COMPATIBILITY_ACTION_NAME='<dashboard-assigned-compatibility-action-name>'
+export PEECARE_EMQX_BATTERY_COMPATIBILITY_ACTION_NAME='<dashboard-assigned-battery-compatibility-action-name>'
+export PEECARE_APPROVED_LEGACY_MQTT_CLIENT_ID='<approved-client-id>'
+export PEECARE_APPROVED_LEGACY_MQTT_USERNAME='<approved-username>'
+npm run emqx:development:checklist
+```
+
+canonical-only 模式省略 `PEECARE_EMQX_LEGACY_COMPATIBILITY_MODE`，或設為
+`disabled`。任何其他拼字都必須 fail closed。Checklist 只證明 template 與輸入安全；
+不會修改 EMQX。Dashboard 中先建立 disabled 的 Urination action/rule 與 Battery
+action/rule，四者共用既有 HTTPS connector。Checklist 只有在一 connector／兩 rules／
+兩 actions 完整、每條 rule 恰綁一個 action 時才是 enable-ready。
+
+### Dashboard SQL Test
+
+在啟用 rule 前，以 Dashboard SQL Test 逐列執行，且紀錄只能保存 result count 與
+sanitized fixed-field assertion：
+
+| Case | Input boundary | Expected result |
+|---|---|---|
+| positive | exact topic、approved identity、`online: true`、`pumpSecondsToday: 10.4` | exactly one result；`pumpDurationMs: 10400` |
+| lower boundary | `pumpSecondsToday: 0` | exactly one result |
+| upper boundary | `pumpSecondsToday: 4294967.295` | exactly one result |
+| overflow | `pumpSecondsToday: 4294967.296` | zero results |
+| offline | `online: false` | zero results |
+| publisher mismatch | client ID 或 username 不符 | zero results |
+| invalid payload | 非 object、缺值、字串、負值或 non-finite pump seconds | zero results |
+
+Battery rule 另以同一 exact topic 執行下列 SQL Test。它先建立 decoded payload alias，
+再以 `CASE` 將非數字 `batteryV` 投影為 `-1` sentinel；`WHERE` 排除 sentinel。此 route
+刻意不以 `online`、`pumpSecondsToday`、source client ID/username 或 retain 作 SQL
+predicate，publish authorization 仍由既有 development broker ACL 負責。
+
+| Battery case | `batteryV` | Expected result |
+|---|---:|---|
+| lower boundary | `0` | one result；`0 mV`、`0%` |
+| below first tier | `6.9` | one result；`6900 mV`、`0%` |
+| tier 1 | `7.0` | one result；`7000 mV`、`25%` |
+| live example | `7.74` | one result；`7740 mV`、`50%` |
+| tier 2 | `7.5` | one result；`7500 mV`、`50%` |
+| tier 3 | `8.0` | one result；`8000 mV`、`75%` |
+| tier 4 | `8.5` | one result；`8500 mV`、`100%` |
+| upper boundary | `20` | one result；`20000 mV`、`100%` |
+| invalid | missing、string、negative 或 `20.001` | zero results；no expression error |
+
+Dashboard SQL Test 表單無法提供 `flags.retain`，因此 Urination 測試時暫時只從測試草稿省略
+`flags.retain = false`；不得把省略後的 Urination SQL 儲存成 rule。實際儲存的 Urination
+runtime SQL 必須保留 retained filter，並用真實 MQTT retained publish 驗證零 delivery。
+Battery rule 依已驗收 contract 不加入 retain predicate。Urination SQL 必須先建立
+`json_decode(payload) AS legacyPayload`，再以 `CASE` 防護 duration arithmetic；缺值或字串等
+輸入應為 zero results，不得出現 `select_and_transform_error`。
+
+Urination 正例還要核對固定 target、`compat:68E274BD2A58:` UUID prefix、sequence `1`、
+broker timestamps、flush `0`；Battery 正例核對 `compatbattery:68E274BD2A58:` prefix、
+固定 username `Peecare`、rounded millivolts 與 tier。兩個 action outer objects 都只能有
+`webhookAuthorization` 與 `event`；任何負例有 result 時都不得啟用。測試紀錄不可含
+resolved credential 或完整 legacy payload。
+
+### Paired shape observation, human attestation, and rollback
+
+設定已知的 expected pump seconds、battery volts 與 QoS 後啟動 compatibility verifier。
+Operator 應由 approved Arduino publisher 外部發出一筆 non-retained online status，並在驗收紀錄中
+人工佐證觸發來源；不得用 Serverless Message Publish API 或 canonical probe 取代這份人工佐證：
+
+```sh
+export PEECARE_EXPECTED_LEGACY_PUMP_SECONDS_TODAY='10.4'
+export PEECARE_EXPECTED_LEGACY_BATTERY_V='7.74'
+export PEECARE_EXPECTED_LEGACY_QOS='0'
+npm run emqx:development:verify:compatibility
+```
+
+Verifier 應在開始時間後找到恰一筆 `compat:68E274BD2A58:` Urination event 與恰一筆
+`compatbattery:68E274BD2A58:` Battery event；順序不保證。成功結果是
+`paired_shape_observed`，並明示 `human_attestation_required`。這只證明 Firestore shape、
+cardinality、共同 broker timestamp 與 declared values 相符，不能證明 source provenance；
+持有 webhook credential 的 synthetic publisher 可能產生相同 shape。任一類型零筆、多筆、
+registry 不符或欄位不符都算失敗。
+
+完整 rollback 邊界是**停用兩條 rules**。先停用 Battery rule，再停用 Urination rule；
+若只停用其中一條，狀態是 `degraded partial disable`，不能宣稱 rollback 完成。歷史單一路徑
+指令 `disable the compatibility rule first` 在 paired topology 中表示逐條停用，但必須兩條
+都完成。確認新 legacy status 不再新增 `compat:` 與 `compatbattery:` 兩種 prefix 後，依序
+remove the compatibility action, then the rule：先移除兩個 actions，再移除兩條 rules。
+保留 shared connector 與 ingestion service。此流程 does not automatically delete Firestore data；
+既有 Urination event history/daily aggregates、Battery history/latest projection 都保留，
+任何清理都需另案核准。
+
 ## Connector health surface decision record
 
 - 2026-08-18（Asia/Taipei）：原 ingestion root 回 404，Dashboard connectivity
@@ -96,7 +212,7 @@ numeric secret version，只把 resolved 值代入 Dashboard Action Body 的 Bea
 ## Repeatable end-to-end verification
 
 ```sh
-npm run emqx:development:verify
+npm run emqx:development:verify:canonical
 ```
 
 Verifier 從 `devices/development/device-inventory.json` 讀取既有 development device

@@ -1,5 +1,6 @@
 const SECRET_KEY_PATTERN = /(?:password|passphrase|api[_-]?key|api[_-]?secret|token|credential(?:value)?|private[_-]?key)/i
 const SECRET_VALUE_PATTERN = /(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|(?:password|passphrase|secret|token|api[_-]?key)\s*[:=])/i
+const PHYSICAL_DEVICE_ID_PATTERN = /^[0-9A-F]{12}$/
 
 export class DeviceConfigurationError extends Error {
   constructor(code, message = code) {
@@ -60,6 +61,9 @@ export function validateDeviceInventory(inventory) {
     assertNonEmptyString(device.hardwareLabel, 'invalid_hardware_label', 'hardwareLabel')
     assertNonEmptyString(device.deviceId, 'invalid_device_id', 'deviceId')
     assertNonEmptyString(device.productModel, 'invalid_product_model', 'productModel')
+    if (!PHYSICAL_DEVICE_ID_PATTERN.test(device.deviceId)) {
+      fail('invalid_device_id', 'deviceId must be exactly 12 uppercase hexadecimal characters')
+    }
 
     if (deviceIds.has(device.deviceId)) fail('duplicate_device_id', `Duplicate deviceId: ${device.deviceId}`)
     if (hardwareLabels.has(device.hardwareLabel)) {

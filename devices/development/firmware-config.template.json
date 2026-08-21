@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "deviceId": "PC-DEV-000001",
+  "deviceId": "68E274BD2A58",
   "productModel": "pc-mini",
-  "clientId": "PC-DEV-000001",
-  "username": "device-PC-DEV-000001",
+  "clientId": "68E274BD2A58",
+  "username": "device-68E274BD2A58",
   "broker": {
     "urlFromEnvironment": "PEECARE_DEVICE_MQTT_URL",
     "protocol": "mqtts",
@@ -11,12 +11,12 @@
     "tls": { "rejectUnauthorized": true }
   },
   "topics": {
-    "urination": "products/pc-mini/devices/PC-DEV-000001/events/urination",
-    "battery": "products/pc-mini/devices/PC-DEV-000001/status/battery"
+    "urination": "products/pc-mini/devices/68E274BD2A58/events/urination",
+    "battery": "products/pc-mini/devices/68E274BD2A58/status/battery"
   },
   "publishPolicy": { "qos": 1, "retained": false },
   "payloadIdentity": {
-    "deviceId": "PC-DEV-000001"
+    "deviceId": "68E274BD2A58"
   },
   "retry": {
     "strategy": "reuse-unacknowledged-envelope",

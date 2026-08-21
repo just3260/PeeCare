@@ -15,12 +15,12 @@ const validInventory = {
   devices: [
     {
       hardwareLabel: 'PeeCare development unit 1',
-      deviceId: 'PC-DEV-000001',
+      deviceId: '68E274BD2A58',
       productModel: 'pc-mini',
-      mqttPrincipal: 'device-PC-DEV-000001',
+      mqttPrincipal: 'device-68E274BD2A58',
       firestore: {
         projectId: 'petcare-c7483',
-        documentPath: 'devices/PC-DEV-000001',
+        documentPath: 'devices/68E274BD2A58',
         ingestionStatus: 'enabled',
       },
     },
@@ -29,16 +29,16 @@ const validInventory = {
 
 const validFirmware = {
   schemaVersion: 1,
-  deviceId: 'PC-DEV-000001',
+  deviceId: '68E274BD2A58',
   productModel: 'pc-mini',
-  clientId: 'PC-DEV-000001',
-  username: 'device-PC-DEV-000001',
+  clientId: '68E274BD2A58',
+  username: 'device-68E274BD2A58',
   topics: {
-    urination: 'products/pc-mini/devices/PC-DEV-000001/events/urination',
-    battery: 'products/pc-mini/devices/PC-DEV-000001/status/battery',
+    urination: 'products/pc-mini/devices/68E274BD2A58/events/urination',
+    battery: 'products/pc-mini/devices/68E274BD2A58/status/battery',
   },
   payloadIdentity: {
-    deviceId: 'PC-DEV-000001',
+    deviceId: '68E274BD2A58',
     productModel: 'pc-mini',
   },
 }
@@ -48,7 +48,7 @@ describe('development device inventory', () => {
     expect(validateDeviceInventory(validInventory)).toEqual(validInventory.devices)
   })
 
-  it('returns duplicate_device_id before mutation for duplicate PC-DEV-000001 entries', () => {
+  it('returns duplicate_device_id before mutation for duplicate physical device entries', () => {
     const duplicateInventory = {
       ...validInventory,
       devices: [validInventory.devices[0], { ...validInventory.devices[0], hardwareLabel: 'second unit' }],
@@ -60,6 +60,35 @@ describe('development device inventory', () => {
       mutations += 1
     }).toThrowError(expect.objectContaining({ code: 'duplicate_device_id' }))
     expect(mutations).toBe(0)
+  })
+
+  it('accepts a twelve-digit uppercase ESP32 identifier while preserving leading zeroes', () => {
+    const inventory = structuredClone(validInventory)
+    inventory.devices[0].deviceId = '00E274BD2A58'
+    inventory.devices[0].mqttPrincipal = 'device-00E274BD2A58'
+    inventory.devices[0].firestore.documentPath = 'devices/00E274BD2A58'
+
+    expect(validateDeviceInventory(inventory)).toEqual(inventory.devices)
+  })
+
+  it.each([
+    '68e274bd2a58',
+    '8E274BD2A58',
+    '068E274BD2A58',
+    '68:E2:74:BD:2A:58',
+    '68E274-BD2A58',
+    '68E274BD2A5 ',
+    '68E274BD2A5G',
+    '68E274BD2A5',
+  ])('rejects malformed physical deviceId %s before handoff', (deviceId) => {
+    const inventory = structuredClone(validInventory)
+    inventory.devices[0].deviceId = deviceId
+    inventory.devices[0].mqttPrincipal = `device-${deviceId}`
+    inventory.devices[0].firestore.documentPath = `devices/${deviceId}`
+
+    expect(() => validateDeviceInventory(inventory)).toThrowError(
+      expect.objectContaining({ code: 'invalid_device_id' }),
+    )
   })
 
   it.each([
@@ -99,6 +128,20 @@ describe('development device inventory', () => {
     expect(() => validateDeviceInventory(inventory)).not.toThrow()
     expect(JSON.stringify(inventory)).not.toMatch(
       /(?:password|api[_-]?key|api[_-]?secret|token|credential|BEGIN (?:RSA )?PRIVATE KEY)/i,
+    )
+  })
+
+  it('keeps the inventory schema aligned with the physical ESP32 identifier boundary', async () => {
+    const schema = JSON.parse(
+      await readFile(`${developmentDirectory}/device-inventory.schema.json`, 'utf8'),
+    )
+
+    expect(schema.properties.devices.items.properties.deviceId.pattern).toBe('^[0-9A-F]{12}$')
+    expect(schema.properties.devices.items.properties.mqttPrincipal.pattern).toBe(
+      '^device-[0-9A-F]{12}$',
+    )
+    expect(schema.properties.devices.items.properties.firestore.properties.documentPath.pattern).toBe(
+      '^devices/[0-9A-F]{12}$',
     )
   })
 

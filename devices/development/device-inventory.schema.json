@@ -16,16 +16,16 @@
         "required": ["hardwareLabel", "deviceId", "productModel", "mqttPrincipal", "firestore"],
         "properties": {
           "hardwareLabel": { "type": "string", "minLength": 1 },
-          "deviceId": { "type": "string", "pattern": "^PC-(?:DEV-)?[0-9]{6}$" },
+          "deviceId": { "type": "string", "pattern": "^[0-9A-F]{12}$" },
           "productModel": { "type": "string", "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$" },
-          "mqttPrincipal": { "type": "string", "pattern": "^device-PC-(?:DEV-)?[0-9]{6}$" },
+          "mqttPrincipal": { "type": "string", "pattern": "^device-[0-9A-F]{12}$" },
           "firestore": {
             "type": "object",
             "additionalProperties": false,
             "required": ["projectId", "documentPath", "ingestionStatus"],
             "properties": {
               "projectId": { "const": "petcare-c7483" },
-              "documentPath": { "type": "string", "pattern": "^devices/PC-(?:DEV-)?[0-9]{6}$" },
+              "documentPath": { "type": "string", "pattern": "^devices/[0-9A-F]{12}$" },
               "ingestionStatus": { "const": "enabled" }
             }
           }

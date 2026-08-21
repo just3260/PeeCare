@@ -13,9 +13,9 @@ import {
 import { provisionDevice, runProvisionCli } from './provision-device.mjs'
 
 const device = {
-  deviceId: 'PC-DEV-000001',
+  deviceId: '68E274BD2A58',
   productModel: 'pc-mini',
-  mqttPrincipal: 'device-PC-DEV-000001',
+  mqttPrincipal: 'device-68E274BD2A58',
 }
 const runtime = {
   managementUrl: 'https://emqx.development.example',
@@ -25,14 +25,14 @@ const aclRules = [
   {
     permission: 'allow',
     action: 'publish',
-    topic: 'products/pc-mini/devices/PC-DEV-000001/events/urination',
+    topic: 'products/pc-mini/devices/68E274BD2A58/events/urination',
     qos: [1],
     retain: false,
   },
   {
     permission: 'allow',
     action: 'publish',
-    topic: 'products/pc-mini/devices/PC-DEV-000001/status/battery',
+    topic: 'products/pc-mini/devices/68E274BD2A58/status/battery',
     qos: [1],
     retain: false,
   },
@@ -86,8 +86,8 @@ describe('credential lifecycle command sequence', () => {
     })
 
     expect(test.lifecycle.expectConnected).toHaveBeenCalledWith({
-      deviceId: 'PC-DEV-000001',
-      username: 'device-PC-DEV-000001',
+      deviceId: '68E274BD2A58',
+      username: 'device-68E274BD2A58',
       mqttUrl: runtime.mqttUrl,
       password: test.passwordB,
     })
@@ -110,8 +110,8 @@ describe('credential lifecycle command sequence', () => {
       dependencies: test.dependencies,
     })
 
-    expect(test.emqx.deleteAcl).toHaveBeenCalledWith('device-PC-DEV-000001')
-    expect(test.emqx.deleteCredential).toHaveBeenCalledWith('device-PC-DEV-000001')
+    expect(test.emqx.deleteAcl).toHaveBeenCalledWith('device-68E274BD2A58')
+    expect(test.emqx.deleteCredential).toHaveBeenCalledWith('device-68E274BD2A58')
     expect(summary.status).toBe('lifecycle_failed_rolled_back')
   })
 
@@ -128,26 +128,26 @@ describe('credential lifecycle command sequence', () => {
     })
 
     expect(test.emqx.replaceCredential).toHaveBeenNthCalledWith(1, {
-      username: 'device-PC-DEV-000001',
+      username: 'device-68E274BD2A58',
       password: test.passwordB,
       isSuperuser: false,
     })
     expect(test.lifecycle.expectRejected).toHaveBeenCalledWith({
-      deviceId: 'PC-DEV-000001',
-      username: 'device-PC-DEV-000001',
+      deviceId: '68E274BD2A58',
+      username: 'device-68E274BD2A58',
       mqttUrl: runtime.mqttUrl,
       password: 'password-A',
     })
     expect(test.lifecycle.expectConnected).toHaveBeenCalledWith({
-      deviceId: 'PC-DEV-000001',
-      username: 'device-PC-DEV-000001',
+      deviceId: '68E274BD2A58',
+      username: 'device-68E274BD2A58',
       mqttUrl: runtime.mqttUrl,
       password: test.passwordB,
     })
     expect(summary).toEqual({
       mode: 'rotate',
-      deviceId: 'PC-DEV-000001',
-      principal: 'device-PC-DEV-000001',
+      deviceId: '68E274BD2A58',
+      principal: 'device-68E274BD2A58',
       status: 'rotated',
       verifications: [
         'inventory',
@@ -179,7 +179,7 @@ describe('credential lifecycle command sequence', () => {
     })
 
     expect(test.emqx.replaceCredential).toHaveBeenNthCalledWith(2, {
-      username: 'device-PC-DEV-000001',
+      username: 'device-68E274BD2A58',
       password: 'password-A',
       isSuperuser: false,
     })
@@ -199,10 +199,10 @@ describe('credential lifecycle command sequence', () => {
       dependencies: test.dependencies,
     })
 
-    expect(test.emqx.deleteCredential).toHaveBeenCalledWith('device-PC-DEV-000001')
+    expect(test.emqx.deleteCredential).toHaveBeenCalledWith('device-68E274BD2A58')
     expect(test.lifecycle.expectRejected).toHaveBeenCalledWith({
-      deviceId: 'PC-DEV-000001',
-      username: 'device-PC-DEV-000001',
+      deviceId: '68E274BD2A58',
+      username: 'device-68E274BD2A58',
       mqttUrl: runtime.mqttUrl,
       password: 'password-A',
     })
@@ -225,11 +225,11 @@ describe('credential lifecycle command sequence', () => {
     })
 
     expect(test.emqx.createCredential).toHaveBeenCalledWith({
-      username: 'device-PC-DEV-000001',
+      username: 'device-68E274BD2A58',
       password: 'password-A',
       isSuperuser: false,
     })
-    expect(test.emqx.putAcl).toHaveBeenCalledWith('device-PC-DEV-000001', aclRules)
+    expect(test.emqx.putAcl).toHaveBeenCalledWith('device-68E274BD2A58', aclRules)
     expect(summary.status).toBe('lifecycle_failed_rolled_back')
   })
 
@@ -334,8 +334,8 @@ describe('strict TLS lifecycle verifier', () => {
 
     await expect(
       probe({
-        deviceId: 'PC-DEV-000001',
-        username: 'device-PC-DEV-000001',
+        deviceId: '68E274BD2A58',
+        username: 'device-68E274BD2A58',
         mqttUrl: runtime.mqttUrl,
         password: 'tty-supplied-password',
       }),
@@ -354,8 +354,8 @@ describe('strict TLS lifecycle verifier', () => {
 
     await expect(
       verifier.expectRejected({
-        deviceId: 'PC-DEV-000001',
-        username: 'device-PC-DEV-000001',
+        deviceId: '68E274BD2A58',
+        username: 'device-68E274BD2A58',
         mqttUrl: runtime.mqttUrl,
         password: 'password-A',
       }),
@@ -397,19 +397,19 @@ describe('development device runbook', () => {
         devices: [
           {
             hardwareLabel: 'PeeCare development unit 1',
-            deviceId: 'PC-DEV-000001',
+            deviceId: '68E274BD2A58',
             productModel: 'pc-mini',
-            mqttPrincipal: 'device-PC-DEV-000001',
+            mqttPrincipal: 'device-68E274BD2A58',
             firestore: {
               projectId: 'petcare-c7483',
-              documentPath: 'devices/PC-DEV-000001',
+              documentPath: 'devices/68E274BD2A58',
               ingestionStatus: 'enabled',
             },
           },
         ],
       },
       firmware: await loadJsonForCli('firmware-config.template.json'),
-      aclPolicy: { username: 'device-PC-DEV-000001', rules: aclRules },
+      aclPolicy: { username: 'device-68E274BD2A58', rules: aclRules },
       retryFixture: await loadJsonForCli('fixtures/retry-after-disconnect.json'),
     }
     const test = harness()
@@ -418,8 +418,8 @@ describe('development device runbook', () => {
     const registryReader = {
       readDevice: vi.fn().mockResolvedValue({
         exists: true,
-        id: 'PC-DEV-000001',
-        data: { deviceId: 'PC-DEV-000001', productModel: 'pc-mini', ingestionStatus: 'enabled' },
+        id: '68E274BD2A58',
+        data: { deviceId: '68E274BD2A58', productModel: 'pc-mini', ingestionStatus: 'enabled' },
       }),
     }
     test.emqx.readAuthenticator = vi.fn().mockResolvedValue({

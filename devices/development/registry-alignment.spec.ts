@@ -13,12 +13,12 @@ const inventory = {
   devices: [
     {
       hardwareLabel: 'PeeCare development unit 1',
-      deviceId: 'PC-DEV-000001',
+      deviceId: '68E274BD2A58',
       productModel: 'pc-mini',
-      mqttPrincipal: 'device-PC-DEV-000001',
+      mqttPrincipal: 'device-68E274BD2A58',
       firestore: {
         projectId: 'petcare-c7483',
-        documentPath: 'devices/PC-DEV-000001',
+        documentPath: 'devices/68E274BD2A58',
         ingestionStatus: 'enabled',
       },
     },
@@ -27,22 +27,22 @@ const inventory = {
 
 const firmware = {
   schemaVersion: 1,
-  deviceId: 'PC-DEV-000001',
+  deviceId: '68E274BD2A58',
   productModel: 'pc-mini',
-  clientId: 'PC-DEV-000001',
-  username: 'device-PC-DEV-000001',
+  clientId: '68E274BD2A58',
+  username: 'device-68E274BD2A58',
   topics: {
-    urination: 'products/pc-mini/devices/PC-DEV-000001/events/urination',
-    battery: 'products/pc-mini/devices/PC-DEV-000001/status/battery',
+    urination: 'products/pc-mini/devices/68E274BD2A58/events/urination',
+    battery: 'products/pc-mini/devices/68E274BD2A58/status/battery',
   },
-  payloadIdentity: { deviceId: 'PC-DEV-000001', productModel: 'pc-mini' },
+  payloadIdentity: { deviceId: '68E274BD2A58', productModel: 'pc-mini' },
 }
 
 const enabledRegistryDocument = {
   exists: true,
-  id: 'PC-DEV-000001',
+  id: '68E274BD2A58',
   data: {
-    deviceId: 'PC-DEV-000001',
+    deviceId: '68E274BD2A58',
     productModel: 'pc-mini',
     ingestionStatus: 'enabled',
   },
@@ -68,7 +68,7 @@ function emqxAdapter() {
 }
 
 describe('registry alignment', () => {
-  it('accepts the approved enabled petcare-c7483/devices/PC-DEV-000001 document', () => {
+  it('accepts the approved enabled petcare-c7483/devices/68E274BD2A58 document', () => {
     expect(validateRegistryAlignment(inventory.devices[0], enabledRegistryDocument)).toEqual(
       enabledRegistryDocument.data,
     )
@@ -98,7 +98,7 @@ describe('registry alignment', () => {
   it('uses Application Default Credentials for one exact read-only document lookup', async () => {
     const get = vi.fn().mockResolvedValue({
       exists: true,
-      id: 'PC-DEV-000001',
+      id: '68E274BD2A58',
       data: () => enabledRegistryDocument.data,
     })
     const doc = vi.fn(() => ({ get }))
@@ -108,14 +108,14 @@ describe('registry alignment', () => {
     const reader = createFirestoreRegistryReader({ Firestore })
 
     await expect(
-      reader.readDevice({ projectId: 'petcare-c7483', documentPath: 'devices/PC-DEV-000001' }),
+      reader.readDevice({ projectId: 'petcare-c7483', documentPath: 'devices/68E274BD2A58' }),
     ).resolves.toEqual(enabledRegistryDocument)
     expect(Firestore).toHaveBeenCalledWith({ projectId: 'petcare-c7483' })
-    expect(doc).toHaveBeenCalledWith('devices/PC-DEV-000001')
+    expect(doc).toHaveBeenCalledWith('devices/68E274BD2A58')
     expect(get).toHaveBeenCalledOnce()
   })
 
-  it('performs zero EMQX writes for the specified disabled PC-DEV-000001 example', async () => {
+  it('performs zero EMQX writes for the specified disabled 68E274BD2A58 example', async () => {
     const emqx = emqxAdapter()
     const registryReader = {
       readDevice: vi.fn().mockResolvedValue({

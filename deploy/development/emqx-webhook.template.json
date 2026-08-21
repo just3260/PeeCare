@@ -9,6 +9,26 @@
       "http:{{PEECARE_EMQX_ACTION_NAME}}"
     ]
   },
+  "compatibilityRule": {
+    "id": "peecare_development_legacy_status_compatibility",
+    "name": "peecare_development_legacy_status_compatibility",
+    "description": "Translate one approved development legacy publisher into test-only urination events.",
+    "enable": false,
+    "sql": "SELECT\n  json_decode(payload) AS legacyPayload,\n  username,\n  qos,\n  publish_received_at,\n  CASE\n    WHEN is_num(legacyPayload.pumpSecondsToday)\n    THEN round(legacyPayload.pumpSecondsToday * 1000)\n    ELSE 0\n  END AS pumpDurationMs,\n  uuid_v4_no_hyphen() AS compatibilityUuid\nFROM \"peecare/device/1/status\"\nWHERE clientid = '{{PEECARE_APPROVED_LEGACY_MQTT_CLIENT_ID}}'\n  AND username = '{{PEECARE_APPROVED_LEGACY_MQTT_USERNAME}}'\n  AND flags.retain = false\n  AND is_map(legacyPayload)\n  AND is_bool(legacyPayload.online)\n  AND legacyPayload.online = true\n  AND is_num(legacyPayload.pumpSecondsToday)\n  AND legacyPayload.pumpSecondsToday >= 0\n  AND legacyPayload.pumpSecondsToday <= 4294967.295",
+    "actions": [
+      "http:{{PEECARE_EMQX_COMPATIBILITY_ACTION_NAME}}"
+    ]
+  },
+  "batteryCompatibilityRule": {
+    "id": "peecare_development_legacy_status_battery_compatibility",
+    "name": "peecare_development_legacy_status_battery_compatibility",
+    "description": "Translate an eligible development legacy status into a test-only battery event.",
+    "enable": false,
+    "sql": "SELECT\n  json_decode(payload) AS legacyPayload,\n  qos,\n  publish_received_at,\n  CASE\n    WHEN is_num(legacyPayload.batteryV)\n    THEN legacyPayload.batteryV\n    ELSE -1\n  END AS batteryVolts,\n  round(batteryVolts * 1000) AS batteryVoltageMv,\n  CASE\n    WHEN batteryVolts >= 8.5 THEN 100\n    WHEN batteryVolts >= 8.0 THEN 75\n    WHEN batteryVolts >= 7.5 THEN 50\n    WHEN batteryVolts >= 7.0 THEN 25\n    ELSE 0\n  END AS batteryLevelPercent,\n  uuid_v4_no_hyphen() AS compatibilityUuid\nFROM \"peecare/device/1/status\"\nWHERE is_map(legacyPayload)\n  AND is_num(legacyPayload.batteryV)\n  AND batteryVolts >= 0\n  AND batteryVolts <= 20",
+    "actions": [
+      "http:{{PEECARE_EMQX_BATTERY_COMPATIBILITY_ACTION_NAME}}"
+    ]
+  },
   "connector": {
     "type": "http",
     "name": "{{PEECARE_EMQX_CONNECTOR_NAME}}",
@@ -37,6 +57,36 @@
         "content-type": "application/json"
       },
       "body": "{\"webhookAuthorization\":\"Bearer {{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}\",\"event\":${.}}"
+    }
+  },
+  "compatibilityAction": {
+    "type": "http",
+    "name": "{{PEECARE_EMQX_COMPATIBILITY_ACTION_NAME}}",
+    "connector": "{{PEECARE_EMQX_CONNECTOR_NAME}}",
+    "description": "POST one bounded legacy delivery as a test-only canonical urination event.",
+    "enable": true,
+    "parameters": {
+      "method": "post",
+      "path": "/v1/emqx/events",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"webhookAuthorization\":\"Bearer {{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}\",\"event\":{\"topic\":\"products/pc-mini/devices/68E274BD2A58/events/urination\",\"clientId\":\"68E274BD2A58\",\"username\":\"${username}\",\"qos\":${qos},\"retained\":false,\"brokerReceivedAtMs\":${publish_received_at},\"payload\":{\"schemaVersion\":1,\"eventId\":\"compat:68E274BD2A58:${compatibilityUuid}\",\"eventType\":\"urination\",\"deviceId\":\"68E274BD2A58\",\"sequence\":1,\"recordedAtMs\":${publish_received_at},\"firmwareVersion\":\"1.0.0\",\"flushDurationMs\":0,\"pumpDurationMs\":${pumpDurationMs}}}}"
+    }
+  },
+  "batteryCompatibilityAction": {
+    "type": "http",
+    "name": "{{PEECARE_EMQX_BATTERY_COMPATIBILITY_ACTION_NAME}}",
+    "connector": "{{PEECARE_EMQX_CONNECTOR_NAME}}",
+    "description": "POST one bounded legacy delivery as a test-only canonical battery event.",
+    "enable": true,
+    "parameters": {
+      "method": "post",
+      "path": "/v1/emqx/events",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"webhookAuthorization\":\"Bearer {{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}\",\"event\":{\"topic\":\"products/pc-mini/devices/68E274BD2A58/status/battery\",\"clientId\":\"68E274BD2A58\",\"username\":\"Peecare\",\"qos\":${qos},\"retained\":false,\"brokerReceivedAtMs\":${publish_received_at},\"payload\":{\"schemaVersion\":1,\"eventId\":\"compatbattery:68E274BD2A58:${compatibilityUuid}\",\"eventType\":\"battery\",\"deviceId\":\"68E274BD2A58\",\"sequence\":1,\"recordedAtMs\":${publish_received_at},\"firmwareVersion\":\"1.0.0\",\"batteryLevelPercent\":${batteryLevelPercent},\"batteryVoltageMv\":${batteryVoltageMv}}}}"
     }
   },
   "unconstrainedActionFields": [

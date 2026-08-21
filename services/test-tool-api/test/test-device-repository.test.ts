@@ -102,6 +102,21 @@ describe('Firestore test-device authorization repository', () => {
     expect(database.transactionWrites).not.toHaveBeenCalled();
   });
 
+  it('does not treat a physical ESP32-shaped identifier as Test Tool authorization', async () => {
+    const physicalDeviceId = '68E274BD2A58';
+    const database = firestoreDouble([{
+      id: physicalDeviceId,
+      data: eligibleDevice({
+        deviceId: physicalDeviceId,
+        developmentTestTool: undefined,
+      }),
+    }]);
+    const repository = new FirestoreTestToolRepository(database.firestore, submitter());
+
+    await expect(repository.listTestDevices(MEMBER_UID)).resolves.toEqual([]);
+    expect(database.transactionWrites).not.toHaveBeenCalled();
+  });
+
   it('falls back to immutable deviceId instead of exposing a malformed customName', async () => {
     const database = firestoreDouble([
       { id: DEVICE_ID, data: eligibleDevice({ customName: 'private\nname' }) },
