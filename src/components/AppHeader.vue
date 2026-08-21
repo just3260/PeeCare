@@ -9,6 +9,10 @@
         <span class="app-header__tagline">寵物尿量監測</span>
       </span>
     </div>
+
+    <div v-if="$slots.actions" class="app-header__actions">
+      <slot name="actions" />
+    </div>
   </header>
 </template>
 
@@ -24,6 +28,11 @@
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.app-header__actions {
+  display: flex;
+  align-items: center;
 }
 
 .app-header__logo {

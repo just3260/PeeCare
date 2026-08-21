@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, watch } from 'vue'
+import { computed, inject, onMounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import AppHeader from '@/components/AppHeader.vue'
 import DeviceSelector from '@/components/DeviceSelector.vue'
 import HomeOverviewHero from '@/components/HomeOverviewHero.vue'
 import HomeInstantCards from '@/components/HomeInstantCards.vue'
+import WifiConnectionGuideDialog from '@/components/WifiConnectionGuideDialog.vue'
 import { AUTH_STORE_KEY } from '@/features/auth/auth-store-key'
 import { DEVICE_OVERVIEW_STORE_KEY } from '@/features/devices/device-overview-store-key'
 import { useDeviceSelection } from '@/features/devices/use-device-selection'
@@ -23,6 +24,53 @@ const { devices, selectedDeviceId, hasMultipleDevices, selectDevice } = useDevic
 const LOADING_STATE = { status: 'loading' } as const
 
 const state = computed(() => deviceStore?.state.value ?? LOADING_STATE)
+const wifiGuideOpen = ref(false)
+const wifiGuideShownInMemory = new Set<string>()
+
+const WIFI_GUIDE_KEY_PREFIX = 'peecare:wifi-connection-guide:auto-shown:'
+const WIFI_GUIDE_MARKER = '1'
+
+function currentMemberUid(): string | null {
+  const session = authStore?.state.value
+  return session?.status === 'signed-in' ? session.user.uid : null
+}
+
+function wifiGuideKey(uid: string): string {
+  return `${WIFI_GUIDE_KEY_PREFIX}${uid}`
+}
+
+function hasViewedWifiGuide(uid: string): boolean {
+  if (wifiGuideShownInMemory.has(uid)) return true
+
+  try {
+    const wasShown = window.sessionStorage.getItem(wifiGuideKey(uid)) === WIFI_GUIDE_MARKER
+    if (wasShown) wifiGuideShownInMemory.add(uid)
+    return wasShown
+  } catch {
+    return false
+  }
+}
+
+function markWifiGuideViewed(uid: string): void {
+  // The in-memory marker is written first so storage failures cannot cause a
+  // second automatic opening during this view's lifetime.
+  wifiGuideShownInMemory.add(uid)
+  try {
+    window.sessionStorage.setItem(wifiGuideKey(uid), WIFI_GUIDE_MARKER)
+  } catch {
+    // The guide remains usable when browser storage is unavailable.
+  }
+}
+
+function openWifiGuide(): void {
+  const uid = currentMemberUid()
+  if (uid) markWifiGuideViewed(uid)
+  wifiGuideOpen.value = true
+}
+
+function closeWifiGuide(): void {
+  wifiGuideOpen.value = false
+}
 
 /** Keep the device store in step with the member session. */
 function syncSession(): void {
@@ -37,10 +85,31 @@ function syncSession(): void {
 
 onMounted(syncSession)
 watch(() => authStore?.state.value.status, syncSession)
+
+watch(
+  () => ({ uid: currentMemberUid(), status: state.value.status }),
+  ({ uid, status }) => {
+    if (!uid || status !== 'empty' || hasViewedWifiGuide(uid)) return
+    markWifiGuideViewed(uid)
+    wifiGuideOpen.value = true
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
-  <AppHeader />
+  <AppHeader>
+    <template #actions>
+      <button
+        type="button"
+        class="wifi-guide-help"
+        aria-label="開啟 Wi-Fi 連線說明"
+        @click="openWifiGuide"
+      >
+        <span aria-hidden="true">?</span>
+      </button>
+    </template>
+  </AppHeader>
   <main class="home-main">
     <section class="overview" aria-label="首頁總覽">
       <p
@@ -90,9 +159,36 @@ watch(() => authStore?.state.value.status, syncSession)
       </template>
     </section>
   </main>
+
+  <WifiConnectionGuideDialog :open="wifiGuideOpen" @close="closeWifiGuide" />
 </template>
 
 <style scoped>
+.wifi-guide-help {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 1px solid var(--color-border, #d0d0d0);
+  border-radius: 50%;
+  background: var(--color-surface, #fff);
+  color: var(--color-brand-strong, #8a5a24);
+  font: inherit;
+  font-size: 20px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 5px 16px rgba(65, 47, 28, 0.08);
+}
+
+.wifi-guide-help:hover {
+  background: var(--color-brand-soft, #f6eadc);
+}
+
+.wifi-guide-help:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--color-brand-strong) 38%, transparent);
+  outline-offset: 3px;
+}
+
 .home-main {
   padding: 0 20px;
 }

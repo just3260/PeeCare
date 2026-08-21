@@ -1,8 +1,10 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
-import { ref } from 'vue'
+import { defineComponent, nextTick, ref } from 'vue'
+import type { Ref } from 'vue'
 
+import AppHeader from '@/components/AppHeader.vue'
 import HomeView from './HomeView.vue'
 import { routes } from '@/router'
 import { AUTH_STORE_KEY } from '@/features/auth/auth-store-key'
@@ -29,7 +31,33 @@ function freezeNow(): void {
 
 afterEach(() => {
   vi.restoreAllMocks()
+  window.sessionStorage.clear()
 })
+
+const WifiConnectionGuideDialogStub = defineComponent({
+  name: 'WifiConnectionGuideDialog',
+  props: {
+    open: { type: Boolean, required: true },
+  },
+  emits: ['close'],
+  template: `
+    <div v-if="open" role="dialog" data-test="wifi-guide-dialog">
+      <button type="button" data-test="wifi-guide-dialog-close" @click="$emit('close')">
+        關閉 Wi-Fi 連線說明
+      </button>
+    </div>
+  `,
+})
+
+const WIFI_GUIDE_KEY_PREFIX = 'peecare:wifi-connection-guide:auto-shown:'
+
+function wifiGuideKey(uid: string): string {
+  return `${WIFI_GUIDE_KEY_PREFIX}${uid}`
+}
+
+function signedIn(uid = 'member-001'): AuthState {
+  return { status: 'signed-in', user: { uid, displayName: null, email: null } }
+}
 
 const readyProjection: DeviceOverviewProjection = {
   urination: {
@@ -50,7 +78,14 @@ const readyProjection: DeviceOverviewProjection = {
   lastReportedAtMs: 1_700_000_000_400,
 }
 
-interface FakeStore extends DeviceOverviewStore {
+interface FakeStore
+  extends Omit<
+    DeviceOverviewStore,
+    'state' | 'devices' | 'selectedDeviceId' | 'load' | 'selectDevice' | 'dispose'
+  > {
+  state: Ref<DeviceOverviewState>
+  devices: Ref<OwnedDevice[]>
+  selectedDeviceId: Ref<string | null>
   load: ReturnType<typeof vi.fn>
   selectDevice: ReturnType<typeof vi.fn>
   dispose: ReturnType<typeof vi.fn>
@@ -71,7 +106,7 @@ function makeDeviceStore(options: {
   } as unknown as FakeStore
 }
 
-function mountHomeView(deviceStore: FakeStore, authState: AuthState = { status: 'signed-in', user: { uid: 'member-001', displayName: null, email: null } }) {
+function mountHomeView(deviceStore: FakeStore, authState: AuthState = signedIn()) {
   const router = createRouter({ history: createMemoryHistory(), routes })
   const authStore = { state: ref(authState) }
   return mount(HomeView, {
@@ -81,9 +116,192 @@ function mountHomeView(deviceStore: FakeStore, authState: AuthState = { status: 
         [AUTH_STORE_KEY as symbol]: authStore,
         [DEVICE_OVERVIEW_STORE_KEY as symbol]: deviceStore,
       },
+      stubs: {
+        WifiConnectionGuideDialog: WifiConnectionGuideDialogStub,
+      },
     },
   })
 }
+
+async function closeWifiGuide(wrapper: ReturnType<typeof mountHomeView>): Promise<void> {
+  await wrapper.get('[data-test="wifi-guide-dialog-close"]').trigger('click')
+}
+
+describe('HomeView Wi-Fi connection guide', () => {
+  it('automatically opens once for a signed-in member whose device state becomes empty', async () => {
+    const store = makeDeviceStore({ state: { status: 'loading' } })
+    const wrapper = mountHomeView(store)
+
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(false)
+
+    store.state.value = { status: 'empty' }
+    await nextTick()
+
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(true)
+    expect(window.sessionStorage.getItem(wifiGuideKey('member-001'))).toBe('1')
+  })
+
+  it('does not open or record a marker for loading, ready, or error device states', async () => {
+    const stores = [
+      makeDeviceStore({ state: { status: 'loading' } }),
+      makeDeviceStore({
+        state: { status: 'ready', projection: readyProjection },
+        devices: [device('PC-000001')],
+        selectedDeviceId: 'PC-000001',
+      }),
+      makeDeviceStore({ state: { status: 'error' } }),
+    ]
+
+    for (const store of stores) {
+      const wrapper = mountHomeView(store)
+      await flushPromises()
+
+      expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(false)
+      expect(window.sessionStorage.getItem(wifiGuideKey('member-001'))).toBeNull()
+      wrapper.unmount()
+    }
+  })
+
+  it('does not open or record a marker for an empty state without a signed-in member', async () => {
+    const wrapper = mountHomeView(
+      makeDeviceStore({ state: { status: 'empty' } }),
+      { status: 'signed-out' },
+    )
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(false)
+    expect(window.sessionStorage.length).toBe(0)
+  })
+
+  it('deduplicates repeated empty states and remounts for the same UID in one tab session', async () => {
+    const store = makeDeviceStore({ state: { status: 'empty' } })
+    const wrapper = mountHomeView(store)
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(true)
+    await closeWifiGuide(wrapper)
+
+    store.state.value = { status: 'loading' }
+    await nextTick()
+    store.state.value = { status: 'empty' }
+    await nextTick()
+
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(false)
+    wrapper.unmount()
+
+    const remounted = mountHomeView(makeDeviceStore({ state: { status: 'empty' } }))
+    await flushPromises()
+    expect(remounted.find('[data-test="wifi-guide-dialog"]').exists()).toBe(false)
+  })
+
+  it('tracks automatic presentation separately for different member UIDs', async () => {
+    window.sessionStorage.setItem(wifiGuideKey('member-001'), '1')
+
+    const wrapper = mountHomeView(
+      makeDeviceStore({ state: { status: 'empty' } }),
+      signedIn('member-002'),
+    )
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(true)
+    expect(window.sessionStorage.getItem(wifiGuideKey('member-001'))).toBe('1')
+    expect(window.sessionStorage.getItem(wifiGuideKey('member-002'))).toBe('1')
+  })
+
+  it('marks a manual opening during loading so a later empty state does not auto-open', async () => {
+    const store = makeDeviceStore({ state: { status: 'loading' } })
+    const wrapper = mountHomeView(store)
+
+    await wrapper.get('button[aria-label="開啟 Wi-Fi 連線說明"]').trigger('click')
+
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(true)
+    expect(window.sessionStorage.getItem(wifiGuideKey('member-001'))).toBe('1')
+
+    await closeWifiGuide(wrapper)
+    store.state.value = { status: 'empty' }
+    await nextTick()
+
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(false)
+  })
+
+  it('uses in-memory deduplication when reading sessionStorage throws', async () => {
+    vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => {
+      throw new DOMException('Storage access denied', 'SecurityError')
+    })
+    const store = makeDeviceStore({ state: { status: 'empty' } })
+    const wrapper = mountHomeView(store)
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(true)
+    await closeWifiGuide(wrapper)
+
+    store.state.value = { status: 'loading' }
+    await nextTick()
+    store.state.value = { status: 'empty' }
+    await nextTick()
+
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(false)
+    await wrapper.get('button[aria-label="開啟 Wi-Fi 連線說明"]').trigger('click')
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(true)
+  })
+
+  it('uses in-memory deduplication when writing sessionStorage throws', async () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('Storage quota exceeded', 'QuotaExceededError')
+    })
+    const store = makeDeviceStore({ state: { status: 'empty' } })
+    const wrapper = mountHomeView(store)
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(true)
+    await closeWifiGuide(wrapper)
+
+    store.state.value = { status: 'loading' }
+    await nextTick()
+    store.state.value = { status: 'empty' }
+    await nextTick()
+
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(false)
+    await wrapper.get('button[aria-label="開啟 Wi-Fi 連線說明"]').trigger('click')
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(true)
+  })
+
+  it('keeps the accessible home help action available for repeated manual openings', async () => {
+    const wrapper = mountHomeView(
+      makeDeviceStore({
+        state: { status: 'ready', projection: readyProjection },
+        devices: [device('PC-000001')],
+        selectedDeviceId: 'PC-000001',
+      }),
+    )
+    const helpButton = wrapper.get('button[aria-label="開啟 Wi-Fi 連線說明"]')
+
+    await helpButton.trigger('click')
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(true)
+    await closeWifiGuide(wrapper)
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(false)
+
+    await helpButton.trigger('click')
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(true)
+  })
+
+  it('does not add the home-only help action to other AppHeader consumers', () => {
+    const wrapper = mount(AppHeader)
+
+    expect(wrapper.find('button[aria-label="開啟 Wi-Fi 連線說明"]').exists()).toBe(false)
+  })
+
+  it('renders explicitly provided header actions without changing the default brand content', () => {
+    const wrapper = mount(AppHeader, {
+      slots: {
+        actions: '<button type="button" data-test="header-action">說明</button>',
+      },
+    })
+
+    expect(wrapper.get('[data-test="header-action"]').text()).toBe('說明')
+    expect(wrapper.get('.app-header__brand').text()).toContain('PeeCare')
+  })
+})
 
 describe('HomeView overview states', () => {
   it('renders the loading state', () => {

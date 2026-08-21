@@ -23,3 +23,7 @@ firestore-debug.log
 ui-debug.log
 database-debug.log
 pubsub-debug.log
+artifacts/test-tool-macos/staging.pre-package-*/
+artifacts/test-tool-macos/peecare-test-tool-macos-*
+artifacts/test-tool-macos/staging.pre-package-*/
+artifacts/test-tool-macos/peecare-test-tool-macos-*
