@@ -16,6 +16,7 @@
     "check:member": "npm --prefix services/member-api run check",
     "check:ingestion": "npm --prefix services/ingestion-api run check",
     "check:test-tool": "npm --prefix services/test-tool-api run check",
+    "icons:generate": "python3 scripts/generate-app-icons.py",
     "emulators:start": "firebase emulators:start --project demo-peecare",
     "emulators:reset": "node firebase/local/reset.mjs",
     "firebase:development:preflight": "node firebase/development/preflight.mjs",

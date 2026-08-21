@@ -59,6 +59,23 @@ describe('PWA production build artifacts', () => {
     const iconSources = manifest.icons.map((icon: { src: string }) => icon.src)
     expect(iconSources).toContain('icons/icon-192.png')
     expect(iconSources).toContain('icons/icon-512.png')
+
+    // Maskable artwork must be its own file: reusing the full-bleed icon would
+    // let Android's adaptive mask clip the paws.
+    const maskable = manifest.icons.filter(
+      (icon: { purpose?: string }) => icon.purpose === 'maskable',
+    )
+    expect(maskable).toHaveLength(1)
+    expect(maskable[0].src).toBe('icons/icon-maskable-512.png')
+  })
+
+  it('links an apple-touch-icon so iOS home screen icons render full bleed', () => {
+    const html = readFileSync(join(outDir, 'index.html'), 'utf8')
+
+    expect(html).toMatch(
+      /<link[^>]+rel="apple-touch-icon"[^>]+href="\/icons\/apple-touch-icon\.png"/,
+    )
+    expect(existsSync(join(outDir, 'icons/apple-touch-icon.png'))).toBe(true)
   })
 
   it('emits a service worker that precaches hashed assets and the icons', () => {

@@ -13,7 +13,13 @@ export default defineConfig({
       registerType: 'autoUpdate',
       // Registration is performed manually from src/pwa.ts in production only.
       injectRegister: null,
-      includeAssets: ['icons/icon-192.png', 'icons/icon-512.png'],
+      includeAssets: [
+        'icons/icon-192.png',
+        'icons/icon-512.png',
+        'icons/icon-maskable-512.png',
+        // iOS reads this one when adding the app to the home screen.
+        'icons/apple-touch-icon.png',
+      ],
       manifest: {
         name: 'PeeCare 寵物尿量監測',
         short_name: 'PeeCare',
@@ -27,7 +33,9 @@ export default defineConfig({
           { src: 'icons/icon-192.png', sizes: '192x192', type: 'image/png' },
           { src: 'icons/icon-512.png', sizes: '512x512', type: 'image/png' },
           {
-            src: 'icons/icon-512.png',
+            // Separate artwork: the paws sit inside the 80% safe zone so
+            // Android's adaptive mask never clips them.
+            src: 'icons/icon-maskable-512.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'maskable',
