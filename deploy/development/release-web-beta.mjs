@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { readHiddenPassword } from '../../devices/development/credential-lifecycle.mjs'
+import { createPlaywrightBetaBrowser } from './release-web-beta-playwright.mjs'
 
 const MODULE_DIRECTORY = dirname(fileURLToPath(import.meta.url))
 const REPOSITORY_ROOT = resolve(MODULE_DIRECTORY, '../..')
@@ -18,8 +19,8 @@ const TESTER_KEYS = Object.freeze(['alias', 'deviceId'])
 const INVENTORY_MARKER = 'peecare-development-web-beta-v1'
 const SAFE_ALIAS = /^[a-z][a-z0-9-]{1,31}$/
 const DEVELOPMENT_DEVICE_ID = /^PC-DEV-[0-9]{6}$/
-const PROHIBITED_KEY = /(?:email|e-mail|uid|password|passphrase|credential|secret|token|private[_-]?key|service[_-]?account|api[_-]?key)/i
-const PROHIBITED_VALUE = /(?:[\w.+-]+@[\w.-]+\.[a-z]{2,}|-----BEGIN (?:RSA |EC )?PRIVATE KEY-----|\beyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b|\bAIza[0-9A-Za-z_-]{20,}\b|\b(?:password|credential|secret|refresh[_-]?token|id[_-]?token|private[_-]?key)\b)/i
+const PROHIBITED_KEY = /(?:email|e-mail|email[_-]?link|oob[_-]?code|out[_-]?of[_-]?band|action[_-]?code|uid|password|passphrase|credential|secret|token|private[_-]?key|service[_-]?account|api[_-]?key)/i
+const PROHIBITED_VALUE = /(?:[\w.+-]+@[\w.-]+\.[a-z]{2,}|-----BEGIN (?:RSA |EC )?PRIVATE KEY-----|\beyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\b|\bAIza[0-9A-Za-z_-]{20,}\b|\b(?:password|credential|secret|refresh[_-]?token|id[_-]?token|private[_-]?key|email[_ -]?link|oob[_ -]?code|action[_ -]?code|out[_ -]?of[_ -]?band)\b|(?:[?&](?:mode=signIn|oobCode=|continueUrl=)))/i
 const FIREBASE_UID_LIKE = /^[A-Za-z0-9]{24,128}$/
 const VERIFIED_TEST_TOOL_ROUTE = Object.freeze({
   path: '/test-tool',
@@ -69,15 +70,18 @@ function hasExactKeys(value, expected) {
   return keys.length === expected.length && keys.every((key, index) => key === [...expected].sort()[index])
 }
 
-function containsProhibitedMaterial(value) {
-  if (Array.isArray(value)) return value.some(containsProhibitedMaterial)
+export function betaInventoryContainsSensitiveMaterial(value) {
+  if (Array.isArray(value)) return value.some(betaInventoryContainsSensitiveMaterial)
   if (value !== null && typeof value === 'object') {
     return Object.entries(value).some(
-      ([key, nested]) => PROHIBITED_KEY.test(key) || containsProhibitedMaterial(nested),
+      ([key, nested]) =>
+        PROHIBITED_KEY.test(key) || betaInventoryContainsSensitiveMaterial(nested),
     )
   }
   return typeof value === 'string' && PROHIBITED_VALUE.test(value)
 }
+
+const containsProhibitedMaterial = betaInventoryContainsSensitiveMaterial
 
 export function validateBetaTesterInventory(value) {
   if (
@@ -89,7 +93,7 @@ export function validateBetaTesterInventory(value) {
     value.marker !== INVENTORY_MARKER ||
     !Array.isArray(value.testers) ||
     value.testers.length !== 1 ||
-    containsProhibitedMaterial(value)
+    betaInventoryContainsSensitiveMaterial(value)
   ) {
     inventoryInvalid('Beta tester inventory must contain only the approved non-PII development shape.')
   }
@@ -123,6 +127,36 @@ export function validateBetaTesterInventory(value) {
 
 function prerequisiteFailed(message) {
   throw new BetaReleaseError('cloud_prerequisite_failed', message)
+}
+
+function sanitizeTesterJourneyFailure(error) {
+  if (error instanceof BetaReleaseError) {
+    if (error.code === 'credential_input_unavailable') credentialInputUnavailable()
+    if (error.code === 'email_link_invalid') emailLinkInvalid()
+    if (error.code === 'smoke_failed') throw smokeFailed(error.cleanupRequired === true)
+    if (error.code === 'tester_device_mismatch') {
+      throw new BetaReleaseError(
+        'tester_device_mismatch',
+        'The authenticated tester does not own the assigned development device.',
+      )
+    }
+    if (error.code === 'unexpected_owned_device') {
+      throw new BetaReleaseError(
+        'unexpected_owned_device',
+        'Live beta ownership must contain exactly the assigned development device.',
+      )
+    }
+    if (error.code === 'browser_context_teardown_failed') {
+      throw new BetaReleaseError(
+        'browser_context_teardown_failed',
+        'Beta tester browser context teardown failed.',
+      )
+    }
+  }
+  throw new BetaReleaseError(
+    'tester_authentication_failed',
+    'Beta tester authentication failed for the deployed Hosting release.',
+  )
 }
 
 function validateBetaEnvironment(environment) {
@@ -339,12 +373,24 @@ const TESTER_AUTHENTICATION_CLI_OPTION_KEYS = Object.freeze([
   'stderr',
 ])
 const TESTER_CREDENTIAL_ENV_KEY =
-  /(?:(?:beta|tester).*(?:email|password|passphrase|credential|token)|(?:email|password|passphrase|credential|token).*(?:beta|tester))/i
+  /(?:(?:beta|tester).*(?:email|link|oob|password|passphrase|credential|token)|(?:email|link|oob|password|passphrase|credential|token).*(?:beta|tester))/i
+const TESTER_CREDENTIAL_ENV_VALUE = /(?:[\w.+-]+@[\w.-]+\.[a-z]{2,}|[?&](?:mode=signIn|oobCode=)|\b(?:password|passphrase|credential)\b)/i
+const APPROVED_EMAIL_LINK_DOMAINS = Object.freeze([
+  'petcare-c7483.firebaseapp.com',
+  'petcare-c7483.web.app',
+])
 
 function credentialInputUnavailable() {
   throw new BetaReleaseError(
     'credential_input_unavailable',
     'Tester authentication requires hidden input from an interactive TTY.',
+  )
+}
+
+function emailLinkInvalid() {
+  throw new BetaReleaseError(
+    'email_link_invalid',
+    'The tester Email Link does not match the approved one-time sign-in contract.',
   )
 }
 
@@ -362,15 +408,15 @@ function isMutableCredentialPair(value) {
     value === null ||
     typeof value !== 'object' ||
     Array.isArray(value) ||
-    !hasExactKeys(value, ['email', 'password']) ||
+    !hasExactKeys(value, ['email', 'emailLink']) ||
     typeof value.email !== 'string' ||
     value.email.trim().length === 0 ||
-    typeof value.password !== 'string' ||
-    value.password.length === 0
+    typeof value.emailLink !== 'string' ||
+    value.emailLink.length === 0
   ) {
     return false
   }
-  return ['email', 'password'].every((key) => {
+  return ['email', 'emailLink'].every((key) => {
     const descriptor = Object.getOwnPropertyDescriptor(value, key)
     return descriptor?.writable === true || typeof descriptor?.set === 'function'
   })
@@ -378,57 +424,45 @@ function isMutableCredentialPair(value) {
 
 function clearCredentialPair(credentials) {
   credentials.email = null
-  credentials.password = null
+  credentials.emailLink = null
 }
 
-export async function authenticateExistingBetaTester({
-  webApiKey,
-  credentials,
-  request,
-}) {
+function validateBetaTesterEmail(email) {
   if (
-    typeof webApiKey !== 'string' ||
-    webApiKey.length === 0 ||
-    /[\r\n\0]/.test(webApiKey) ||
-    !isMutableCredentialPair(credentials) ||
-    typeof request !== 'function'
+    typeof email !== 'string' ||
+    email !== email.trim() ||
+    email.length === 0 ||
+    email.length > 254 ||
+    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
   ) {
-    throw new BetaReleaseError(
-      'tester_authentication_failed',
-      'Existing beta tester authentication inputs are invalid.',
-    )
+    credentialInputUnavailable()
   }
+}
 
-  let responseBody = null
+export function validateBetaTesterEmailLink(credentials) {
+  if (!isMutableCredentialPair(credentials)) credentialInputUnavailable()
+  validateBetaTesterEmail(credentials.email)
+
+  let parsed
   try {
-    const response = await request(
-      `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(webApiKey)}`,
-      {
-        method: 'POST',
-        redirect: 'error',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          email: credentials.email,
-          password: credentials.password,
-          returnSecureToken: true,
-        }),
-      },
-    )
-    responseBody = await response.json().catch(() => null)
-    if (
-      response.ok !== true ||
-      typeof responseBody?.idToken !== 'string' ||
-      responseBody.idToken.length === 0
-    ) {
-      throw new Error('authentication rejected')
-    }
+    parsed = new URL(credentials.emailLink)
   } catch {
-    throw new BetaReleaseError(
-      'tester_authentication_failed',
-      'Existing beta tester authentication failed.',
-    )
-  } finally {
-    responseBody = null
+    emailLinkInvalid()
+  }
+  const modes = parsed.searchParams.getAll('mode')
+  const oobCodes = parsed.searchParams.getAll('oobCode')
+  if (
+    parsed.protocol !== 'https:' ||
+    parsed.username !== '' ||
+    parsed.password !== '' ||
+    parsed.port !== '' ||
+    !APPROVED_EMAIL_LINK_DOMAINS.includes(parsed.hostname) ||
+    modes.length !== 1 ||
+    modes[0] !== 'signIn' ||
+    oobCodes.length !== 1 ||
+    oobCodes[0].trim().length === 0
+  ) {
+    emailLinkInvalid()
   }
 }
 
@@ -441,19 +475,19 @@ export async function readHiddenBetaTesterCredentials(options) {
     credentialInputUnavailable()
   }
 
-  const credentials = { email: null, password: null }
+  const credentials = { email: null, emailLink: null }
   try {
     credentials.email = await readHiddenPassword({
       input: options.input,
       output: options.output,
       prompt: `Tester ${options.alias} email: `,
     })
-    credentials.password = await readHiddenPassword({
+    credentials.emailLink = await readHiddenPassword({
       input: options.input,
       output: options.output,
-      prompt: `Tester ${options.alias} password: `,
+      prompt: `Tester ${options.alias} one-time Email Link: `,
     })
-    if (credentials.email.trim().length === 0 || credentials.password.length === 0) {
+    if (credentials.email.trim().length === 0 || credentials.emailLink.length === 0) {
       credentialInputUnavailable()
     }
     return credentials
@@ -487,6 +521,9 @@ export async function runBetaTesterAuthentication(options) {
     typeof environment !== 'object' ||
     Array.isArray(environment) ||
     Object.keys(environment).some((key) => TESTER_CREDENTIAL_ENV_KEY.test(key)) ||
+    Object.values(environment).some(
+      (value) => typeof value === 'string' && TESTER_CREDENTIAL_ENV_VALUE.test(value),
+    ) ||
     typeof authenticate !== 'function'
   ) {
     credentialInputUnavailable()
@@ -504,8 +541,10 @@ export async function runBetaTesterAuthentication(options) {
   }
 
   try {
+    validateBetaTesterEmailLink(credentials)
     await authenticate(credentials)
-  } catch {
+  } catch (error) {
+    if (error instanceof BetaReleaseError) throw error
     throw new BetaReleaseError(
       'tester_authentication_failed',
       'Beta tester authentication failed.',
@@ -538,7 +577,7 @@ export async function runBetaTesterAuthenticationCli(options = {}) {
   } catch (error) {
     const code =
       error instanceof BetaReleaseError &&
-      ['credential_input_unavailable', 'tester_authentication_failed'].includes(
+      ['credential_input_unavailable', 'email_link_invalid', 'tester_authentication_failed'].includes(
         error.code,
       )
         ? error.code
@@ -611,6 +650,7 @@ export async function runBetaReleaseCli({
   verifyLiveRoutes,
   readHostingVersions,
   authenticateTester,
+  verifyGoogleSignInBoundary,
   write,
 }) {
   const mode = Array.isArray(args) && args.length === 1 ? args[0] : undefined
@@ -643,6 +683,7 @@ export async function runBetaReleaseCli({
   } catch {
     inventoryInvalid('The gitignored local beta tester inventory is missing or unreadable.')
   }
+  const testerAssignments = validateBetaTesterInventory(inventory)
   const preflight = await runBetaPreflight({
     environment,
     args: ['--dry-run'],
@@ -665,25 +706,6 @@ export async function runBetaReleaseCli({
       currentVersions: versions,
       confirmation: environment?.PEECARE_BETA_FIRST_RELEASE_CONFIRMATION ?? '',
     })
-    if (typeof authenticateTester !== 'function') credentialInputUnavailable()
-    try {
-      testerAuthentication = await authenticateTester(preflight.testerAliases)
-    } catch {
-      throw new BetaReleaseError(
-        'tester_authentication_failed',
-        'Beta tester authentication failed before Hosting release.',
-      )
-    }
-    if (
-      testerAuthentication?.alias !== preflight.testerAliases[0] ||
-      testerAuthentication?.status !== 'authenticated' ||
-      Object.keys(testerAuthentication).sort().join(',') !== 'alias,status'
-    ) {
-      throw new BetaReleaseError(
-        'tester_authentication_failed',
-        'Beta tester authentication returned an invalid stage.',
-      )
-    }
   } else {
     if (typeof readHostingVersions !== 'function') rollbackUnavailable()
     let versions
@@ -707,7 +729,26 @@ export async function runBetaReleaseCli({
     inspectCloudBuild,
     uploadHosting,
     verifyLiveRoutes,
+    verifyGoogleSignInBoundary,
   })
+  if (mode === '--apply') {
+    if (typeof authenticateTester !== 'function') credentialInputUnavailable()
+    try {
+      testerAuthentication = await authenticateTester(testerAssignments)
+    } catch (error) {
+      sanitizeTesterJourneyFailure(error)
+    }
+    if (
+      testerAuthentication?.alias !== preflight.testerAliases[0] ||
+      testerAuthentication?.status !== 'passed' ||
+      Object.keys(testerAuthentication).sort().join(',') !== 'alias,status'
+    ) {
+      throw new BetaReleaseError(
+        'tester_authentication_failed',
+        'Beta tester authentication returned an invalid stage.',
+      )
+    }
+  }
   const result = Object.freeze({
     ...preflight,
     ...hosting,
@@ -763,6 +804,177 @@ export async function runIsolatedBetaTesterJourney({ browser, journey }) {
   }
   if (journeyFailed) throw journeyError
   return journeyResult
+}
+
+const EMAIL_LINK_AUTHENTICATION_CONTEXT_METHODS = Object.freeze([
+  'visitHostedSignIn',
+  'submitEmailLinkRequest',
+  'openEmailLinkCallback',
+  'completeEmailLinkCallback',
+  'getAuthenticatedUid',
+  'readAssignedDevice',
+])
+
+export async function runBetaEmailLinkAuthenticationJourney({
+  alias,
+  deviceId,
+  browser,
+  input = process.stdin,
+  output = process.stderr,
+  runMemberJourney,
+}) {
+  if (
+    typeof alias !== 'string' ||
+    !SAFE_ALIAS.test(alias) ||
+    typeof deviceId !== 'string' ||
+    !DEVELOPMENT_DEVICE_ID.test(deviceId) ||
+    browser === null ||
+    typeof browser !== 'object' ||
+    typeof browser.createContext !== 'function' ||
+    typeof runMemberJourney !== 'function'
+  ) {
+    throw new BetaReleaseError(
+      'tester_authentication_failed',
+      'Beta tester Email Link journey inputs are invalid.',
+    )
+  }
+
+  const credentials = { email: null, emailLink: null }
+  try {
+    return await runIsolatedBetaTesterJourney({
+      browser,
+      journey: async (context) => {
+        if (
+          context === null ||
+          typeof context !== 'object' ||
+          EMAIL_LINK_AUTHENTICATION_CONTEXT_METHODS.some(
+            (method) => typeof context[method] !== 'function',
+          )
+        ) {
+          throw new BetaReleaseError(
+            'tester_authentication_failed',
+            'Beta tester Email Link browser adapter is unavailable.',
+          )
+        }
+
+        try {
+          credentials.email = await readHiddenPassword({
+            input,
+            output,
+            prompt: `Tester ${alias} email: `,
+          })
+        } catch {
+          credentialInputUnavailable()
+        }
+        validateBetaTesterEmail(credentials.email)
+
+        try {
+          await context.visitHostedSignIn()
+          await context.submitEmailLinkRequest(credentials.email)
+        } catch {
+          throw new BetaReleaseError(
+            'tester_authentication_failed',
+            'Beta tester Email Link request failed.',
+          )
+        }
+
+        try {
+          credentials.emailLink = await readHiddenPassword({
+            input,
+            output,
+            prompt: `Tester ${alias} one-time Email Link: `,
+          })
+        } catch {
+          credentialInputUnavailable()
+        }
+        validateBetaTesterEmailLink(credentials)
+
+        try {
+          await context.openEmailLinkCallback(credentials)
+          await context.completeEmailLinkCallback(credentials)
+        } catch {
+          throw new BetaReleaseError(
+            'tester_authentication_failed',
+            'Beta tester Email Link callback failed.',
+          )
+        }
+
+        let authenticatedUid
+        let assignedDevice
+        try {
+          ;[authenticatedUid, assignedDevice] = await Promise.all([
+            context.getAuthenticatedUid(),
+            context.readAssignedDevice(deviceId),
+          ])
+        } catch (error) {
+          if (error?.code === 'tester_device_mismatch') {
+            throw new BetaReleaseError(
+              'tester_device_mismatch',
+              'The authenticated tester does not own the assigned development device.',
+            )
+          }
+          if (error?.code === 'unexpected_owned_device') {
+            throw new BetaReleaseError(
+              'unexpected_owned_device',
+              'Live beta ownership must contain exactly the assigned development device.',
+            )
+          }
+          throw new BetaReleaseError(
+            'tester_authentication_failed',
+            'Beta tester authenticated identity verification failed.',
+          )
+        }
+        if (
+          typeof authenticatedUid !== 'string' ||
+          authenticatedUid.length === 0 ||
+          assignedDevice?.deviceId !== deviceId ||
+          assignedDevice?.ownerUid !== authenticatedUid
+        ) {
+          throw new BetaReleaseError(
+            'tester_device_mismatch',
+            'The authenticated tester does not own the assigned development device.',
+          )
+        }
+
+        let memberResult
+        try {
+          memberResult = await runMemberJourney(context)
+        } catch (error) {
+          if (error instanceof BetaReleaseError) {
+            if (error.code === 'smoke_failed') {
+              throw smokeFailed(error.cleanupRequired === true)
+            }
+            if (error.code === 'tester_device_mismatch') {
+              throw new BetaReleaseError(
+                'tester_device_mismatch',
+                'The authenticated tester does not own the assigned development device.',
+              )
+            }
+            if (error.code === 'unexpected_owned_device') {
+              throw new BetaReleaseError(
+                'unexpected_owned_device',
+                'Live beta ownership must contain exactly the assigned development device.',
+              )
+            }
+          }
+          throw smokeFailed()
+        }
+        if (
+          memberResult === null ||
+          typeof memberResult !== 'object' ||
+          Array.isArray(memberResult) ||
+          !hasExactKeys(memberResult, ['alias', 'status']) ||
+          memberResult.alias !== alias ||
+          memberResult.status !== 'passed'
+        ) {
+          throw smokeFailed()
+        }
+        return Object.freeze({ alias, status: 'passed' })
+      },
+    })
+  } finally {
+    clearCredentialPair(credentials)
+  }
 }
 
 const BETA_TESTER_JOURNEY_METHODS = Object.freeze([
@@ -990,19 +1202,103 @@ export async function verifyLiveBetaHostingAvailability({ origin, request }) {
   return Object.freeze({ status: 'verified', routes: LIVE_BETA_ROUTES })
 }
 
+const GOOGLE_SIGN_IN_EVIDENCE_KEYS = Object.freeze([
+  'status',
+  'buildHash',
+  'providerId',
+  'hostedControl',
+  'readiness',
+  'providerAdapterGate',
+  'externalGoogleAccountE2E',
+])
+
+export function verifyHostedGoogleSignInReleaseBoundary(value) {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    !hasExactKeys(value, [
+      'expectedBuildHash',
+      'hostedBuild',
+      'readinessRecord',
+      'providerAdapterGate',
+    ]) ||
+    !/^sha256:[0-9a-f]{64}$/.test(value.expectedBuildHash ?? '') ||
+    value.hostedBuild?.buildHash !== value.expectedBuildHash ||
+    !hasExactKeys(value.hostedBuild?.googleControl ?? {}, ['providerId', 'present']) ||
+    value.hostedBuild.googleControl.providerId !== 'google.com' ||
+    value.hostedBuild.googleControl.present !== true ||
+    value.readinessRecord?.status !== 'ready' ||
+    value.readinessRecord?.projectId !== APPROVED_BETA_TARGET.projectId ||
+    value.readinessRecord?.auth?.provider?.id !== 'google.com' ||
+    value.readinessRecord?.auth?.provider?.enabled !== true ||
+    !hasExactKeys(value.providerAdapterGate ?? {}, ['status']) ||
+    value.providerAdapterGate.status !== 'passed'
+  ) {
+    prerequisiteFailed('Hosted Google sign-in release evidence is incomplete or mismatched.')
+  }
+
+  return Object.freeze({
+    status: 'verified',
+    buildHash: value.expectedBuildHash,
+    providerId: 'google.com',
+    hostedControl: true,
+    readiness: true,
+    providerAdapterGate: 'passed',
+    externalGoogleAccountE2E: 'not-performed',
+  })
+}
+
+export function createHostedGoogleSignInEvidenceAdapter({
+  authorizedJson,
+  readHostedBuild,
+  readProviderAdapterGate,
+}) {
+  if (
+    typeof authorizedJson !== 'function' ||
+    typeof readHostedBuild !== 'function' ||
+    typeof readProviderAdapterGate !== 'function'
+  ) {
+    prerequisiteFailed('Hosted Google sign-in verification requires fixed read-only adapters.')
+  }
+
+  return async ({ buildHash }) => {
+    let providerConfig
+    try {
+      providerConfig = await authorizedJson(
+        `https://identitytoolkit.googleapis.com/admin/v2/projects/${APPROVED_BETA_TARGET.projectId}/defaultSupportedIdpConfigs/google.com`,
+      )
+    } catch {
+      prerequisiteFailed('The development Google provider configuration is unreadable.')
+    }
+    return verifyHostedGoogleSignInReleaseBoundary({
+      expectedBuildHash: buildHash,
+      hostedBuild: readHostedBuild(),
+      readinessRecord: {
+        status: providerConfig?.enabled === true ? 'ready' : 'failed',
+        projectId: APPROVED_BETA_TARGET.projectId,
+        auth: { provider: { id: 'google.com', enabled: providerConfig?.enabled === true } },
+      },
+      providerAdapterGate: readProviderAdapterGate(),
+    })
+  }
+}
+
 export async function runBetaHostingRelease({
   mode,
   runReleaseGate,
   inspectCloudBuild,
   uploadHosting,
   verifyLiveRoutes,
+  verifyGoogleSignInBoundary,
 }) {
   if (
     !['dry-run', 'apply'].includes(mode) ||
     typeof runReleaseGate !== 'function' ||
     typeof inspectCloudBuild !== 'function' ||
     typeof uploadHosting !== 'function' ||
-    typeof verifyLiveRoutes !== 'function'
+    typeof verifyLiveRoutes !== 'function' ||
+    typeof verifyGoogleSignInBoundary !== 'function'
   ) {
     prerequisiteFailed('Beta Hosting release requires explicit fixed stage adapters.')
   }
@@ -1030,6 +1326,15 @@ export async function runBetaHostingRelease({
   ) {
     prerequisiteFailed('The inspected development cloud build failed.')
   }
+  let googleSignIn
+  try {
+    googleSignIn = await verifyGoogleSignInBoundary({ buildHash: build.buildHash })
+  } catch {
+    prerequisiteFailed('Hosted Google sign-in release evidence is unavailable.')
+  }
+  if (!validateGoogleSignInEvidence(googleSignIn, build.buildHash)) {
+    prerequisiteFailed('Hosted Google sign-in release evidence is unavailable.')
+  }
   if (mode === 'dry-run') {
     return Object.freeze({
       status: 'ready',
@@ -1037,6 +1342,7 @@ export async function runBetaHostingRelease({
       buildHash: build.buildHash,
       testToolRoute: VERIFIED_TEST_TOOL_ROUTE,
       testToolApi: verifiedTestToolApi,
+      googleSignIn: Object.freeze({ ...googleSignIn }),
     })
   }
 
@@ -1069,6 +1375,7 @@ export async function runBetaHostingRelease({
     buildHash: build.buildHash,
     testToolRoute: VERIFIED_TEST_TOOL_ROUTE,
     testToolApi: verifiedTestToolApi,
+    googleSignIn: Object.freeze({ ...googleSignIn }),
     hostingVersion: uploaded.version,
     routes: LIVE_BETA_ROUTES,
   })
@@ -1095,11 +1402,13 @@ const STABLE_BETA_FAILURE_CODES = Object.freeze([
   'inventory_invalid',
   'cloud_prerequisite_failed',
   'credential_input_unavailable',
+  'email_link_invalid',
   'tester_authentication_failed',
   'tester_device_mismatch',
   'unexpected_owned_device',
   'hosting_unavailable',
   'smoke_failed',
+  'browser_context_teardown_failed',
   'test_tool_route_restoration_failed',
 ])
 
@@ -1166,12 +1475,29 @@ function validateTestToolApiIdentity(value) {
   )
 }
 
+function validateGoogleSignInEvidence(value, buildHash) {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    hasExactKeys(value, GOOGLE_SIGN_IN_EVIDENCE_KEYS) &&
+    value.status === 'verified' &&
+    value.buildHash === buildHash &&
+    value.providerId === 'google.com' &&
+    value.hostedControl === true &&
+    value.readiness === true &&
+    value.providerAdapterGate === 'passed' &&
+    value.externalGoogleAccountE2E === 'not-performed'
+  )
+}
+
 export function createBetaReleaseRecord({
   deployment,
   history,
   testerStages,
   checks,
   testToolApi,
+  googleSignIn,
   now,
 }) {
   const testerStage = Array.isArray(testerStages) ? testerStages[0] : undefined
@@ -1198,6 +1524,7 @@ export function createBetaReleaseRecord({
     testerStage.status !== 'passed' ||
     !validateReleaseChecks(checks) ||
     verifiedTestToolApi === null ||
+    !validateGoogleSignInEvidence(googleSignIn, deployment?.buildHash) ||
     !(verifiedAt instanceof Date) ||
     Number.isNaN(verifiedAt.getTime())
   ) {
@@ -1214,6 +1541,7 @@ export function createBetaReleaseRecord({
     rollbackVersion: history.rollbackVersion,
     verifiedAt: verifiedAt.toISOString(),
     testToolApi: verifiedTestToolApi,
+    googleSignIn: Object.freeze({ ...googleSignIn }),
     testerStages: testerStages.map((stage) => Object.freeze({ ...stage })),
     checks: Object.freeze({ ...checks }),
   }
@@ -1393,10 +1721,20 @@ function createHostingCommandAdapters({ environment, authorizedJson, request, mo
     PEECARE_DEVELOPMENT_HOSTING_TARGET: APPROVED_BETA_TARGET.hostingTarget,
   })
   const historyLimit = mode === '--rollback-dry-run' ? 2 : 1
+  let inspectedHostedBuild = null
+  let providerAdapterGate = Object.freeze({ status: 'failed' })
+  const verifyGoogleSignInBoundary = createHostedGoogleSignInEvidenceAdapter({
+    authorizedJson,
+    readHostedBuild: () => inspectedHostedBuild,
+    readProviderAdapterGate: () => providerAdapterGate,
+  })
   return Object.freeze({
     async runReleaseGate() {
       const result = executeCaptured('npm', ['run', 'check:release'], commandEnvironment)
-      return Object.freeze({ status: result.status === 0 ? 'passed' : 'failed' })
+      providerAdapterGate = Object.freeze({
+        status: result.status === 0 ? 'passed' : 'failed',
+      })
+      return providerAdapterGate
     },
     async inspectCloudBuild() {
       const result = executeCaptured(
@@ -1405,6 +1743,10 @@ function createHostingCommandAdapters({ environment, authorizedJson, request, mo
         commandEnvironment,
       )
       const plan = result.status === 0 ? readLastJsonObject(result.stdout) : null
+      inspectedHostedBuild = Object.freeze({
+        buildHash: plan?.buildHash,
+        googleControl: plan?.googleControl,
+      })
       return Object.freeze({
         status: plan?.status === 'ready' ? 'ready' : 'failed',
         buildHash: plan?.buildHash,
@@ -1423,7 +1765,8 @@ function createHostingCommandAdapters({ environment, authorizedJson, request, mo
         deployed?.status !== 'deployed' ||
         deployed.buildHash !== buildHash ||
         !isDeepStrictEqual(deployed.testToolRoute, testToolRoute) ||
-        !isDeepStrictEqual(deployed.testToolApi, testToolApi)
+        !isDeepStrictEqual(deployed.testToolApi, testToolApi) ||
+        !isDeepStrictEqual(deployed.googleControl, inspectedHostedBuild?.googleControl)
       ) {
         hostingUnavailable()
       }
@@ -1432,6 +1775,7 @@ function createHostingCommandAdapters({ environment, authorizedJson, request, mo
     },
     verifyLiveRoutes: ({ hostingVersion: _hostingVersion }) =>
       verifyLiveBetaHostingAvailability({ origin: LIVE_BETA_ORIGIN, request }),
+    verifyGoogleSignInBoundary,
     readHostingVersions: () => readLiveBetaHostingVersions(authorizedJson, historyLimit),
   })
 }
@@ -1459,26 +1803,35 @@ async function runCli() {
       request: dependencies.request,
       mode,
     })
+    let authenticateTester
+    if (mode === '--apply') {
+      const browser = createPlaywrightBetaBrowser()
+      authenticateTester = async (assignments) => {
+        if (!Array.isArray(assignments) || assignments.length !== 1) {
+          throw new BetaReleaseError(
+            'tester_authentication_failed',
+            'The static beta browser harness requires exactly one tester assignment.',
+          )
+        }
+        const [{ alias, deviceId }] = assignments
+        return runBetaEmailLinkAuthenticationJourney({
+          alias,
+          deviceId,
+          browser,
+          input: process.stdin,
+          output: process.stderr,
+          runMemberJourney: (context) =>
+            runBetaTesterJourney({ alias, deviceId, browser: context }),
+        })
+      }
+    }
     await runBetaReleaseCli({
       environment,
       args: process.argv.slice(2),
       readJson,
       inspectCloud: inspector,
-      authenticateTester: (aliases) =>
-        runBetaTesterAuthentication({
-          aliases,
-          argv: [],
-          environment,
-          input: process.stdin,
-          output: process.stderr,
-          authenticate: (credentials) =>
-            authenticateExistingBetaTester({
-              webApiKey: environment.VITE_FIREBASE_API_KEY,
-              credentials,
-              request: fetch,
-            }),
-        }),
       ...hostingAdapters,
+      authenticateTester,
       write: (line) => process.stdout.write(`${line}\n`),
     })
   } catch (error) {

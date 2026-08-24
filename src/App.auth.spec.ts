@@ -35,7 +35,9 @@ describe('App — session termination', () => {
 
     // A fake provider whose signOut mimics Firebase by pushing a null session.
     const provider: AuthProvider = {
-      signIn: vi.fn(),
+      signInWithGoogle: vi.fn(),
+      sendEmailSignInLink: vi.fn(),
+      completeEmailSignInLink: vi.fn(),
       signOut: vi.fn().mockImplementation(async () => {
         observer.emit(null)
       }),

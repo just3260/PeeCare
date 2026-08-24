@@ -21,6 +21,16 @@ const SIGNED_IN: AuthState = {
   user: { uid: 'member-001', displayName: null, email: 'member@example.com' },
 }
 
+function fakeAuthProvider(overrides: Partial<AuthProvider> = {}): AuthProvider {
+  return {
+    signInWithGoogle: vi.fn(),
+    sendEmailSignInLink: vi.fn(),
+    completeEmailSignInLink: vi.fn(),
+    signOut: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  }
+}
+
 afterEach(() => {
   document.body.innerHTML = ''
 })
@@ -56,7 +66,7 @@ async function mountSettings(options: {
       provide: {
         [AUTH_STORE_KEY as symbol]: { state: ref(options.authState ?? SIGNED_IN) },
         [AUTH_PROVIDER_KEY as symbol]:
-          options.provider ?? ({ signIn: vi.fn(), signOut: vi.fn().mockResolvedValue(undefined) } as AuthProvider),
+          options.provider ?? fakeAuthProvider(),
         [DEVICE_OVERVIEW_STORE_KEY as symbol]: {
           state: ref(options.deviceState ?? { status: 'empty' }),
           devices: ref(options.devices ?? []),
@@ -282,7 +292,7 @@ describe('SettingsView account section', () => {
   })
 
   it('terminates the session through the injected provider on sign-out', async () => {
-    const provider: AuthProvider = { signIn: vi.fn(), signOut: vi.fn().mockResolvedValue(undefined) }
+    const provider = fakeAuthProvider()
     const router = stubRouter()
     const wrapper = await mountSettings({ provider, router })
 

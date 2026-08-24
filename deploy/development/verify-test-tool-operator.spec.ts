@@ -7,6 +7,7 @@ import {
   createOperatorCloudDependencies,
   createOperatorFirebaseAppOptions,
   createOperatorRevisionInspector,
+  decideBetaMarkerPreparation,
   runOneTimeOperatorVerification,
   runOneTimeOperatorVerificationCli,
   selectExistingForeignUser,
@@ -92,6 +93,7 @@ function dependencies(overrides: Record<string, unknown> = {}) {
   return {
     inspectExactTarget: vi.fn(async () => inspectedRevision),
     readAssignedDevice: vi.fn(async () => ({ ownerUid: 'owner-private-uid' })),
+    prepareBetaDevice: vi.fn(async () => true),
     readExistingUser: vi.fn(async () => ({ uid: 'owner-private-uid' })),
     findExistingForeignUser: vi.fn(async () => ({ uid: 'foreign-private-uid' })),
     createCustomToken: vi.fn(async (uid: string) => `custom-${uid}`),
@@ -104,6 +106,31 @@ function dependencies(overrides: Record<string, unknown> = {}) {
 }
 
 describe('one-time Test Tool operator verification', () => {
+  it.each([
+    ['already unmarked', { ownerUid: 'owner-private-uid' }, 'already-unmarked'],
+    [
+      'exact reusable marker',
+      {
+        ownerUid: 'owner-private-uid',
+        developmentTestTool: { enabled: true, marker: 'petcare-c7483-beta-v1' },
+      },
+      'clear-exact-marker',
+    ],
+  ])('prepares an owner-preserving device that is %s', (_case, device, expected) => {
+    expect(decideBetaMarkerPreparation(device, 'owner-private-uid')).toBe(expected)
+  })
+
+  it.each([
+    ['foreign owner', { ownerUid: 'other-owner' }],
+    ['disabled marker', { ownerUid: 'owner-private-uid', developmentTestTool: { enabled: false, marker: 'petcare-c7483-beta-v1' } }],
+    ['foreign marker', { ownerUid: 'owner-private-uid', developmentTestTool: { enabled: true, marker: 'foreign-marker' } }],
+    ['extended marker', { ownerUid: 'owner-private-uid', developmentTestTool: { enabled: true, marker: 'petcare-c7483-beta-v1', bypass: true } }],
+  ])('rejects a %s before marker mutation', (_case, device) => {
+    expect(() => decideBetaMarkerPreparation(device, 'owner-private-uid')).toThrowError(
+      expect.objectContaining({ code: 'marker_precondition_failed' }),
+    )
+  })
+
   it('binds eleven checks to revision 00002-rte without exposing protected material', async () => {
     const deps = dependencies()
     const tokenStore = createEphemeralTokenStore()
@@ -126,6 +153,7 @@ describe('one-time Test Tool operator verification', () => {
       smoke: Object.fromEntries(smokeNames.map((name) => [name, 'passed'])),
     })
     expect(deps.readExistingUser).toHaveBeenCalledWith('owner-private-uid')
+    expect(deps.prepareBetaDevice).toHaveBeenCalledWith('owner-private-uid')
     expect(deps.inspectExactTarget).toHaveBeenCalledWith({
       projectId: 'petcare-c7483',
       region: 'asia-east1',
@@ -162,8 +190,10 @@ describe('one-time Test Tool operator verification', () => {
     })).rejects.toMatchObject({ code: 'foreign_principal_unavailable' })
 
     expect(deps.createCustomToken).not.toHaveBeenCalled()
+    expect(deps.prepareBetaDevice).not.toHaveBeenCalled()
     expect(deps.createSmokeAdapter).not.toHaveBeenCalled()
     expect(deps.smoke.markBetaDevice).not.toHaveBeenCalled()
+    expect(deps.prepareBetaDevice).not.toHaveBeenCalled()
     expect(write).not.toHaveBeenCalled()
     expect(tokenStore.hasProtectedMaterial()).toBe(false)
   })
@@ -210,6 +240,7 @@ describe('one-time Test Tool operator verification', () => {
     })).rejects.toMatchObject({ code: 'custom_token_signing_failed' })
 
     expect(deps.createSmokeAdapter).not.toHaveBeenCalled()
+    expect(deps.prepareBetaDevice).not.toHaveBeenCalled()
     expect(tokenStore.hasProtectedMaterial()).toBe(false)
   })
 
@@ -230,7 +261,24 @@ describe('one-time Test Tool operator verification', () => {
     })).rejects.toMatchObject({ code })
 
     expect(deps.createSmokeAdapter).not.toHaveBeenCalled()
+    expect(deps.prepareBetaDevice).not.toHaveBeenCalled()
     expect(tokenStore.hasProtectedMaterial()).toBe(false)
+  })
+
+  it('keeps the marker unchanged when the verification clock is invalid', async () => {
+    const deps = dependencies()
+
+    await expect(runOneTimeOperatorVerification({
+      environment: environment(),
+      args: ['--apply', '--revision', revision, '--image', image],
+      manifest: loadTestToolManifest(),
+      dependencies: deps,
+      now: () => new Date(Number.NaN),
+      write: vi.fn(),
+    })).rejects.toMatchObject({ code: 'verification_clock_invalid' })
+
+    expect(deps.prepareBetaDevice).not.toHaveBeenCalled()
+    expect(deps.createSmokeAdapter).not.toHaveBeenCalled()
   })
 
   it('rejects dependency ports that could mutate Firebase Auth identities', async () => {
@@ -380,6 +428,7 @@ describe('one-time operator cloud adapters', () => {
       headers: new Headers(),
       json: async () => ({ idToken: 'exchanged-id-token' }),
     }))
+    const prepareExactMarker = vi.fn(async () => true)
     const deps = createOperatorCloudDependencies({
       environment: environment(),
       auth,
@@ -388,6 +437,7 @@ describe('one-time operator cloud adapters', () => {
           ? { deviceId: 'PC-DEV-000001', ownerUid: 'owner-private-uid' }
           : null),
       writeExactMarker: vi.fn(),
+      prepareExactMarker,
       authorizedJson,
       request,
       execute: vi.fn(),
@@ -396,6 +446,11 @@ describe('one-time operator cloud adapters', () => {
 
     await expect(deps.readAssignedDevice()).resolves.toMatchObject({
       ownerUid: 'owner-private-uid',
+    })
+    await expect(deps.prepareBetaDevice('owner-private-uid')).resolves.toBe(true)
+    expect(prepareExactMarker).toHaveBeenCalledWith({
+      path: 'devices/PC-DEV-000001',
+      expectedOwnerUid: 'owner-private-uid',
     })
     await expect(deps.readExistingUser('owner-private-uid')).resolves.toEqual({
       uid: 'owner-private-uid',
@@ -416,6 +471,7 @@ describe('one-time operator cloud adapters', () => {
       'exchangeCustomToken',
       'findExistingForeignUser',
       'inspectExactTarget',
+      'prepareBetaDevice',
       'readAssignedDevice',
       'readExistingUser',
       'readInspectedSecret',

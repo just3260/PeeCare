@@ -59,4 +59,13 @@ describe('router', () => {
     })
     expect(nonDevelopmentRoutes.some((route) => route.name === 'test-tool')).toBe(false)
   })
+
+  it('registers the Email Link callback as a public route', () => {
+    const callback = createApplicationRoutes({ testToolEnabled: false }).find(
+      (route) => route.name === 'email-link-sign-in',
+    )
+
+    expect(callback).toMatchObject({ path: '/auth/email-link' })
+    expect(callback?.meta?.requiresAuth).not.toBe(true)
+  })
 })

@@ -7,16 +7,17 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   BetaReleaseError,
-  authenticateExistingBetaTester,
   createApprovedBetaCliEnvironment,
   createBetaReleaseRecord,
   createBetaRollbackDryRun,
   createFailedBetaReleaseEvidence,
+  createHostedGoogleSignInEvidenceAdapter,
   readHiddenBetaTesterCredentials,
   prepareBetaHostingHistory,
   readLiveBetaHostingVersions,
   runBetaTesterAuthentication,
   runBetaTesterAuthenticationCli,
+  runBetaEmailLinkAuthenticationJourney,
   runBetaTesterJourney,
   runBetaUploadBoundary,
   createBetaCloudInspector,
@@ -25,8 +26,11 @@ import {
   runBetaReleaseCli,
   runBetaHostingRelease,
   validateBetaTesterInventory,
+  validateBetaTesterEmailLink,
   verifyLiveBetaHostingAvailability,
+  verifyHostedGoogleSignInReleaseBoundary,
   verifySingleTesterOwnershipBoundary,
+  betaInventoryContainsSensitiveMaterial,
 } from './release-web-beta.mjs'
 
 const repositoryRoot = resolve(import.meta.dirname, '../..')
@@ -44,6 +48,24 @@ const verifiedTestToolApi = Object.freeze({
   verifiedOrigin:
     'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app',
 })
+
+function googleSignInEvidence(buildHash: string) {
+  return {
+    status: 'verified',
+    buildHash,
+    providerId: 'google.com',
+    hostedControl: true,
+    readiness: true,
+    providerAdapterGate: 'passed',
+    externalGoogleAccountE2E: 'not-performed',
+  }
+}
+
+function googleSignInBoundaryAdapter() {
+  return vi.fn(async ({ buildHash }: { buildHash: string }) =>
+    googleSignInEvidence(buildHash),
+  )
+}
 
 function tester(index: number) {
   return {
@@ -78,6 +100,8 @@ describe('non-PII beta tester inventory', () => {
 
   it.each([
     ['email key', 'email', 'tester@example.com'],
+    ['Email Link key', 'emailLink', 'https://petcare-c7483.firebaseapp.com/action'],
+    ['OOB code key', 'oobCode', 'opaque-one-time-code'],
     ['Firebase UID key', 'uid', '4LwYpQ8z2xTnBf6sVj1kHm3cR9Aa'],
     ['credential key', 'password', 'correct-horse-battery-staple'],
     ['secret-like key', 'webhookSecret', 'opaque-value'],
@@ -91,6 +115,19 @@ describe('non-PII beta tester inventory', () => {
     expect(() => validateBetaTesterInventory(candidate)).toThrowError(
       expect.objectContaining({ code: 'inventory_invalid' }),
     )
+  })
+
+  it('detects Email Link and OOB material in the inventory secret scan', () => {
+    expect(
+      betaInventoryContainsSensitiveMaterial({
+        nested: {
+          callback: 'https://petcare-c7483.firebaseapp.com/__/auth/action?mode=signIn&oobCode=opaque',
+        },
+      }),
+    ).toBe(true)
+    expect(
+      betaInventoryContainsSensitiveMaterial({ nested: { oobCode: 'opaque' } }),
+    ).toBe(true)
   })
 
   it.each(['PC-000001', 'PC-PROD-0001', 'production-device-1', 'PROD-000001'])(
@@ -118,12 +155,40 @@ describe('non-PII beta tester inventory', () => {
       type: 'object',
       additionalProperties: false,
     })
+    const prohibitedPropertyPattern = schema.properties.testers.items.propertyNames.not.pattern
+    expect(prohibitedPropertyPattern).toContain('email')
+    expect(prohibitedPropertyPattern).toContain('oob')
+    expect(prohibitedPropertyPattern).toContain('link')
+    const aliasSchema = schema.properties.testers.items.properties.alias
+    const aliasPattern = new RegExp(aliasSchema.pattern)
+    const prohibitedAliasPatterns = aliasSchema.allOf.map(
+      (rule: { not: { pattern: string } }) => new RegExp(rule.not.pattern),
+    )
+    const schemaAcceptsAlias = (alias: string) =>
+      aliasPattern.test(alias) &&
+      prohibitedAliasPatterns.every((pattern: RegExp) => !pattern.test(alias))
+    expect(schemaAcceptsAlias('tester-1')).toBe(true)
+    expect([
+      'email-link',
+      'oob-code',
+      'password',
+      'refresh-token',
+      'secret',
+      'abcdefghijklmnopqrstuvwx',
+    ].every((alias) => !schemaAcceptsAlias(alias))).toBe(true)
     expect(validateBetaTesterInventory(example)).toEqual([
       { alias: 'tester-1', deviceId: 'PC-DEV-000001' },
     ])
     expect(JSON.stringify(example)).not.toMatch(
-      /(?:@|password|credential|secret|token|private[_-]?key|firebase[_-]?uid)/i,
+      /(?:@|password|credential|secret|token|private[_-]?key|firebase[_-]?uid|email[_-]?link|oob[_-]?code|mode=signIn)/i,
     )
+  })
+
+  it('applies the same Email Link, OOB, and credential scan to a local inventory candidate', () => {
+    const localInventory = inventory()
+
+    expect(betaInventoryContainsSensitiveMaterial(localInventory)).toBe(false)
+    expect(validateBetaTesterInventory(localInventory)).toHaveLength(1)
   })
 
   it('accepts the canonical development device assigned by opaque alias', () => {
@@ -463,6 +528,19 @@ describe('Firebase beta cloud inventory adapter', () => {
 })
 
 describe('beta dry-run command boundary', () => {
+  it('statically composes the production Playwright browser without an environment or CLI adapter escape hatch', () => {
+    const source = readFileSync(
+      resolve(repositoryRoot, 'deploy/development/release-web-beta.mjs'),
+      'utf8',
+    )
+
+    expect(source).toContain(
+      "import { createPlaywrightBetaBrowser } from './release-web-beta-playwright.mjs'",
+    )
+    expect(source).toContain('const browser = createPlaywrightBetaBrowser()')
+    expect(source).not.toMatch(/browser_adapter_unavailable|PEECARE_.*BROWSER|--browser/)
+  })
+
   it('exposes the root dry-run command and loads only the gitignored inventory path', async () => {
     const packageJson = JSON.parse(readFileSync(resolve(repositoryRoot, 'package.json'), 'utf8'))
     const readJson = vi.fn((path: string) => {
@@ -486,6 +564,7 @@ describe('beta dry-run command boundary', () => {
       })),
       uploadHosting: vi.fn(),
       verifyLiveRoutes: vi.fn(),
+      verifyGoogleSignInBoundary: googleSignInBoundaryAdapter(),
       readHostingVersions,
       write: vi.fn(),
     })
@@ -521,6 +600,36 @@ describe('beta dry-run command boundary', () => {
       }),
     ).rejects.toMatchObject({ code: 'inventory_invalid' })
     expect(inspectCloud).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['Email Link', 'emailLink', 'https://petcare-c7483.firebaseapp.com/__/auth/action?mode=signIn'],
+    ['OOB code', 'oobCode', 'opaque-one-time-code'],
+  ])('rejects local inventory containing %s before cloud, build, or browser work', async (_name, key, value) => {
+    const sensitiveInventory = inventory() as { testers: Array<Record<string, string>> }
+    sensitiveInventory.testers[0][key] = value
+    const adapters = {
+      inspectCloud: vi.fn(),
+      runReleaseGate: vi.fn(),
+      inspectCloudBuild: vi.fn(),
+      uploadHosting: vi.fn(),
+      verifyLiveRoutes: vi.fn(),
+      readHostingVersions: vi.fn(),
+      authenticateTester: vi.fn(),
+    }
+
+    await expect(
+      runBetaReleaseCli({
+        environment: approvedEnvironment(),
+        args: ['--apply'],
+        readJson: vi.fn(() => sensitiveInventory),
+        ...adapters,
+        write: vi.fn(),
+      }),
+    ).rejects.toMatchObject({ code: 'inventory_invalid' })
+    expect(Object.values(adapters).every((adapter) => adapter.mock.calls.length === 0)).toBe(
+      true,
+    )
   })
 
   it.each([[], ['--dry-run', '--apply'], ['--unknown']])(
@@ -566,47 +675,22 @@ function fakeCredentialTty({ inputIsTTY = true, outputIsTTY = true } = {}) {
 function enterHiddenFields(
   input: EventEmitter,
   email = 'beta.operator@example.test',
-  password = 'sentinel-password',
+  emailLink = 'https://petcare-c7483.firebaseapp.com/__/auth/action?mode=signIn&oobCode=one-time-oob-code',
 ) {
   queueMicrotask(() => {
     input.emit('data', Buffer.from(`${email}\n`))
-    setTimeout(() => input.emit('data', Buffer.from(`${password}\n`)), 0)
+    setTimeout(() => input.emit('data', Buffer.from(`${emailLink}\n`)), 0)
   })
 }
 
 describe('ephemeral beta tester authentication', () => {
-  it('authenticates an existing tester without returning or persisting token material', async () => {
-    const request = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({
-        idToken: 'private-id-token',
-        refreshToken: 'private-refresh-token',
-        localId: 'private-firebase-uid',
-      }),
-    }))
-    const credentials = {
-      email: 'beta.operator@example.test',
-      password: 'sentinel-password',
-    }
+  const email = 'beta.operator@example.test'
+  const emailLink =
+    'https://petcare-c7483.firebaseapp.com/__/auth/action?mode=signIn&oobCode=one-time-oob-code'
 
-    await expect(authenticateExistingBetaTester({
-      webApiKey: 'public-firebase-web-key',
-      credentials,
-      request,
-    })).resolves.toBeUndefined()
-
-    expect(request).toHaveBeenCalledWith(
-      expect.stringContaining('accounts:signInWithPassword?key='),
-      expect.objectContaining({
-        method: 'POST',
-        body: JSON.stringify({ ...credentials, returnSecureToken: true }),
-      }),
-    )
-  })
-
-  it('reads email and password for exactly one alias from a hidden fake TTY', async () => {
+  it('reads exactly one Email and one Email Link for one alias from a hidden fake TTY', async () => {
     const tty = fakeCredentialTty()
-    enterHiddenFields(tty.input)
+    enterHiddenFields(tty.input, email, emailLink)
 
     const credentials = await readHiddenBetaTesterCredentials({
       alias: 'tester-1',
@@ -614,8 +698,8 @@ describe('ephemeral beta tester authentication', () => {
     })
 
     expect(credentials).toEqual({
-      email: 'beta.operator@example.test',
-      password: 'sentinel-password',
+      email,
+      emailLink,
     })
     expect(tty.input.setRawMode.mock.calls).toEqual([
       [true],
@@ -625,8 +709,28 @@ describe('ephemeral beta tester authentication', () => {
     ])
     expect(tty.output.write.mock.calls.flat().join('')).toContain('tester-1')
     expect(tty.output.write.mock.calls.flat().join('')).not.toMatch(
-      /beta\.operator@example\.test|sentinel-password/,
+      /beta\.operator@example\.test|one-time-oob-code|mode=signIn/,
     )
+  })
+
+  it.each([
+    ['HTTP', emailLink.replace('https:', 'http:')],
+    ['foreign domain', emailLink.replace('petcare-c7483.firebaseapp.com', 'attacker.example')],
+    ['missing mode', emailLink.replace('mode=signIn&', '')],
+    ['wrong mode', emailLink.replace('mode=signIn', 'mode=verifyEmail')],
+    ['missing OOB code', emailLink.replace('&oobCode=one-time-oob-code', '')],
+    ['empty OOB code', emailLink.replace('one-time-oob-code', '')],
+  ])('rejects an Email Link with %s using a sanitized stable code', (_case, candidate) => {
+    expect(() =>
+      validateBetaTesterEmailLink({ email, emailLink: candidate }),
+    ).toThrowError(expect.objectContaining({ code: 'email_link_invalid' }))
+  })
+
+  it.each([
+    emailLink,
+    emailLink.replace('petcare-c7483.firebaseapp.com', 'petcare-c7483.web.app'),
+  ])('accepts an HTTPS sign-in link on an approved action or Hosting domain', (candidate) => {
+    expect(() => validateBetaTesterEmailLink({ email, emailLink: candidate })).not.toThrow()
   })
 
   it.each([[], ['tester-1', 'tester-2']])(
@@ -648,7 +752,9 @@ describe('ephemeral beta tester authentication', () => {
   )
 
   it.each([
-    ['credential argument', ['--email=beta.operator@example.test'], {}],
+    ['Email argument', ['--email=beta.operator@example.test'], {}],
+    ['Email Link argument', ['--email-link=https://example.test/action'], {}],
+    ['password argument', ['--password=sentinel-password'], {}],
     ['environment file argument', ['--env-file=.tester.env'], {}],
     ['JSON argument', ['--credentials-json=credentials.json'], {}],
     [
@@ -656,6 +762,11 @@ describe('ephemeral beta tester authentication', () => {
       [],
       { PEECARE_BETA_TESTER_PASSWORD: 'sentinel-password' },
     ],
+    ['Email environment variable', [], { PEECARE_BETA_TESTER_EMAIL: email }],
+    ['Email Link environment variable', [], { PEECARE_BETA_TESTER_EMAIL_LINK: emailLink }],
+    ['Email hidden in an unrelated environment key', [], { RELEASE_INPUT: email }],
+    ['Email Link hidden in an unrelated environment key', [], { RELEASE_INPUT: emailLink }],
+    ['password hidden in an unrelated environment key', [], { RELEASE_INPUT: 'password material' }],
   ])('rejects %s before prompting or authenticating', async (_case, argv, environment) => {
     const tty = fakeCredentialTty()
     const authenticate = vi.fn()
@@ -673,7 +784,11 @@ describe('ephemeral beta tester authentication', () => {
     expect(authenticate).not.toHaveBeenCalled()
   })
 
-  it('rejects unexpected file or JSON credential source options', async () => {
+  it.each([
+    ['credential file', { credentialFile: '.tester.env' }],
+    ['credential JSON', { credentialsJson: '{"email":"hidden"}' }],
+    ['password field', { password: 'sentinel-password' }],
+  ])('rejects unexpected %s options', async (_name, unexpected) => {
     const tty = fakeCredentialTty()
     const authenticate = vi.fn()
 
@@ -684,7 +799,7 @@ describe('ephemeral beta tester authentication', () => {
         environment: {},
         ...tty,
         authenticate,
-        credentialFile: '.tester.env',
+        ...unexpected,
       } as never),
     ).rejects.toMatchObject({ code: 'credential_input_unavailable' })
     expect(tty.output.write).not.toHaveBeenCalled()
@@ -719,17 +834,17 @@ describe('ephemeral beta tester authentication', () => {
 
   it('normalizes login failure, clears credentials, and does not leak the cause', async () => {
     const credentials = {
-      email: 'beta.operator@example.test',
-      password: 'sentinel-password',
+      email,
+      emailLink,
     }
     const tty = fakeCredentialTty()
-    enterHiddenFields(tty.input, credentials.email, credentials.password)
+    enterHiddenFields(tty.input, credentials.email, credentials.emailLink)
     let capturedCredentials: typeof credentials | undefined
     const authenticate = vi.fn(async (mutableCredentials) => {
       capturedCredentials = mutableCredentials
       expect(mutableCredentials).toEqual(credentials)
       throw new Error(
-        'Firebase rejected beta.operator@example.test with sentinel-password',
+        `Firebase rejected ${email} with ${emailLink}`,
       )
     })
 
@@ -745,20 +860,20 @@ describe('ephemeral beta tester authentication', () => {
       expect.objectContaining({
         code: 'tester_authentication_failed',
         message: expect.not.stringMatching(
-          /beta\.operator@example\.test|sentinel-password/,
+          /beta\.operator@example\.test|one-time-oob-code|mode=signIn/,
         ),
       }),
     )
-    expect(capturedCredentials).toEqual({ email: null, password: null })
+    expect(capturedCredentials).toEqual({ email: null, emailLink: null })
   })
 
   it('returns only a sanitized stage and clears mutable credential references after login', async () => {
     const credentials = {
-      email: 'beta.operator@example.test',
-      password: 'sentinel-password',
+      email,
+      emailLink,
     }
     const tty = fakeCredentialTty()
-    enterHiddenFields(tty.input, credentials.email, credentials.password)
+    enterHiddenFields(tty.input, credentials.email, credentials.emailLink)
     let capturedCredentials: typeof credentials | undefined
     const authenticate = vi.fn(async (mutableCredentials) => {
       capturedCredentials = mutableCredentials
@@ -778,22 +893,23 @@ describe('ephemeral beta tester authentication', () => {
     })
 
     expect(result).toEqual({ alias: 'tester-1', status: 'authenticated' })
-    expect(JSON.stringify(result)).not.toMatch(/uid|token|@|sentinel-password/i)
-    expect(capturedCredentials).toEqual({ email: null, password: null })
+    expect(JSON.stringify(result)).not.toMatch(/uid|token|@|oob|link/i)
+    expect(capturedCredentials).toEqual({ email: null, emailLink: null })
   })
 
   it.each([
-    ['successful login', false],
-    ['failed login', true],
-  ])('keeps stdout and stderr secret-free for %s', async (_case, fails) => {
+    ['successful login', emailLink, false, 'authenticated'],
+    ['failed login', emailLink, true, 'tester_authentication_failed'],
+    ['invalid link', emailLink.replace('https:', 'http:'), false, 'email_link_invalid'],
+  ])('keeps stdout and stderr secret-free for %s', async (_case, candidateLink, fails, expected) => {
     const stdout = { write: vi.fn() }
     const stderr = { write: vi.fn() }
     const credentials = {
-      email: 'beta.operator@example.test',
-      password: 'sentinel-password',
+      email,
+      emailLink: candidateLink,
     }
     const tty = fakeCredentialTty()
-    enterHiddenFields(tty.input, credentials.email, credentials.password)
+    enterHiddenFields(tty.input, credentials.email, credentials.emailLink)
 
     const exitCode = await runBetaTesterAuthenticationCli({
       aliases: ['tester-1'],
@@ -805,7 +921,7 @@ describe('ephemeral beta tester authentication', () => {
       authenticate: vi.fn(async () => {
         if (fails) {
           throw new Error(
-            'firebase-id-token-must-not-leak beta.operator@example.test sentinel-password',
+            `firebase-id-token-must-not-leak ${email} ${candidateLink}`,
           )
         }
         return {
@@ -815,17 +931,281 @@ describe('ephemeral beta tester authentication', () => {
       }),
     })
 
-    expect(exitCode).toBe(fails ? 1 : 0)
+    expect(exitCode).toBe(expected === 'authenticated' ? 0 : 1)
     const processOutput = [stdout, stderr]
       .flatMap((stream) => stream.write.mock.calls.flat())
       .join('')
     expect(processOutput).not.toMatch(
-      /beta\.operator@example\.test|sentinel-password|firebase-(?:uid|id-token)-must-not-leak/,
+      /beta\.operator@example\.test|one-time-oob-code|mode=signIn|firebase-(?:uid|id-token)-must-not-leak/,
     )
-    expect(processOutput).toContain(
-      fails ? 'tester_authentication_failed' : 'authenticated',
+    expect(processOutput).toContain(expected)
+  })
+})
+
+describe('Email Link authentication half of the isolated beta journey', () => {
+  const email = 'beta.operator@example.test'
+  const emailLink =
+    'https://petcare-c7483.firebaseapp.com/__/auth/action?mode=signIn&oobCode=one-time-oob-code'
+
+  function authenticationBrowser(overrides: Record<string, unknown> = {}) {
+    const calls: string[] = []
+    const input = fakeCredentialTty().input
+    let capturedCredentials: { email: string | null; emailLink: string | null } | undefined
+    const context = {
+      visitHostedSignIn: vi.fn(async () => calls.push('visitHostedSignIn')),
+      submitEmailLinkRequest: vi.fn(async (submittedEmail: string) => {
+        calls.push('submitEmailLinkRequest')
+        expect(submittedEmail).toBe(email)
+        setTimeout(() => input.emit('data', Buffer.from(`${emailLink}\n`)), 0)
+      }),
+      openEmailLinkCallback: vi.fn(async () => calls.push('openEmailLinkCallback')),
+      completeEmailLinkCallback: vi.fn(
+        async (credentials: { email: string | null; emailLink: string | null }) => {
+          calls.push('completeEmailLinkCallback')
+          capturedCredentials = credentials
+        },
+      ),
+      getAuthenticatedUid: vi.fn(async () => {
+        calls.push('getAuthenticatedUid')
+        return 'owner-uid'
+      }),
+      readAssignedDevice: vi.fn(async () => {
+        calls.push('readAssignedDevice')
+        return {
+          deviceId: 'PC-DEV-000001',
+          ownerUid: 'owner-uid',
+          productModel: 'pc-mini',
+          ingestionStatus: 'enabled',
+        }
+      }),
+      expectOwnerOverview: vi.fn(async () => calls.push('expectOwnerOverview')),
+      expectHistory: vi.fn(async () => calls.push('expectHistory')),
+      expectDailyStats: vi.fn(async () => calls.push('expectDailyStats')),
+      renameDevice: vi.fn(async () => calls.push('renameDevice')),
+      clearDeviceName: vi.fn(async () => calls.push('clearDeviceName')),
+      reloadProtectedRoutes: vi.fn(async () => calls.push('reloadProtectedRoutes')),
+      signOut: vi.fn(async () => calls.push('signOut')),
+      clearAuthPersistence: vi.fn(async () => calls.push('clearAuthPersistence')),
+      clearIndexedDB: vi.fn(async () => calls.push('clearIndexedDB')),
+      clearCacheStorage: vi.fn(async () => calls.push('clearCacheStorage')),
+      clearServiceWorkerMemberState: vi.fn(async () =>
+        calls.push('clearServiceWorkerMemberState'),
+      ),
+      close: vi.fn(async () => calls.push('close')),
+      ...overrides,
+    }
+    return {
+      input,
+      output: { isTTY: true, write: vi.fn() },
+      browser: { createContext: vi.fn(async () => context) },
+      context,
+      calls,
+      capturedCredentials: () => capturedCredentials,
+    }
+  }
+
+  function enterEmail(input: EventEmitter) {
+    setTimeout(() => input.emit('data', Buffer.from(`${email}\n`)), 0)
+  }
+
+  it('requests the link in one fresh context, completes the callback, and verifies exact ownership', async () => {
+    const fixture = authenticationBrowser()
+    const runMemberJourney = vi.fn(async () => ({ alias: 'tester-1', status: 'passed' }))
+    enterEmail(fixture.input)
+
+    const result = await runBetaEmailLinkAuthenticationJourney({
+      alias: 'tester-1',
+      deviceId: 'PC-DEV-000001',
+      browser: fixture.browser,
+      input: fixture.input,
+      output: fixture.output,
+      runMemberJourney,
+    })
+
+    expect(result).toEqual({ alias: 'tester-1', status: 'passed' })
+    expect(fixture.browser.createContext).toHaveBeenCalledOnce()
+    expect(runMemberJourney).toHaveBeenCalledWith(fixture.context)
+    expect(fixture.capturedCredentials()).toEqual({ email: null, emailLink: null })
+    expect(fixture.calls).toEqual([
+      'visitHostedSignIn',
+      'submitEmailLinkRequest',
+      'openEmailLinkCallback',
+      'completeEmailLinkCallback',
+      'getAuthenticatedUid',
+      'readAssignedDevice',
+      'clearAuthPersistence',
+      'clearIndexedDB',
+      'clearCacheStorage',
+      'clearServiceWorkerMemberState',
+      'close',
+    ])
+    expect(fixture.output.write.mock.calls.flat().join('')).not.toMatch(
+      /beta\.operator@example\.test|one-time-oob-code|mode=signIn/,
     )
   })
+
+  it('stops before Member API mutation and clears references when callback completion fails', async () => {
+    let capturedCredentials: { email: string | null; emailLink: string | null } | undefined
+    const fixture = authenticationBrowser({
+      completeEmailLinkCallback: vi.fn(async (credentials) => {
+        capturedCredentials = credentials
+        throw new Error(`callback rejected ${emailLink}`)
+      }),
+    })
+    const runMemberJourney = vi.fn()
+    enterEmail(fixture.input)
+
+    await expect(
+      runBetaEmailLinkAuthenticationJourney({
+        alias: 'tester-1',
+        deviceId: 'PC-DEV-000001',
+        browser: fixture.browser,
+        input: fixture.input,
+        output: fixture.output,
+        runMemberJourney,
+      }),
+    ).rejects.toMatchObject({ code: 'tester_authentication_failed' })
+    expect(runMemberJourney).not.toHaveBeenCalled()
+    expect(capturedCredentials).toEqual({ email: null, emailLink: null })
+    expect(fixture.context.clearAuthPersistence).toHaveBeenCalledOnce()
+    expect(fixture.context.close).toHaveBeenCalledOnce()
+  })
+
+  it('stops before Member API mutation and clears references on UID ownership mismatch', async () => {
+    const fixture = authenticationBrowser({
+      getAuthenticatedUid: vi.fn(async () => 'unexpected-uid'),
+    })
+    const runMemberJourney = vi.fn()
+    enterEmail(fixture.input)
+
+    await expect(
+      runBetaEmailLinkAuthenticationJourney({
+        alias: 'tester-1',
+        deviceId: 'PC-DEV-000001',
+        browser: fixture.browser,
+        input: fixture.input,
+        output: fixture.output,
+        runMemberJourney,
+      }),
+    ).rejects.toMatchObject({ code: 'tester_device_mismatch' })
+    expect(runMemberJourney).not.toHaveBeenCalled()
+    expect(fixture.capturedCredentials()).toEqual({ email: null, emailLink: null })
+    expect(fixture.context.clearAuthPersistence).toHaveBeenCalledOnce()
+    expect(fixture.context.close).toHaveBeenCalledOnce()
+  })
+
+  it('sanitizes downstream errors while clearing credentials and tearing down the context', async () => {
+    const fixture = authenticationBrowser()
+    enterEmail(fixture.input)
+
+    const error = await runBetaEmailLinkAuthenticationJourney({
+      alias: 'tester-1',
+      deviceId: 'PC-DEV-000001',
+      browser: fixture.browser,
+      input: fixture.input,
+      output: fixture.output,
+      runMemberJourney: vi.fn(async () => {
+        throw new Error(`downstream leaked ${emailLink} firebase-id-token`)
+      }),
+    }).catch((reason: unknown) => reason)
+
+    expect(error).toMatchObject({ code: 'smoke_failed' })
+    expect(JSON.stringify(error)).not.toMatch(/one-time-oob-code|mode=signIn|firebase-id-token/)
+    expect(fixture.capturedCredentials()).toEqual({ email: null, emailLink: null })
+    expect(fixture.context.clearAuthPersistence).toHaveBeenCalledOnce()
+    expect(fixture.context.close).toHaveBeenCalledOnce()
+  })
+
+  it('continues the authenticated context through every protected journey and sign-out step', async () => {
+    const fixture = authenticationBrowser()
+    enterEmail(fixture.input)
+
+    const result = await runBetaEmailLinkAuthenticationJourney({
+      alias: 'tester-1',
+      deviceId: 'PC-DEV-000001',
+      browser: fixture.browser,
+      input: fixture.input,
+      output: fixture.output,
+      runMemberJourney: (context: typeof fixture.context) =>
+        runBetaTesterJourney({
+          alias: 'tester-1',
+          deviceId: 'PC-DEV-000001',
+          browser: context,
+        }),
+    })
+
+    expect(result).toEqual({ alias: 'tester-1', status: 'passed' })
+    expect(fixture.context.expectOwnerOverview).toHaveBeenCalledOnce()
+    expect(fixture.context.expectHistory).toHaveBeenCalledOnce()
+    expect(fixture.context.expectDailyStats).toHaveBeenCalledOnce()
+    expect(fixture.context.renameDevice).toHaveBeenCalledOnce()
+    expect(fixture.context.clearDeviceName).toHaveBeenCalledOnce()
+    expect(fixture.context.reloadProtectedRoutes).toHaveBeenCalledOnce()
+    expect(fixture.context.signOut).toHaveBeenCalledOnce()
+    expect(fixture.capturedCredentials()).toEqual({ email: null, emailLink: null })
+    expect(fixture.calls.slice(-5)).toEqual([
+      'clearAuthPersistence',
+      'clearIndexedDB',
+      'clearCacheStorage',
+      'clearServiceWorkerMemberState',
+      'close',
+    ])
+  })
+
+  it('clears every browser state and mutable auth reference after a downstream failure', async () => {
+    const fixture = authenticationBrowser({
+      expectHistory: vi.fn(async () => {
+        throw new Error(`history failed with ${emailLink} firebase-id-token`)
+      }),
+    })
+    enterEmail(fixture.input)
+
+    const error = await runBetaEmailLinkAuthenticationJourney({
+      alias: 'tester-1',
+      deviceId: 'PC-DEV-000001',
+      browser: fixture.browser,
+      input: fixture.input,
+      output: fixture.output,
+      runMemberJourney: (context: typeof fixture.context) =>
+        runBetaTesterJourney({
+          alias: 'tester-1',
+          deviceId: 'PC-DEV-000001',
+          browser: context,
+        }),
+    }).catch((reason: unknown) => reason)
+
+    expect(error).toMatchObject({ code: 'smoke_failed' })
+    expect(JSON.stringify(error)).not.toMatch(/one-time-oob-code|firebase-id-token/)
+    expect(fixture.context.renameDevice).not.toHaveBeenCalled()
+    expect(fixture.capturedCredentials()).toEqual({ email: null, emailLink: null })
+    expect(fixture.context.clearAuthPersistence).toHaveBeenCalledOnce()
+    expect(fixture.context.clearIndexedDB).toHaveBeenCalledOnce()
+    expect(fixture.context.clearCacheStorage).toHaveBeenCalledOnce()
+    expect(fixture.context.clearServiceWorkerMemberState).toHaveBeenCalledOnce()
+    expect(fixture.context.close).toHaveBeenCalledOnce()
+  })
+
+  it.each([undefined, { alias: 'tester-1', status: 'failed' }])(
+    'fails closed and tears down when the Member journey resolves %j',
+    async (memberResult) => {
+      const fixture = authenticationBrowser()
+      enterEmail(fixture.input)
+
+      await expect(
+        runBetaEmailLinkAuthenticationJourney({
+          alias: 'tester-1',
+          deviceId: 'PC-DEV-000001',
+          browser: fixture.browser,
+          input: fixture.input,
+          output: fixture.output,
+          runMemberJourney: vi.fn(async () => memberResult),
+        }),
+      ).rejects.toMatchObject({ code: 'smoke_failed' })
+      expect(fixture.capturedCredentials()).toEqual({ email: null, emailLink: null })
+      expect(fixture.context.clearAuthPersistence).toHaveBeenCalledOnce()
+      expect(fixture.context.close).toHaveBeenCalledOnce()
+    },
+  )
 })
 
 describe('single beta tester browser context lifecycle', () => {
@@ -1186,6 +1566,7 @@ describe('live beta Hosting release orchestration', () => {
           inspectCloudBuild,
           uploadHosting,
           verifyLiveRoutes: vi.fn(),
+          verifyGoogleSignInBoundary: googleSignInBoundaryAdapter(),
         }),
       ).rejects.toMatchObject({ code: 'cloud_prerequisite_failed' })
       expect(uploadHosting).not.toHaveBeenCalled()
@@ -1209,6 +1590,7 @@ describe('live beta Hosting release orchestration', () => {
         })),
         uploadHosting,
         verifyLiveRoutes: vi.fn(),
+        verifyGoogleSignInBoundary: googleSignInBoundaryAdapter(),
       }),
     ).rejects.toMatchObject({ code: 'cloud_prerequisite_failed' })
     expect(uploadHosting).not.toHaveBeenCalled()
@@ -1232,7 +1614,52 @@ describe('live beta Hosting release orchestration', () => {
         status: 'verified',
         routes: ['/', '/history', '/stats', '/sign-in'],
       })),
+      verifyGoogleSignInBoundary: googleSignInBoundaryAdapter(),
     })).rejects.toMatchObject({ code: 'cloud_prerequisite_failed' })
+    expect(uploadHosting).not.toHaveBeenCalled()
+  })
+
+  it('requires a code-owned Google sign-in evidence adapter before any release stage runs', async () => {
+    const runReleaseGate = vi.fn()
+    const uploadHosting = vi.fn()
+
+    await expect(
+      runBetaHostingRelease({
+        mode: 'apply',
+        runReleaseGate,
+        inspectCloudBuild: vi.fn(),
+        uploadHosting,
+        verifyLiveRoutes: vi.fn(),
+      }),
+    ).rejects.toMatchObject({ code: 'cloud_prerequisite_failed' })
+    expect(runReleaseGate).not.toHaveBeenCalled()
+    expect(uploadHosting).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['foreign build', { ...googleSignInEvidence(buildHash), buildHash: `sha256:${'e'.repeat(64)}` }],
+    ['missing hosted control', { ...googleSignInEvidence(buildHash), hostedControl: false }],
+    ['missing readiness', { ...googleSignInEvidence(buildHash), readiness: false }],
+  ])('rejects %s Google sign-in evidence before upload', async (_case, evidence) => {
+    const uploadHosting = vi.fn()
+    const verifyGoogleSignInBoundary = vi.fn(async () => evidence)
+
+    await expect(
+      runBetaHostingRelease({
+        mode: 'apply',
+        runReleaseGate: vi.fn(async () => ({ status: 'passed' })),
+        inspectCloudBuild: vi.fn(async () => ({
+          status: 'ready',
+          buildHash,
+          testToolRoute: verifiedTestToolRoute,
+          testToolApi: verifiedTestToolApi,
+        })),
+        uploadHosting,
+        verifyLiveRoutes: vi.fn(),
+        verifyGoogleSignInBoundary,
+      }),
+    ).rejects.toMatchObject({ code: 'cloud_prerequisite_failed' })
+    expect(verifyGoogleSignInBoundary).toHaveBeenCalledWith({ buildHash })
     expect(uploadHosting).not.toHaveBeenCalled()
   })
 
@@ -1244,6 +1671,7 @@ describe('live beta Hosting release orchestration', () => {
       status: 'verified',
       routes: ['/', '/history', '/stats', '/sign-in'],
     }))
+    const verifyGoogleSignInBoundary = googleSignInBoundaryAdapter()
 
     await expect(
       runBetaHostingRelease({
@@ -1257,12 +1685,14 @@ describe('live beta Hosting release orchestration', () => {
         })),
         uploadHosting,
         verifyLiveRoutes,
+        verifyGoogleSignInBoundary,
       }),
     ).resolves.toEqual({
       status: 'deployed',
       buildHash,
       testToolRoute: verifiedTestToolRoute,
       testToolApi: verifiedTestToolApi,
+      googleSignIn: googleSignInEvidence(buildHash),
       hostingVersion: 'sites/petcare-c7483/versions/beta-001',
       routes: ['/', '/history', '/stats', '/sign-in'],
     })
@@ -1274,6 +1704,7 @@ describe('live beta Hosting release orchestration', () => {
     expect(verifyLiveRoutes).toHaveBeenCalledWith({
       hostingVersion: 'sites/petcare-c7483/versions/beta-001',
     })
+    expect(verifyGoogleSignInBoundary).toHaveBeenCalledWith({ buildHash })
   })
 
   it('exposes dry-run and release root commands while keeping dry-run mutation-free', async () => {
@@ -1292,6 +1723,7 @@ describe('live beta Hosting release orchestration', () => {
         })),
         uploadHosting,
         verifyLiveRoutes: vi.fn(),
+        verifyGoogleSignInBoundary: googleSignInBoundaryAdapter(),
       }),
     ).resolves.toEqual({
       status: 'ready',
@@ -1299,11 +1731,85 @@ describe('live beta Hosting release orchestration', () => {
       buildHash,
       testToolRoute: verifiedTestToolRoute,
       testToolApi: verifiedTestToolApi,
+      googleSignIn: googleSignInEvidence(buildHash),
     })
     expect(uploadHosting).not.toHaveBeenCalled()
     expect(packageJson.scripts['web:development:beta:release']).toBe(
       'node deploy/development/release-web-beta.mjs --apply',
     )
+  })
+})
+
+describe('Hosted Google sign-in release boundary', () => {
+  const buildHash = `sha256:${'c'.repeat(64)}`
+  const readyInput = {
+    expectedBuildHash: buildHash,
+    hostedBuild: {
+      buildHash,
+      googleControl: { providerId: 'google.com', present: true },
+    },
+    readinessRecord: {
+      status: 'ready',
+      projectId: 'petcare-c7483',
+      auth: { provider: { id: 'google.com', enabled: true } },
+    },
+    providerAdapterGate: { status: 'passed' },
+  }
+
+  it('builds code-owned evidence from the exact inspected build, live provider config, and release gate', async () => {
+    const authorizedJson = vi.fn(async () => ({ enabled: true }))
+    const adapter = createHostedGoogleSignInEvidenceAdapter({
+      authorizedJson,
+      readHostedBuild: () => readyInput.hostedBuild,
+      readProviderAdapterGate: () => readyInput.providerAdapterGate,
+    })
+
+    await expect(adapter({ buildHash })).resolves.toEqual(googleSignInEvidence(buildHash))
+    expect(authorizedJson).toHaveBeenCalledWith(
+      'https://identitytoolkit.googleapis.com/admin/v2/projects/petcare-c7483/defaultSupportedIdpConfigs/google.com',
+    )
+  })
+
+  it.each([
+    ['disabled provider', async () => ({ enabled: false })],
+    ['unreadable provider', async () => { throw new Error('raw cloud failure') }],
+  ])('fails closed for a %s without exposing raw cloud details', async (_case, readProvider) => {
+    const adapter = createHostedGoogleSignInEvidenceAdapter({
+      authorizedJson: vi.fn(readProvider),
+      readHostedBuild: () => readyInput.hostedBuild,
+      readProviderAdapterGate: () => readyInput.providerAdapterGate,
+    })
+
+    const error = await adapter({ buildHash }).catch((reason: unknown) => reason)
+    expect(error).toMatchObject({ code: 'cloud_prerequisite_failed' })
+    expect(JSON.stringify(error)).not.toContain('raw cloud failure')
+  })
+
+  it('binds the hosted Google control and readiness to one build without a Google credential', () => {
+    expect(verifyHostedGoogleSignInReleaseBoundary(readyInput)).toEqual(
+      googleSignInEvidence(buildHash),
+    )
+    expect(JSON.stringify(readyInput)).not.toMatch(/googleCredential|accessToken|refreshToken/)
+  })
+
+  it.each([
+    ['missing hosted control', { hostedBuild: { ...readyInput.hostedBuild, googleControl: undefined } }],
+    [
+      'disabled readiness provider',
+      {
+        readinessRecord: {
+          ...readyInput.readinessRecord,
+          auth: { provider: { id: 'google.com', enabled: false } },
+        },
+      },
+    ],
+    ['missing readiness', { readinessRecord: undefined }],
+    ['failed provider adapter gate', { providerAdapterGate: { status: 'failed' } }],
+    ['different hosted build', { hostedBuild: { ...readyInput.hostedBuild, buildHash: `sha256:${'d'.repeat(64)}` } }],
+  ])('rejects %s before healthy evidence', (_name, override) => {
+    expect(() =>
+      verifyHostedGoogleSignInReleaseBoundary({ ...readyInput, ...override }),
+    ).toThrowError(expect.objectContaining({ code: 'cloud_prerequisite_failed' }))
   })
 })
 
@@ -1343,9 +1849,9 @@ describe('exact beta release evidence and rollback', () => {
 
   it('short-circuits first-release upload without confirmation and permits the exact phrase', async () => {
     const uploadHosting = vi.fn(async () => ({ version: deployedVersion }))
-    const authenticateTester = vi.fn(async (aliases: readonly string[]) => ({
-      alias: aliases[0],
-      status: 'authenticated',
+    const authenticateTester = vi.fn(async (assignments: readonly { alias: string }[]) => ({
+      alias: assignments[0].alias,
+      status: 'passed',
     }))
     const base = {
       args: ['--apply'],
@@ -1363,6 +1869,7 @@ describe('exact beta release evidence and rollback', () => {
         status: 'verified',
         routes: ['/', '/history', '/stats', '/sign-in'],
       })),
+      verifyGoogleSignInBoundary: googleSignInBoundaryAdapter(),
       readHostingVersions: vi.fn(async () => []),
       authenticateTester,
       write: vi.fn(),
@@ -1385,9 +1892,91 @@ describe('exact beta release evidence and rollback', () => {
     expect(result).toMatchObject({
       status: 'deployed',
       history: { bootstrap: true, rollbackAvailable: false, rollbackVersion: null },
-      testerAuthentication: { alias: 'tester-1', status: 'authenticated' },
+      testerAuthentication: { alias: 'tester-1', status: 'passed' },
     })
-    expect(authenticateTester).toHaveBeenCalledWith(['tester-1'])
+    expect(authenticateTester).toHaveBeenCalledWith([
+      { alias: 'tester-1', deviceId: 'PC-DEV-000001' },
+    ])
+    expect(uploadHosting).toHaveBeenCalledOnce()
+    expect(uploadHosting.mock.invocationCallOrder[0]).toBeLessThan(
+      authenticateTester.mock.invocationCallOrder[0],
+    )
+  })
+
+  it.each([undefined, { alias: 'tester-1', status: 'failed' }])(
+    'fails the release after the deployed-version tester journey resolves %j',
+    async (testerStage) => {
+      const uploadHosting = vi.fn(async () => ({ version: deployedVersion }))
+      const authenticateTester = vi.fn(async () => testerStage)
+
+      await expect(
+        runBetaReleaseCli({
+          environment: approvedEnvironment(),
+          args: ['--apply'],
+          readJson: vi.fn(() => inventory()),
+          inspectCloud: vi.fn(async () => approvedCloudInventory()),
+          readHostingVersions: vi.fn(async () => [priorVersion]),
+          authenticateTester,
+          runReleaseGate: vi.fn(async () => ({ status: 'passed' })),
+          inspectCloudBuild: vi.fn(async () => ({
+            status: 'ready',
+            buildHash,
+            testToolRoute: verifiedTestToolRoute,
+            testToolApi: verifiedTestToolApi,
+          })),
+          uploadHosting,
+          verifyLiveRoutes: vi.fn(async () => ({
+            status: 'verified',
+            routes: ['/', '/history', '/stats', '/sign-in'],
+          })),
+          verifyGoogleSignInBoundary: googleSignInBoundaryAdapter(),
+          write: vi.fn(),
+        }),
+      ).rejects.toMatchObject({ code: 'tester_authentication_failed' })
+      expect(uploadHosting).toHaveBeenCalledOnce()
+      expect(uploadHosting.mock.invocationCallOrder[0]).toBeLessThan(
+        authenticateTester.mock.invocationCallOrder[0],
+      )
+    },
+  )
+
+  it.each([
+    ['tester_device_mismatch', false],
+    ['unexpected_owned_device', false],
+    ['browser_context_teardown_failed', false],
+    ['smoke_failed', true],
+  ])('preserves sanitized %s semantics after verifying the deployed version', async (code, cleanupRequired) => {
+    const uploadHosting = vi.fn(async () => ({ version: deployedVersion }))
+    const failure = new BetaReleaseError(code, 'unsafe one-time-oob-code')
+    if (cleanupRequired) Object.assign(failure, { cleanupRequired: true })
+
+    const error = await runBetaReleaseCli({
+      environment: approvedEnvironment(),
+      args: ['--apply'],
+      readJson: vi.fn(() => inventory()),
+      inspectCloud: vi.fn(async () => approvedCloudInventory()),
+      readHostingVersions: vi.fn(async () => [priorVersion]),
+      authenticateTester: vi.fn(async () => {
+        throw failure
+      }),
+      runReleaseGate: vi.fn(async () => ({ status: 'passed' })),
+      inspectCloudBuild: vi.fn(async () => ({
+        status: 'ready',
+        buildHash,
+        testToolRoute: verifiedTestToolRoute,
+        testToolApi: verifiedTestToolApi,
+      })),
+      uploadHosting,
+      verifyLiveRoutes: vi.fn(async () => ({
+        status: 'verified',
+        routes: ['/', '/history', '/stats', '/sign-in'],
+      })),
+      verifyGoogleSignInBoundary: googleSignInBoundaryAdapter(),
+      write: vi.fn(),
+    }).catch((reason: unknown) => reason)
+
+    expect(error).toMatchObject({ code, ...(cleanupRequired ? { cleanupRequired: true } : {}) })
+    expect(JSON.stringify(error)).not.toContain('one-time-oob-code')
     expect(uploadHosting).toHaveBeenCalledOnce()
   })
 
@@ -1437,6 +2026,7 @@ describe('exact beta release evidence and rollback', () => {
       testerStages: [{ alias: 'tester-1', status: 'passed' }],
       checks,
       testToolApi,
+      googleSignIn: googleSignInEvidence(buildHash),
       now: () => new Date('2026-08-11T06:30:00.000Z'),
     })
 
@@ -1450,12 +2040,41 @@ describe('exact beta release evidence and rollback', () => {
       rollbackVersion: history.rollbackVersion,
       verifiedAt: '2026-08-11T06:30:00.000Z',
       testToolApi,
+      googleSignIn: googleSignInEvidence(buildHash),
       testerStages: [{ alias: 'tester-1', status: 'passed' }],
       checks,
     })
     expect(JSON.stringify(record)).not.toMatch(
       /(?:@|uid|password|credential|token|customName|eventPayload|PC-DEV-)/i,
     )
+  })
+
+  it.each([
+    ['missing Google boundary', undefined],
+    [
+      'missing hosted Google control',
+      { ...googleSignInEvidence(buildHash), hostedControl: false },
+    ],
+    [
+      'missing readiness proof',
+      { ...googleSignInEvidence(buildHash), readiness: false },
+    ],
+    [
+      'external Google E2E claim',
+      { ...googleSignInEvidence(buildHash), externalGoogleAccountE2E: 'passed' },
+    ],
+  ])('blocks a healthy record for %s', (_case, googleSignIn) => {
+    expect(() =>
+      createBetaReleaseRecord({
+        deployment: { status: 'deployed', buildHash, hostingVersion: deployedVersion },
+        history: { bootstrap: false, rollbackAvailable: true, rollbackVersion: priorVersion },
+        testerStages: [{ alias: 'tester-1', status: 'passed' }],
+        checks,
+        testToolApi,
+        googleSignIn,
+        now: () => new Date('2026-08-11T06:30:00.000Z'),
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'smoke_failed' }))
   })
 
   it.each([
@@ -1478,6 +2097,7 @@ describe('exact beta release evidence and rollback', () => {
         testerStages,
         checks: unsafeChecks,
         testToolApi,
+        googleSignIn: googleSignInEvidence(buildHash),
         now: () => new Date('2026-08-11T06:30:00.000Z'),
       }),
     ).toThrowError(expect.objectContaining({ code: 'smoke_failed' }))
@@ -1537,6 +2157,7 @@ describe('exact beta release evidence and rollback', () => {
       testerStages: [{ alias: 'tester-1', status: 'passed' }],
       checks,
       testToolApi: invalidApi,
+      googleSignIn: googleSignInEvidence(buildHash),
       now: () => new Date('2026-08-11T06:30:00.000Z'),
     })).toThrowError(expect.objectContaining({ code: 'smoke_failed' }))
     expect(() => createFailedBetaReleaseEvidence({
@@ -1657,6 +2278,15 @@ describe('single-tester beta release runbook', () => {
       'exact Hosting version and build hash',
       'failed evidence',
       'no automatic rollback',
+      'request the Email Link through the hosted sign-in form',
+      'copy the one-time link from the tester mailbox',
+      'paste the link into the hidden interactive TTY prompt',
+      'does not use a mailbox API',
+      'Apple',
+      'One Tap',
+      'provider linking',
+      'account merge',
+      'external Google account E2E is not performed',
     ]) {
       expect(runbook).toContain(required)
     }
@@ -1666,5 +2296,27 @@ describe('single-tester beta release runbook', () => {
     expect(runbook.indexOf('web:development:beta:release')).toBeLessThan(
       runbook.indexOf('web:development:beta:rollback'),
     )
+    expect(runbook).not.toMatch(/email and password enter|password prompt/i)
+    const commandBlocks = [...runbook.matchAll(/```sh\n([\s\S]*?)```/g)]
+      .map(([, block]) => block)
+      .join('\n')
+    const secretArgumentPattern =
+      /--(?:email(?:-link)?|password|passphrase|credentials?(?:-(?:file|json))?|(?:id-|refresh-)?token|oob(?:-code)?|link)(?:=|\s|$)|oobCode|mode=signIn/i
+    expect(commandBlocks).not.toMatch(secretArgumentPattern)
+    for (const forbiddenArgument of [
+      '--password=secret',
+      '--credentials-json=credentials.json',
+      '--credentials-file=.tester.env',
+      '--id-token=secret',
+      '--refresh-token=secret',
+      '--oob-code=secret',
+      '--link=https://example.test/action',
+    ]) {
+      expect(forbiddenArgument).toMatch(secretArgumentPattern)
+    }
+    expect(runbook).not.toMatch(
+      /external Google account E2E (?:is )?(?!not\b)(?:passed|performed|verified|completed)/i,
+    )
+    expect(runbook).not.toMatch(/mailbox API is used|automated mailbox access|automates mailbox/i)
   })
 })

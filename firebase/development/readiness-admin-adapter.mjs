@@ -24,6 +24,40 @@ function adapterHttpError(stage, status) {
   return error
 }
 
+function isRecord(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export async function normalizeDefaultProviderResponse(response, providerId) {
+  if (response.status === 404) return false
+  if (!response.ok) {
+    const providerStage = String(providerId).replace(/[^a-z0-9]+/gi, '_')
+    throw adapterHttpError(`auth_provider_${providerStage}`, response.status)
+  }
+  const config = await response.json()
+  return isRecord(config) && config.enabled === true
+}
+
+export function normalizeIdentityToolkitAuthConfiguration(config, googleEnabled) {
+  const projectConfig = isRecord(config) ? config : {}
+  const signIn = isRecord(projectConfig.signIn) ? projectConfig.signIn : {}
+  const email = isRecord(signIn.email) ? signIn.email : {}
+  const emailEnabled = email.enabled
+  const passwordRequired = email.passwordRequired
+  const allowDuplicateEmails = signIn.allowDuplicateEmails
+
+  return {
+    enabledProviders: googleEnabled === true ? ['google.com'] : [],
+    emailEnabled: typeof emailEnabled === 'boolean' ? emailEnabled : null,
+    passwordRequired: typeof passwordRequired === 'boolean' ? passwordRequired : null,
+    allowDuplicateEmails:
+      typeof allowDuplicateEmails === 'boolean' ? allowDuplicateEmails : null,
+    authorizedDomains: Array.isArray(projectConfig.authorizedDomains)
+      ? projectConfig.authorizedDomains.filter((domain) => typeof domain === 'string')
+      : [],
+  }
+}
+
 export async function createFirebaseAdminReadinessAdapter(projectId) {
   const credential = applicationDefault()
   const appName = `peecare-development-readiness-${projectId}`
@@ -58,12 +92,7 @@ export async function createFirebaseAdminReadinessAdapter(projectId) {
         },
       },
     )
-    if (response.status === 404) return false
-    if (!response.ok) {
-      throw adapterHttpError(`auth_provider_${providerId.replace('.', '_')}`, response.status)
-    }
-    const config = await response.json()
-    return config.enabled === true
+    return normalizeDefaultProviderResponse(response, providerId)
   }
 
   async function signInWithPassword(email, password, apiKey) {
@@ -87,25 +116,14 @@ export async function createFirebaseAdminReadinessAdapter(projectId) {
 
   return {
     async readAuthConfiguration() {
-      const [config, googleEnabled, appleEnabled] = await Promise.all([
+      const [config, googleEnabled] = await Promise.all([
         authorizedJson(
           `https://identitytoolkit.googleapis.com/admin/v2/projects/${projectId}/config`,
           'auth_config',
         ),
         defaultProviderEnabled('google.com'),
-        defaultProviderEnabled('apple.com'),
       ])
-      const enabledProviders = []
-      if (config.signIn?.email?.enabled === true) enabledProviders.push('password')
-      if (config.signIn?.phoneNumber?.enabled === true) enabledProviders.push('phone')
-      if (googleEnabled) enabledProviders.push('google.com')
-      if (appleEnabled) enabledProviders.push('apple.com')
-      return {
-        enabledProviders,
-        authorizedDomains: Array.isArray(config.authorizedDomains)
-          ? config.authorizedDomains.filter((domain) => typeof domain === 'string')
-          : [],
-      }
+      return normalizeIdentityToolkitAuthConfiguration(config, googleEnabled)
     },
 
     async readRequiredIndexes() {

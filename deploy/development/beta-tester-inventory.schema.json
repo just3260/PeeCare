@@ -16,11 +16,28 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
+        "propertyNames": {
+          "not": {
+            "pattern": "email.*link|oob.*code|out.*of.*band|action.*code|password|credential|secret|token"
+          }
+        },
         "required": ["alias", "deviceId"],
         "properties": {
           "alias": {
             "type": "string",
-            "pattern": "^[a-z][a-z0-9-]{1,31}$"
+            "pattern": "^[a-z][a-z0-9-]{1,31}$",
+            "allOf": [
+              {
+                "not": {
+                  "pattern": "email.*link|oob.*code|out.*of.*band|action.*code|password|passphrase|credential|secret|token|private.*key|service.*account|api.*key|firebase.*uid"
+                }
+              },
+              {
+                "not": {
+                  "pattern": "^[A-Za-z0-9]{24,128}$"
+                }
+              }
+            ]
           },
           "deviceId": {
             "type": "string",

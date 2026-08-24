@@ -1,6 +1,9 @@
 export interface DevelopmentReadinessAdapter {
   readAuthConfiguration(): Promise<{
     readonly enabledProviders: readonly string[]
+    readonly emailEnabled: boolean | null
+    readonly passwordRequired: boolean | null
+    readonly allowDuplicateEmails: boolean | null
     readonly authorizedDomains: readonly string[]
   }>
   readRequiredIndexes(): Promise<
@@ -29,6 +32,7 @@ export class DevelopmentReadinessError extends Error {
     | 'readiness_config_missing'
     | 'readiness_config_invalid'
     | 'auth_provider_not_ready'
+    | 'email_link_not_ready'
     | 'authorized_domain_not_ready'
     | 'firestore_index_not_ready'
     | 'firestore_rules_probe_failed'

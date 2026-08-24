@@ -1,8 +1,6 @@
 import { parseDevelopmentInventory } from './environment.mjs'
 import { developmentSeedIdentity } from './seed.mjs'
 
-const ALLOWED_PROVIDER_IDS = new Set(['password', 'phone', 'google.com', 'apple.com'])
-
 export class DevelopmentReadinessError extends Error {
   constructor(code, message) {
     super(message)
@@ -35,33 +33,49 @@ function requireList(environment, fieldName) {
   return values
 }
 
-function parseReadinessConfiguration(environment) {
-  const providers = requireList(environment, 'PEECARE_DEVELOPMENT_AUTH_PROVIDERS')
-  if (providers.some((provider) => !ALLOWED_PROVIDER_IDS.has(provider))) {
+function parseReadinessConfiguration(environment, projectId) {
+  const authorizedDomains = requireList(
+    environment,
+    'PEECARE_DEVELOPMENT_AUTHORIZED_DOMAINS',
+  )
+  const requiredDomains = [
+    `${projectId}.firebaseapp.com`,
+    `${projectId}.web.app`,
+  ]
+  if (
+    authorizedDomains.length !== requiredDomains.length ||
+    requiredDomains.some((domain) => !authorizedDomains.includes(domain))
+  ) {
     throw new DevelopmentReadinessError(
       'readiness_config_invalid',
-      'Development Auth provider list contains an unsupported provider ID.',
+      'Development authorized-domain inventory must match the approved Firebase action and Hosting domains.',
     )
   }
   return Object.freeze({
-    providers,
-    authorizedDomains: requireList(
-      environment,
-      'PEECARE_DEVELOPMENT_AUTHORIZED_DOMAINS',
-    ),
+    authorizedDomains: Object.freeze([...authorizedDomains]),
     webApiKey: requireValue(environment, 'PEECARE_DEVELOPMENT_WEB_API_KEY'),
   })
 }
 
 export async function runDevelopmentReadiness({ environment, adapter, write }) {
   const inventory = parseDevelopmentInventory(environment)
-  const expected = parseReadinessConfiguration(environment)
+  const expected = parseReadinessConfiguration(environment, inventory.projectId)
   const auth = await adapter.readAuthConfiguration()
 
-  if (expected.providers.some((provider) => !auth.enabledProviders.includes(provider))) {
+  if (!auth.enabledProviders.includes(inventory.authProvider)) {
     throw new DevelopmentReadinessError(
       'auth_provider_not_ready',
       'One or more approved Firebase Auth providers are not enabled.',
+    )
+  }
+  if (
+    auth.emailEnabled !== true ||
+    auth.passwordRequired !== false ||
+    auth.allowDuplicateEmails !== false
+  ) {
+    throw new DevelopmentReadinessError(
+      'email_link_not_ready',
+      'Firebase Email Link configuration does not match the approved passwordless identity contract.',
     )
   }
   if (
@@ -102,8 +116,16 @@ export async function runDevelopmentReadiness({ environment, adapter, write }) {
     status: 'ready',
     projectId: inventory.projectId,
     auth: Object.freeze({
-      providers: Object.freeze([...expected.providers]),
-      authorizedDomains: expected.authorizedDomains.length,
+      provider: Object.freeze({ id: inventory.authProvider, enabled: true }),
+      emailLink: Object.freeze({
+        enabled: true,
+        passwordRequired: false,
+        duplicateEmailsAllowed: false,
+      }),
+      authorizedDomains: Object.freeze({
+        required: expected.authorizedDomains.length,
+        ready: true,
+      }),
     }),
     firestore: Object.freeze({
       indexesReady: indexes.length,

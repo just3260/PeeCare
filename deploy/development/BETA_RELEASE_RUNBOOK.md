@@ -6,7 +6,7 @@ This runbook releases only the approved `petcare-c7483` Firebase Hosting site. T
 
 The operator creates the Firebase Auth tester account and the Firestore ownership mapping before this workflow. Do not create, reset, export, or store that account from repository tooling.
 
-Set the approved public development Web configuration in the current shell. Keep the tester email, Firebase UID, password, ID token, refresh token, and every credential out of environment files, command arguments, JSON, terminal history, logs, screenshots, and release evidence.
+Set the approved public development Web configuration in the current shell. Keep the tester email, one-time Email Link, OOB code, Firebase UID, password, ID token, refresh token, and every credential out of environment files, command arguments, JSON, terminal history, logs, screenshots, browser artifacts, and release evidence. The verifier never acquires a tester password.
 
 Create the ignored local inventory at `deploy/development/beta-tester-inventory.local.json` with this non-PII shape:
 
@@ -51,6 +51,18 @@ the allowlisted `testToolApi` identity, build hash, and exact
 credential, token, device payload, custom name, or event payload. A dry-run
 must report zero Hosting mutation.
 
+The plan must also bind the exact build hash to the hosted Google control, a
+readiness record with enabled `google.com`, and the passed provider adapter
+gate. This boundary requires no Google account credential. Automated external
+Google account E2E is not performed and must not be claimed by healthy evidence.
+
+The Google proof adapter is code-owned: it binds the inspected bundle's exact
+`google-sign-in`/`google.com` marker to the build hash, reads the live
+`google.com` Identity Toolkit provider configuration, and accepts the provider
+adapter gate only from the same successful `check:release` run. Missing or
+mismatched input fails closed before upload. Do not substitute
+environment-provided callbacks, CLI paths, or manually authored evidence.
+
 ## 2. Apply and verify
 
 For an existing live release, preserve the exact current Hosting version as the rollback target. For the first live release only, acknowledge that no rollback exists in the current shell:
@@ -65,9 +77,18 @@ Then run:
 npm run web:development:beta:release
 ```
 
-Tester email and password enter only through the hidden interactive TTY
-prompts. The release must pass the Emulator non-owner denial gate before
-upload, then bind verification to the exact Hosting version and build hash. A
+The release command uses the repository-owned Playwright harness with the
+installed system Chrome in a fresh, headless context. The adapter is statically
+imported: there is no environment or CLI browser-adapter override. It disables
+downloads and does not enable screenshots, video, tracing, or HAR artifacts.
+
+The release verifier obtains exactly one tester Email through hidden interactive
+input. In the fresh browser context it must request the Email Link through the hosted sign-in form.
+The operator then must copy the one-time link from the tester mailbox and paste the link into the hidden interactive TTY prompt. The link is accepted only for HTTPS on the approved action or Hosting domain with `mode=signIn` and a non-empty OOB code; it is never echoed or persisted. This workflow does not use a mailbox API or automate mailbox access.
+
+The release must pass the Emulator non-owner denial gate before upload, deploy
+the inspected build, then run the Email Link journey against that exact live
+Hosting version and build hash. A
 fresh signed-out `/test-tool` direct load must preserve the signed-out return path
 `/sign-in?returnTo=/test-tool`; the authenticated direct open and reload
 must remain on `/test-tool`, expose exactly the assigned eligible device,
@@ -82,6 +103,10 @@ path, authenticated reload, eligible-device boundary, event projection, and
 test-tool cache exclusion. A bootstrap record must contain
 `rollbackAvailable: false` and `rollbackVersion: null`. A later release must
 contain the exact distinct prior healthy Hosting version.
+
+This first-release workflow does not use Apple sign-in, Google One Tap,
+provider linking, or account merge. The Google release boundary proves the
+hosted control, provider readiness, and adapter gate only; external Google account E2E is not performed.
 
 ## 3. Failure containment
 
@@ -107,4 +132,6 @@ The rollback dry-run must identify one distinct prior version and emit the revie
 - The live apply record is healthy only after every required check passes.
 - The ignored inventory contains exactly `tester-1` → `PC-DEV-000001`.
 - No email, UID, password, credential, token, custom name, device payload, or event payload is persisted.
+- No mailbox API, Apple, One Tap, provider linking, or account merge is used.
+- Healthy evidence says external Google account E2E is not performed.
 - multi-tester coverage is deferred and must not be claimed by this beta release.

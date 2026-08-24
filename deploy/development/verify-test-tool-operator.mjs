@@ -19,11 +19,16 @@ const APPROVED_DEVICE_ID = 'PC-DEV-000001'
 const APPROVED_WEB_APP_ID = '1:348528459946:web:3cd4fe2b9140a3e81f10d3'
 const APPROVED_SIGNER =
   'peecare-test-tool-runtime@petcare-c7483.iam.gserviceaccount.com'
+const APPROVED_DEVELOPMENT_MARKER = Object.freeze({
+  enabled: true,
+  marker: 'petcare-c7483-beta-v1',
+})
 
 const MUTATING_AUTH_PORT = /^(?:createUser|updateUser|deleteUser|resetPassword|generatePasswordResetLink|revokeRefreshTokens)$/
 const REQUIRED_PORTS = Object.freeze([
   'inspectExactTarget',
   'readAssignedDevice',
+  'prepareBetaDevice',
   'readExistingUser',
   'findExistingForeignUser',
   'createCustomToken',
@@ -66,6 +71,31 @@ function existingUid(value) {
     value.disabled !== true
     ? value.uid
     : null
+}
+
+export function decideBetaMarkerPreparation(device, expectedOwnerUid) {
+  const marker = device?.developmentTestTool
+  if (
+    device === null ||
+    typeof device !== 'object' ||
+    typeof expectedOwnerUid !== 'string' ||
+    expectedOwnerUid.length === 0 ||
+    device.ownerUid !== expectedOwnerUid
+  ) {
+    fail('marker_precondition_failed', 'The exact beta marker precondition failed.')
+  }
+  if (marker === undefined) return 'already-unmarked'
+  if (
+    marker !== null &&
+    typeof marker === 'object' &&
+    !Array.isArray(marker) &&
+    Object.keys(marker).sort().join(',') === 'enabled,marker' &&
+    marker.enabled === APPROVED_DEVELOPMENT_MARKER.enabled &&
+    marker.marker === APPROVED_DEVELOPMENT_MARKER.marker
+  ) {
+    return 'clear-exact-marker'
+  }
+  fail('marker_precondition_failed', 'The exact beta marker precondition failed.')
 }
 
 export function selectExistingForeignUser(ownerUid, users) {
@@ -146,6 +176,7 @@ export function createOperatorCloudDependencies({
   environment,
   auth,
   readDocument,
+  prepareExactMarker,
   writeExactMarker,
   authorizedJson,
   request,
@@ -159,6 +190,7 @@ export function createOperatorCloudDependencies({
     typeof auth.listUsers !== 'function' ||
     typeof auth.createCustomToken !== 'function' ||
     typeof readDocument !== 'function' ||
+    typeof prepareExactMarker !== 'function' ||
     typeof writeExactMarker !== 'function' ||
     typeof authorizedJson !== 'function' ||
     typeof request !== 'function' ||
@@ -204,6 +236,20 @@ export function createOperatorCloudDependencies({
         ? device.ownerUid
         : null
     return device
+  }
+
+  async function prepareBetaDevice(expectedOwnerUid) {
+    if (
+      typeof expectedOwnerUid !== 'string' ||
+      expectedOwnerUid.length === 0 ||
+      assignedOwnerUid !== expectedOwnerUid
+    ) {
+      fail('marker_precondition_failed', 'The exact beta marker precondition failed.')
+    }
+    return prepareExactMarker({
+      path: `devices/${APPROVED_DEVICE_ID}`,
+      expectedOwnerUid,
+    })
   }
 
   async function readExistingUser(uid) {
@@ -363,6 +409,7 @@ export function createOperatorCloudDependencies({
   return Object.freeze({
     inspectExactTarget: (target) => inspectRevision(target),
     readAssignedDevice,
+    prepareBetaDevice,
     readExistingUser,
     findExistingForeignUser,
     createCustomToken: (uid) => auth.createCustomToken(uid),
@@ -509,22 +556,39 @@ export async function runOneTimeOperatorVerification({
       fail('verification_clock_invalid', 'Verification requires a valid current time.')
     }
 
-    return await tokenStore.use((tokens) =>
-      runTestToolVerification({
+    return await tokenStore.use((tokens) => {
+      const smokeAdapter = dependencies.createSmokeAdapter({
+        inspectedRevision,
+        ownerToken: tokens.ownerToken,
+        foreignToken: tokens.foreignToken,
+        inspectedSecretValue,
+        verificationStartedAt: verificationStartedAt.toISOString(),
+      })
+      const checkUnmarkedDeviceDenial = smokeAdapter?.checkUnmarkedDeviceDenial
+      const mutationLastAdapter =
+        typeof checkUnmarkedDeviceDenial !== 'function'
+          ? smokeAdapter
+          : Object.freeze({
+              ...smokeAdapter,
+              async checkUnmarkedDeviceDenial(...checkArguments) {
+                if (await dependencies.prepareBetaDevice(ownerUid) !== true) {
+                  fail(
+                    'marker_precondition_failed',
+                    'The exact beta marker precondition failed.',
+                  )
+                }
+                return checkUnmarkedDeviceDenial.apply(smokeAdapter, checkArguments)
+              },
+            })
+      return runTestToolVerification({
         environment,
         args,
         manifest,
-        adapter: dependencies.createSmokeAdapter({
-          inspectedRevision,
-          ownerToken: tokens.ownerToken,
-          foreignToken: tokens.foreignToken,
-          inspectedSecretValue,
-          verificationStartedAt: verificationStartedAt.toISOString(),
-        }),
+        adapter: mutationLastAdapter,
         now,
         write,
-      }),
-    )
+      })
+    })
   } catch (error) {
     if (
       error instanceof OperatorVerificationError ||
@@ -618,10 +682,25 @@ export async function createOneTimeOperatorCliDependencies(environment = process
     })
   }
 
+  async function prepareExactMarker({ path, expectedOwnerUid }) {
+    return firestore.runTransaction(async (transaction) => {
+      const reference = firestore.doc(path)
+      const snapshot = await transaction.get(reference)
+      const data = snapshot.exists ? snapshot.data() : null
+      if (decideBetaMarkerPreparation(data, expectedOwnerUid) === 'clear-exact-marker') {
+        transaction.update(reference, {
+          developmentTestTool: firestoreModule.FieldValue.delete(),
+        })
+      }
+      return true
+    })
+  }
+
   return createOperatorCloudDependencies({
     environment,
     auth,
     readDocument,
+    prepareExactMarker,
     writeExactMarker,
     authorizedJson,
     request: fetch,

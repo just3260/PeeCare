@@ -15,8 +15,8 @@ export PEECARE_DEVELOPMENT_PROJECT_ID=petcare-c7483
 export PEECARE_DEVELOPMENT_PROJECT_ALLOWLIST=petcare-c7483
 export PEECARE_DEVELOPMENT_FIRESTORE_REGION=asia-east1
 export PEECARE_DEVELOPMENT_BILLING_OWNER=andrewang9981@gmail.com
-export PEECARE_DEVELOPMENT_AUTH_PROVIDER=password
-export PEECARE_DEVELOPMENT_AUTH_PROVIDERS=password,google.com,apple.com
+export PEECARE_DEVELOPMENT_AUTH_PROVIDER=google.com
+export PEECARE_DEVELOPMENT_AUTH_PROVIDERS=google.com
 export PEECARE_DEVELOPMENT_AUTHORIZED_DOMAINS=petcare-c7483.firebaseapp.com,petcare-c7483.web.app
 export PEECARE_DEVELOPMENT_WEB_API_KEY='<Firebase Web API key>'
 export PEECARE_DEVELOPMENT_OPERATOR_CONFIRMATION=APPROVE_DEVELOPMENT_FIREBASE_MUTATION
@@ -27,6 +27,21 @@ The Web build additionally requires `VITE_FIREBASE_ENVIRONMENT=development`,
 `VITE_FIREBASE_PROJECT_ID`, `VITE_FIREBASE_AUTH_DOMAIN`, `VITE_FIREBASE_API_KEY`,
 and `VITE_FIREBASE_APP_ID`. Firebase Web config is public configuration, not an
 authorization mechanism; Firestore Rules remain the authorization boundary.
+
+## Required Auth console settings
+
+Before running deployed readiness, configure Authentication for the development
+project with the Google provider enabled and Email sign-in enabled. The Email
+configuration must report `passwordRequired: false` and
+`allowDuplicateEmails: false`. Authorized domains must include both the Hosting
+domain (`petcare-c7483.web.app`) and action domain
+(`petcare-c7483.firebaseapp.com`). The readiness command fails closed when any
+of these exact settings is missing or unreadable.
+
+The backend can still accept existing password credentials for internal seeded
+readiness probes and backwards compatibility. The Web application does not
+provide a password entry point; production user sign-in is limited to Google
+popup and passwordless Email Link.
 
 ## Commands
 

@@ -17,6 +17,7 @@ export function runDevelopmentPreflight({ environment, args, write, mutation: _m
     projectId: inventory.projectId,
     firestoreRegion: inventory.firestoreRegion,
     authProvider: inventory.authProvider,
+    authProviders: inventory.authProviders,
     services: ['auth', 'firestore'],
     operations: ['deploy-firestore-rules', 'deploy-firestore-indexes'],
   })

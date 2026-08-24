@@ -103,7 +103,7 @@ function cleanArtifacts() {
     {
       path: 'assets/index-a1b2c3d4.js',
       contents:
-        'const environment="development",projectId="petcare-c7483",testTool="https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app",route="/test-tool"',
+        'const environment="development",projectId="petcare-c7483",testTool="https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app",route="/test-tool",googleControl="google-sign-in",provider="google.com"',
     },
     { path: 'index.html', contents: '<div id="app"></div>' },
   ]
@@ -136,6 +136,7 @@ describe('runWebDeploy development target preflight', () => {
           'https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app',
       },
       testToolRoute: { path: '/test-tool', status: 'verified' },
+      googleControl: { providerId: 'google.com', present: true },
     })
     expect(Object.keys(result.testToolApi)).toEqual([
       'projectId',
@@ -510,6 +511,26 @@ describe('runWebDeploy development target preflight', () => {
       }),
     ).toThrowError(expect.objectContaining({ code: 'test_tool_route_absent' }))
     expect(execute).toHaveBeenCalledTimes(1)
+    expect(execute).not.toHaveBeenCalledWith('firebase', expect.anything(), expect.anything())
+  })
+
+  it('rejects a production bundle that omits the exact Google sign-in control marker', () => {
+    const execute = vi.fn(() => ({ status: 0 }))
+
+    expect(() =>
+      runWebDeploy({
+        ...webDeployOptions(),
+        execute,
+        readBuildArtifacts: () => [
+          {
+            path: 'assets/index-a1b2c3d4.js',
+            contents:
+              'const environment="development",projectId="petcare-c7483",testTool="https://peecare-test-tool-development-5hvpf2z3tq-de.a.run.app",route="/test-tool"',
+          },
+          { path: 'index.html', contents: '<div id="app"></div>' },
+        ],
+      } as never),
+    ).toThrowError(expect.objectContaining({ code: 'google_sign_in_control_absent' }))
     expect(execute).not.toHaveBeenCalledWith('firebase', expect.anything(), expect.anything())
   })
 

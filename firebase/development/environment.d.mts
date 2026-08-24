@@ -13,11 +13,13 @@ export interface DevelopmentInventory {
   readonly projectId: string
   readonly firestoreRegion: string
   readonly billingOwner: string
-  readonly authProvider: 'password' | 'phone' | 'google.com' | 'apple.com'
+  readonly authProvider: typeof APPROVED_AUTH_PROVIDER
+  readonly authProviders: readonly [typeof APPROVED_AUTH_PROVIDER]
   readonly operatorConfirmation: typeof REQUIRED_OPERATOR_CONFIRMATION
 }
 
 export const REQUIRED_OPERATOR_CONFIRMATION: 'APPROVE_DEVELOPMENT_FIREBASE_MUTATION'
+export const APPROVED_AUTH_PROVIDER: 'google.com'
 
 export function parseDevelopmentInventory(
   environment: NodeJS.ProcessEnv,

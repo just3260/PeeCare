@@ -6,6 +6,7 @@ export interface DevelopmentPreflightPlan {
   readonly projectId: string
   readonly firestoreRegion: string
   readonly authProvider: DevelopmentInventory['authProvider']
+  readonly authProviders: DevelopmentInventory['authProviders']
   readonly services: readonly ['auth', 'firestore']
   readonly operations: readonly ['deploy-firestore-rules', 'deploy-firestore-indexes']
 }

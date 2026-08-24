@@ -50,6 +50,10 @@ const VERIFIED_TEST_TOOL_ROUTE = Object.freeze({
   path: '/test-tool',
   status: 'verified',
 })
+const VERIFIED_GOOGLE_SIGN_IN_CONTROL = Object.freeze({
+  providerId: 'google.com',
+  present: true,
+})
 const IMMUTABLE_IMAGE_PATTERN =
   /^asia-east1-docker\.pkg\.dev\/petcare-c7483\/peecare\/test-tool-api@sha256:[0-9a-f]{64}$/
 const REQUIRED_TEST_TOOL_SMOKE_CHECKS = Object.freeze([
@@ -383,6 +387,15 @@ function inspectArtifacts(normalized) {
       'Hosting bundle does not register the protected /test-tool route.',
     )
   }
+  if (
+    !bundleText.includes('google-sign-in') ||
+    !bundleText.includes(VERIFIED_GOOGLE_SIGN_IN_CONTROL.providerId)
+  ) {
+    throw new WebDeploymentError(
+      'google_sign_in_control_absent',
+      'Hosting bundle does not contain the exact Google sign-in control marker.',
+    )
+  }
 
   const hash = createHash('sha256')
   for (const artifact of normalized) {
@@ -395,6 +408,7 @@ function inspectArtifacts(normalized) {
     buildHash: `sha256:${hash.digest('hex')}`,
     files: Object.freeze(normalized.map((artifact) => artifact.path)),
     testToolRoute: VERIFIED_TEST_TOOL_ROUTE,
+    googleControl: VERIFIED_GOOGLE_SIGN_IN_CONTROL,
   })
 }
 
@@ -460,6 +474,7 @@ function summary(status, dryRun, inspection, testToolApi, cleanupWarning) {
     buildHash: inspection.buildHash,
     files: inspection.files,
     testToolRoute: inspection.testToolRoute,
+    googleControl: inspection.googleControl,
     firebaseServices: Object.freeze({
       environment: 'development',
       projectId: APPROVED_TARGET.projectId,

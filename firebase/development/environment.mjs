@@ -2,7 +2,7 @@ const REQUIRED_OPERATOR_CONFIRMATION = 'APPROVE_DEVELOPMENT_FIREBASE_MUTATION'
 const PROJECT_ID_PATTERN = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/
 const FIRESTORE_REGION_PATTERN = /^[a-z][a-z0-9-]{2,31}$/
 const PRODUCTION_NAME_PATTERN = /(^|-)(prod|production)(-|$)/i
-const ALLOWED_AUTH_PROVIDERS = new Set(['password', 'phone', 'google.com', 'apple.com'])
+const APPROVED_AUTH_PROVIDER = 'google.com'
 
 export class DevelopmentInventoryError extends Error {
   constructor(code, message) {
@@ -61,6 +61,12 @@ export function parseDevelopmentInventory(environment) {
   )
   const billingOwner = requireValue(environment, 'PEECARE_DEVELOPMENT_BILLING_OWNER')
   const authProvider = requireValue(environment, 'PEECARE_DEVELOPMENT_AUTH_PROVIDER')
+  const authProviders = requireValue(
+    environment,
+    'PEECARE_DEVELOPMENT_AUTH_PROVIDERS',
+  )
+    .split(',')
+    .map((value) => value.trim())
   const operatorConfirmation = requireValue(
     environment,
     'PEECARE_DEVELOPMENT_OPERATOR_CONFIRMATION',
@@ -94,10 +100,19 @@ export function parseDevelopmentInventory(environment) {
       'Firestore region is not a valid location identifier.',
     )
   }
-  if (!ALLOWED_AUTH_PROVIDERS.has(authProvider)) {
+  if (authProvider !== APPROVED_AUTH_PROVIDER) {
     throw new DevelopmentInventoryError(
       'invalid_inventory',
-      'Auth provider must be one of password, phone, google.com, or apple.com.',
+      `Primary Auth provider must be ${APPROVED_AUTH_PROVIDER}.`,
+    )
+  }
+  if (
+    authProviders.length !== 1 ||
+    authProviders[0] !== APPROVED_AUTH_PROVIDER
+  ) {
+    throw new DevelopmentInventoryError(
+      'invalid_inventory',
+      `Auth provider inventory must contain only ${APPROVED_AUTH_PROVIDER}.`,
     )
   }
   if (operatorConfirmation !== REQUIRED_OPERATOR_CONFIRMATION) {
@@ -112,6 +127,7 @@ export function parseDevelopmentInventory(environment) {
     firestoreRegion,
     billingOwner,
     authProvider,
+    authProviders: Object.freeze([...authProviders]),
     operatorConfirmation,
   })
 }
@@ -124,4 +140,4 @@ export function guardDevelopmentMutation(environment, mutation) {
   return mutation(inventory)
 }
 
-export { REQUIRED_OPERATOR_CONFIRMATION }
+export { APPROVED_AUTH_PROVIDER, REQUIRED_OPERATOR_CONFIRMATION }

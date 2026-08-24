@@ -11,6 +11,7 @@ import StatsView from '@/views/StatsView.vue'
 import NotificationsView from '@/views/NotificationsView.vue'
 import SettingsView from '@/views/SettingsView.vue'
 import SignInView from '@/views/SignInView.vue'
+import EmailLinkSignInView from '@/views/EmailLinkSignInView.vue'
 import TestToolView from '@/views/TestToolView.vue'
 import type { AuthState } from '@/features/auth/session'
 
@@ -67,6 +68,11 @@ const PUBLIC_AND_FALLBACK_ROUTES: RouteRecordRaw[] = [
     path: '/sign-in',
     name: 'sign-in',
     component: SignInView,
+  },
+  {
+    path: '/auth/email-link',
+    name: 'email-link-sign-in',
+    component: EmailLinkSignInView,
   },
   {
     // Any unsupported path falls back to the home shell instead of a blank page.

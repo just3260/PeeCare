@@ -103,6 +103,18 @@ describe('protected member navigation', () => {
     expect(router.currentRoute.value.path).toBe('/sign-in')
   })
 
+  it('lets a signed-out visitor open the public Email Link callback directly', async () => {
+    const { store } = createGuardStore({ status: 'signed-out' })
+    const router = createGuardedRouter(store)
+
+    router.push('/auth/email-link?mode=signIn&oobCode=opaque')
+    await router.isReady()
+
+    expect(router.currentRoute.value.name).toBe('email-link-sign-in')
+    expect(router.currentRoute.value.path).toBe('/auth/email-link')
+    expect(router.currentRoute.value.matched.some((route) => route.meta.requiresAuth)).toBe(false)
+  })
+
   it('lets a signed-in member reach the protected home route', async () => {
     const { store } = createGuardStore({
       status: 'signed-in',
