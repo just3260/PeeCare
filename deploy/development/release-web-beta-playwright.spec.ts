@@ -12,6 +12,7 @@ function fixture({
   deviceIds = ['PC-DEV-000001'],
   persistDeviceName = true,
   rejectNavigationDuringUidRead = false,
+  uidReadResults = ['owner-private-uid'],
 } = {}) {
   const locators = new Map<string, Record<string, ReturnType<typeof vi.fn>>>()
   let persistedDeviceName = ''
@@ -25,7 +26,7 @@ function fixture({
         evaluateAll: vi.fn(async () => deviceIds),
         count: vi.fn(async () => 1),
         getAttribute: vi.fn(async () => null),
-        inputValue: vi.fn(async () => persistedDeviceName),
+        inputValue: vi.fn(async () => persistedDeviceName || 'PC-DEV-000001'),
         locator: vi.fn((nestedSelector: string) => locator(`${selector} ${nestedSelector}`)),
       }
       if (selector === '[data-test="device-name-input"]') {
@@ -49,6 +50,7 @@ function fixture({
   }
   let currentUrl = 'https://petcare-c7483.web.app/'
   let uidReadPending = false
+  const pendingUidReadResults = [...uidReadResults]
   const page = {
     goto: vi.fn(async (url: string) => {
       if (url.endsWith('/settings') && uidReadPending) {
@@ -59,12 +61,13 @@ function fixture({
     reload: vi.fn(async () => undefined),
     locator: vi.fn(locator),
     waitForURL: vi.fn(async () => undefined),
+    waitForTimeout: vi.fn(async () => undefined),
     evaluate: vi.fn(async (operation: { name?: string }) => {
       if (operation.name !== 'readFirebaseUid') return undefined
       uidReadPending = true
       if (rejectNavigationDuringUidRead) await Promise.resolve()
       uidReadPending = false
-      return 'owner-private-uid'
+      return pendingUidReadResults.shift() ?? null
     }),
     url: vi.fn(() => currentUrl),
   }
@@ -155,6 +158,15 @@ describe('static Playwright beta browser harness', () => {
       { deviceId: 'PC-DEV-000001', ownerUid: 'owner-private-uid' },
     ])
     expect(test.page.evaluate).toHaveBeenCalledOnce()
+  })
+
+  it('waits for Firebase Auth persistence before resolving the authenticated UID', async () => {
+    const test = fixture({ uidReadResults: [null, 'owner-private-uid'] })
+    const context = await createPlaywrightBetaBrowser().createContext()
+
+    await expect(context.getAuthenticatedUid()).resolves.toBe('owner-private-uid')
+    expect(test.page.evaluate).toHaveBeenCalledTimes(2)
+    expect(test.page.waitForTimeout).toHaveBeenCalledOnce()
   })
 
   it('fails when a rename acknowledgment does not persist after reload', async () => {

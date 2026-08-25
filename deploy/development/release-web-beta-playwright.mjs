@@ -2,6 +2,8 @@ import { chromium } from 'playwright-core'
 
 const APPROVED_BETA_ORIGIN = 'https://petcare-c7483.web.app'
 const NAVIGATION_OPTIONS = Object.freeze({ waitUntil: 'domcontentloaded' })
+const FIREBASE_UID_READ_ATTEMPTS = 50
+const FIREBASE_UID_READ_DELAY_MS = 100
 
 class PlaywrightBetaBrowserError extends Error {
   constructor(code) {
@@ -153,13 +155,22 @@ function createContextAdapter(page, browserContext, browser) {
 
   async function resolveAuthenticatedUid() {
     if (authenticatedUid !== null) return authenticatedUid
-    authenticatedUidPromise ??= page.evaluate(readFirebaseUid)
-    const uid = await authenticatedUidPromise
-    if (typeof uid !== 'string' || uid.length === 0) {
+    authenticatedUidPromise ??= (async () => {
+      for (let attempt = 0; attempt < FIREBASE_UID_READ_ATTEMPTS; attempt += 1) {
+        const uid = await page.evaluate(readFirebaseUid)
+        if (typeof uid === 'string' && uid.length > 0) return uid
+        if (attempt + 1 < FIREBASE_UID_READ_ATTEMPTS) {
+          await page.waitForTimeout(FIREBASE_UID_READ_DELAY_MS)
+        }
+      }
       browserFailure('tester_authentication_failed')
+    })()
+    try {
+      authenticatedUid = await authenticatedUidPromise
+      return authenticatedUid
+    } finally {
+      authenticatedUidPromise = null
     }
-    authenticatedUid = uid
-    return uid
   }
 
   async function exactAssignedDevice(deviceId) {
@@ -193,7 +204,8 @@ function createContextAdapter(page, browserContext, browser) {
       .locator(`[data-device-id="${deviceId}"] [data-test="device-edit"]`)
       .click()
     await input.waitFor({ state: 'visible' })
-    if ((await input.inputValue()) !== value) browserFailure()
+    const expectedEditorValue = value.length === 0 ? deviceId : value
+    if ((await input.inputValue()) !== expectedEditorValue) browserFailure()
     await page.locator('[data-test="device-cancel"]').click()
     await input.waitFor({ state: 'hidden' })
   }
