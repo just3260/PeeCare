@@ -24,6 +24,22 @@ const COMPATIBILITY_BATTERY_EVENT_ID_PATTERN =
   /^compatbattery:68E274BD2A58:[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$/
 const MAX_COMPATIBILITY_PUMP_SECONDS = 4_294_967.295
 const MAX_COMPATIBILITY_BATTERY_VOLTS = 20
+const CLAIM_RULE_ID = 'peecare_development_device_claim'
+const CLAIM_ROUTE = '/v1/emqx/device-claims'
+const INGESTION_ROUTE = '/v1/emqx/events'
+const CLAIM_SECRET_REFERENCE_PATTERN =
+  /^projects\/(?:petcare-c7483|348528459946)\/secrets\/peecare-claim-webhook-current\/versions\/[1-9][0-9]*$/
+const CLAIM_REQUEST_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+const CLAIM_APPROVED_ENVIRONMENT_KEYS = new Set([
+  'PEECARE_CLAIM_SHARED_MQTT_USERNAME',
+  'PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF',
+  'PEECARE_DEVELOPMENT_FIRESTORE_REGION',
+  'PEECARE_DEVELOPMENT_INGESTION_ORIGIN',
+  'PEECARE_DEVELOPMENT_MEMBER_ORIGIN',
+  'PEECARE_DEVELOPMENT_PROJECT_ID',
+  'PEECARE_INGESTION_SECRET_CURRENT_REF',
+])
 
 export class EmqxWebhookVerificationError extends Error {
   constructor(code, message) {
@@ -556,6 +572,317 @@ async function expectLegacyNonDelivery({
   }
 }
 
+function validateClaimVerificationOrigin(value, code) {
+  let origin
+  try {
+    origin = new URL(value)
+  } catch {
+    fail(code, 'Claim verification targets must be credential-free HTTPS origins.')
+  }
+  if (
+    origin.protocol !== 'https:' ||
+    origin.username ||
+    origin.password ||
+    origin.pathname !== '/' ||
+    origin.search ||
+    origin.hash
+  ) {
+    fail(code, 'Claim verification targets must be credential-free HTTPS origins.')
+  }
+  return origin.origin
+}
+
+function validateClaimVerificationEnvironment(environment) {
+  if (
+    environment?.PEECARE_DEVELOPMENT_PROJECT_ID !== APPROVED_PROJECT ||
+    environment?.PEECARE_DEVELOPMENT_FIRESTORE_REGION !== APPROVED_REGION
+  ) {
+    fail('target_mismatch', 'Claim verification must use the approved development target.')
+  }
+  if (
+    Object.keys(environment).some(
+      (key) =>
+        key.startsWith('PEECARE_') &&
+        !CLAIM_APPROVED_ENVIRONMENT_KEYS.has(key),
+    )
+  ) {
+    fail(
+      'direct_credential_input_forbidden',
+      'Claim verification accepts only its exact non-sensitive inputs and credential references.',
+    )
+  }
+
+  const memberOrigin = validateClaimVerificationOrigin(
+    environment.PEECARE_DEVELOPMENT_MEMBER_ORIGIN,
+    'invalid_claim_target',
+  )
+  const ingestionOrigin = validateClaimVerificationOrigin(
+    environment.PEECARE_DEVELOPMENT_INGESTION_ORIGIN,
+    'invalid_ingestion_target',
+  )
+  if (memberOrigin === ingestionOrigin) {
+    fail(
+      'claim_target_not_independent',
+      'Claim and ingestion verification targets must remain independent.',
+    )
+  }
+
+  const claimSecretReference =
+    environment.PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF
+  const ingestionSecretReference =
+    environment.PEECARE_INGESTION_SECRET_CURRENT_REF
+  if (claimSecretReference === ingestionSecretReference) {
+    fail(
+      'claim_credential_not_independent',
+      'Claim and ingestion credentials must remain independent.',
+    )
+  }
+  if (
+    typeof claimSecretReference !== 'string' ||
+    !CLAIM_SECRET_REFERENCE_PATTERN.test(claimSecretReference)
+  ) {
+    fail(
+      'invalid_claim_secret_reference',
+      'Claim verification requires an approved numeric secret reference.',
+    )
+  }
+  if (
+    typeof ingestionSecretReference !== 'string' ||
+    !SECRET_REFERENCE_PATTERN.test(ingestionSecretReference)
+  ) {
+    fail(
+      'invalid_secret_reference',
+      'Claim verification requires the approved ingestion secret reference.',
+    )
+  }
+
+  const sharedUsername = environment.PEECARE_CLAIM_SHARED_MQTT_USERNAME
+  if (!isBoundedCompatibilityIdentity(sharedUsername)) {
+    fail(
+      'invalid_shared_publisher',
+      'Claim verification requires the approved shared publisher username.',
+    )
+  }
+  return Object.freeze({
+    memberOrigin,
+    ingestionOrigin,
+    claimSecretReference,
+    ingestionSecretReference,
+    sharedUsername,
+  })
+}
+
+function claimVerificationProbes(configuration, brokerReceivedAtMs) {
+  const event = Object.freeze({
+    topic: 'peecare/device/1/bind',
+    clientId: 'claim-verifier',
+    username: configuration.sharedUsername,
+    qos: 0,
+    retained: false,
+    brokerReceivedAtMs,
+    payload: Object.freeze({
+      device_id: '000000000000',
+      pair_code: '00000000',
+    }),
+  })
+  return Object.freeze([
+    Object.freeze({
+      id: 'claim-with-claim-credential',
+      origin: configuration.memberOrigin,
+      route: CLAIM_ROUTE,
+      credentialSource: 'claim',
+      expectedHttpStatus: 202,
+      expectedOutcome: 'accepted',
+      event,
+    }),
+    Object.freeze({
+      id: 'claim-with-ingestion-credential',
+      origin: configuration.memberOrigin,
+      route: CLAIM_ROUTE,
+      credentialSource: 'ingestion',
+      expectedHttpStatus: 401,
+      expectedOutcome: 'unauthorized',
+      event,
+    }),
+    Object.freeze({
+      id: 'claim-with-member-credential',
+      origin: configuration.memberOrigin,
+      route: CLAIM_ROUTE,
+      credentialSource: 'firebase',
+      expectedHttpStatus: 401,
+      expectedOutcome: 'unauthorized',
+      event,
+    }),
+    Object.freeze({
+      id: 'ingestion-with-claim-credential',
+      origin: configuration.ingestionOrigin,
+      route: INGESTION_ROUTE,
+      credentialSource: 'claim',
+      expectedHttpStatus: 401,
+      expectedOutcome: 'unauthorized',
+      event,
+    }),
+    Object.freeze({
+      id: 'ingestion-with-ingestion-credential',
+      origin: configuration.ingestionOrigin,
+      route: INGESTION_ROUTE,
+      credentialSource: 'ingestion',
+      expectedHttpStatus: 422,
+      expectedOutcome: 'authenticated_schema_rejected',
+      event,
+    }),
+  ])
+}
+
+function hasExactKeys(value, expected) {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Array.isArray(value) ||
+    (Object.getPrototypeOf(value) !== Object.prototype &&
+      Object.getPrototypeOf(value) !== null)
+  ) {
+    return false
+  }
+  const keys = Object.keys(value).sort()
+  const exact = [...expected].sort()
+  return (
+    keys.length === exact.length &&
+    keys.every((key, index) => key === exact[index])
+  )
+}
+
+function assertClaimPublisherMetadata(actual, expected) {
+  return (
+    hasExactKeys(actual, [
+      'brokerReceivedAtMs',
+      'clientId',
+      'qos',
+      'retained',
+      'topic',
+      'username',
+    ]) &&
+    actual.topic === expected.topic &&
+    actual.clientId === expected.clientId &&
+    actual.username === expected.username &&
+    actual.qos === expected.qos &&
+    actual.retained === expected.retained &&
+    actual.brokerReceivedAtMs === expected.brokerReceivedAtMs
+  )
+}
+
+function claimDryRunSummary(probes) {
+  return Object.freeze({
+    status: 'ready',
+    mode: 'claim_read_only_dry_run',
+    connector: 'claim',
+    rule: CLAIM_RULE_ID,
+    trustBoundary: 'shared_credential_only',
+    productionReadiness:
+      'blocked_pending_per_device_credential_or_factory_secret',
+    checks: Object.freeze(
+      probes.map(({ id, route, expectedHttpStatus }) =>
+        Object.freeze({ id, route, expectedHttpStatus }),
+      ),
+    ),
+  })
+}
+
+export async function runEmqxClaimForwardingVerification({
+  mode,
+  environment,
+  adapter,
+  now = Date.now,
+  write,
+}) {
+  if (!['dry-run', 'verify'].includes(mode) || typeof write !== 'function') {
+    fail(
+      'invalid_claim_verification_mode',
+      'Claim verification requires an explicit dry-run or verify mode.',
+    )
+  }
+  const configuration = validateClaimVerificationEnvironment(environment)
+  const brokerReceivedAtMs = now()
+  if (!Number.isSafeInteger(brokerReceivedAtMs) || brokerReceivedAtMs < 0) {
+    fail(
+      'invalid_probe_identity',
+      'Claim verification requires a safe broker receive timestamp.',
+    )
+  }
+  const probes = claimVerificationProbes(configuration, brokerReceivedAtMs)
+  if (mode === 'dry-run') {
+    const summary = claimDryRunSummary(probes)
+    write(JSON.stringify(summary))
+    return summary
+  }
+  if (
+    typeof adapter?.inspectCredentialIsolation !== 'function' ||
+    typeof adapter?.executeProbe !== 'function'
+  ) {
+    fail(
+      'invalid_claim_verification_adapter',
+      'Claim verification requires fixed read-only adapters.',
+    )
+  }
+
+  const isolation = await adapter.inspectCredentialIsolation({
+    claimSecretReference: configuration.claimSecretReference,
+    ingestionSecretReference: configuration.ingestionSecretReference,
+  })
+  if (!hasExactKeys(isolation, ['distinct']) || isolation.distinct !== true) {
+    fail(
+      'claim_credential_not_independent',
+      'Resolved Claim and ingestion credentials must remain independent.',
+    )
+  }
+
+  const checks = []
+  for (const probe of probes) {
+    const result = await adapter.executeProbe(probe)
+    const expectedKeys =
+      probe.id === 'claim-with-claim-credential'
+        ? ['httpStatus', 'outcome', 'publisherMetadata', 'requestId']
+        : ['httpStatus', 'outcome', 'requestId']
+    if (
+      !hasExactKeys(result, expectedKeys) ||
+      result.httpStatus !== probe.expectedHttpStatus ||
+      result.outcome !== probe.expectedOutcome ||
+      typeof result.requestId !== 'string' ||
+      !CLAIM_REQUEST_ID_PATTERN.test(result.requestId) ||
+      (probe.id === 'claim-with-claim-credential' &&
+        !assertClaimPublisherMetadata(result.publisherMetadata, probe.event))
+    ) {
+      fail(
+        'invalid_claim_verification_evidence',
+        'Claim forwarding returned malformed or unexpected evidence.',
+      )
+    }
+    checks.push(
+      Object.freeze({
+        id: probe.id,
+        route: probe.route,
+        httpStatus: result.httpStatus,
+        requestId: result.requestId,
+        outcome: result.outcome,
+      }),
+    )
+  }
+
+  const summary = Object.freeze({
+    status: 'healthy',
+    mode: 'claim_forwarding_verification',
+    connector: 'claim',
+    rule: CLAIM_RULE_ID,
+    trustBoundary: 'shared_credential_only',
+    productionReadiness:
+      'blocked_pending_per_device_credential_or_factory_secret',
+    publisherMetadata: 'preserved',
+    checks: Object.freeze(checks),
+  })
+  write(JSON.stringify(summary))
+  return summary
+}
+
 export async function runEmqxWebhookVerification({
   environment,
   adapter,
@@ -775,6 +1102,15 @@ export async function runEmqxWebhookVerificationCli({
   wait,
 } = {}) {
   try {
+    if (argv.length === 1 && argv[0] === '--claim-dry-run') {
+      await runEmqxClaimForwardingVerification({
+        mode: 'dry-run',
+        environment,
+        now,
+        write: (line) => stdout.write(`${line}\n`),
+      })
+      return 0
+    }
     if (Object.keys(environment).some((key) => /(?:DEVICE.*PASSWORD|PASSWORD.*DEVICE)/i.test(key))) {
       fail('device_password_input_forbidden', 'Device password must come from the hidden TTY prompt.')
     }

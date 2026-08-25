@@ -6,8 +6,22 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from '@firebase/rules-unit-testing'
-import { deleteDoc, deleteField, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore'
+import {
+  collection,
+  deleteDoc,
+  deleteField,
+  doc,
+  getDoc,
+  getDocs,
+  setDoc,
+  updateDoc,
+} from 'firebase/firestore'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import {
+  ACTIVE_DEVICE_CLAIM_PATH,
+  DEVICE_CLAIM_SESSION_PATH,
+  seedDeviceClaimStorage,
+} from './fixtures/device-claims'
 import { seedDeviceOwnership } from './fixtures/members-and-devices'
 
 // Emulator-backed verification of the deny-by-default Firestore rules. Runs under
@@ -229,6 +243,37 @@ describe('client write denial', () => {
     await assertFails(setDoc(doc(db, `${DEVICE_PATH}/events/evt-2`), { eventId: 'evt-2' }))
     await assertFails(updateDoc(doc(db, DAILY_PATH), { urinationCount: 99 }))
     await assertFails(deleteDoc(doc(db, EVENT_PATH)))
+  })
+})
+
+describe('Admin-only device Claim storage', () => {
+  const newSessionPath = 'deviceClaimSessions/session-new'
+  const newLockPath = 'activeDeviceClaims/68E274BD2A59'
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      await seedDeviceClaimStorage(context.firestore())
+    })
+  })
+
+  it.each([
+    ['anonymous', () => testEnv.unauthenticatedContext().firestore()],
+    ['Owner', () => testEnv.authenticatedContext(OWNER_UID).firestore()],
+    ['non-owner', () => testEnv.authenticatedContext(OTHER_UID).firestore()],
+  ])('denies %s reads and writes for both Claim collections', async (_role, database) => {
+    const db = database()
+
+    await assertFails(getDoc(doc(db, DEVICE_CLAIM_SESSION_PATH)))
+    await assertFails(getDoc(doc(db, ACTIVE_DEVICE_CLAIM_PATH)))
+    await assertFails(getDocs(collection(db, 'deviceClaimSessions')))
+    await assertFails(getDocs(collection(db, 'activeDeviceClaims')))
+
+    await assertFails(setDoc(doc(db, newSessionPath), { status: 'pending' }))
+    await assertFails(setDoc(doc(db, newLockPath), { status: 'pending' }))
+    await assertFails(updateDoc(doc(db, DEVICE_CLAIM_SESSION_PATH), { status: 'claimed' }))
+    await assertFails(updateDoc(doc(db, ACTIVE_DEVICE_CLAIM_PATH), { status: 'claimed' }))
+    await assertFails(deleteDoc(doc(db, DEVICE_CLAIM_SESSION_PATH)))
+    await assertFails(deleteDoc(doc(db, ACTIVE_DEVICE_CLAIM_PATH)))
   })
 })
 

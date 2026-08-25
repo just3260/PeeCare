@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 
 import {
   createEmqxWebhookVerificationAdapter,
+  runEmqxClaimForwardingVerification,
   runEmqxWebhookVerification,
   runEmqxWebhookVerificationCli,
 } from './verify-emqx-webhook.mjs'
@@ -124,6 +125,313 @@ function pairedModeAwareAdapter(overrides: Record<string, unknown> = {}) {
     ...overrides,
   })
 }
+
+function claimEnvironment(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    PEECARE_DEVELOPMENT_PROJECT_ID: 'petcare-c7483',
+    PEECARE_DEVELOPMENT_FIRESTORE_REGION: 'asia-east1',
+    PEECARE_DEVELOPMENT_MEMBER_ORIGIN:
+      'https://peecare-member-development-example.a.run.app',
+    PEECARE_DEVELOPMENT_INGESTION_ORIGIN:
+      'https://peecare-ingestion-development-example.a.run.app',
+    PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF:
+      'projects/petcare-c7483/secrets/peecare-claim-webhook-current/versions/3',
+    PEECARE_INGESTION_SECRET_CURRENT_REF: currentReference,
+    PEECARE_CLAIM_SHARED_MQTT_USERNAME: 'approved-legacy-device',
+    ...overrides,
+  }
+}
+
+function claimVerificationAdapter(overrides: Record<string, unknown> = {}) {
+  const responses = new Map([
+    ['claim-with-claim-credential', {
+      httpStatus: 202,
+      requestId: '11111111-1111-4111-8111-111111111111',
+      outcome: 'accepted',
+      publisherMetadata: {
+        topic: 'peecare/device/1/bind',
+        clientId: 'claim-verifier',
+        username: 'approved-legacy-device',
+        qos: 0,
+        retained: false,
+        brokerReceivedAtMs: 1_786_989_800_000,
+      },
+    }],
+    ['claim-with-ingestion-credential', {
+      httpStatus: 401,
+      requestId: '22222222-2222-4222-8222-222222222222',
+      outcome: 'unauthorized',
+    }],
+    ['claim-with-member-credential', {
+      httpStatus: 401,
+      requestId: '33333333-3333-4333-8333-333333333333',
+      outcome: 'unauthorized',
+    }],
+    ['ingestion-with-claim-credential', {
+      httpStatus: 401,
+      requestId: '44444444-4444-4444-8444-444444444444',
+      outcome: 'unauthorized',
+    }],
+    ['ingestion-with-ingestion-credential', {
+      httpStatus: 422,
+      requestId: '55555555-5555-4555-8555-555555555555',
+      outcome: 'authenticated_schema_rejected',
+    }],
+  ])
+  return {
+    inspectCredentialIsolation: vi.fn(async () => ({ distinct: true })),
+    executeProbe: vi.fn(async ({ id }) => responses.get(id)),
+    ...overrides,
+  }
+}
+
+describe('development Claim forwarding verification', () => {
+  it('exposes Claim verification as a zero-call CLI dry-run', async () => {
+    const stdout = { write: vi.fn() }
+    const stderr = { write: vi.fn() }
+    const createAdapter = vi.fn()
+    const readPassword = vi.fn()
+
+    await expect(runEmqxWebhookVerificationCli({
+      argv: ['--claim-dry-run'],
+      environment: claimEnvironment(),
+      stdout,
+      stderr,
+      createAdapter,
+      readPassword,
+      artifacts: undefined,
+      now: () => 1_786_989_800_000,
+    })).resolves.toBe(0)
+
+    expect(createAdapter).not.toHaveBeenCalled()
+    expect(readPassword).not.toHaveBeenCalled()
+    expect(stderr.write).not.toHaveBeenCalled()
+    expect(stdout.write).toHaveBeenCalledWith(
+      expect.stringContaining('"mode":"claim_read_only_dry_run"'),
+    )
+  })
+
+  it('produces a read-only zero-call dry-run without sensitive fixture material', async () => {
+    const adapter = claimVerificationAdapter()
+    const output: string[] = []
+
+    const result = await runEmqxClaimForwardingVerification({
+      mode: 'dry-run',
+      environment: claimEnvironment(),
+      adapter,
+      now: () => 1_786_989_800_000,
+      write: (line) => output.push(line),
+    })
+
+    expect(adapter.inspectCredentialIsolation).not.toHaveBeenCalled()
+    expect(adapter.executeProbe).not.toHaveBeenCalled()
+    expect(result).toEqual({
+      status: 'ready',
+      mode: 'claim_read_only_dry_run',
+      connector: 'claim',
+      rule: 'peecare_development_device_claim',
+      trustBoundary: 'shared_credential_only',
+      productionReadiness: 'blocked_pending_per_device_credential_or_factory_secret',
+      checks: [
+        { id: 'claim-with-claim-credential', route: '/v1/emqx/device-claims', expectedHttpStatus: 202 },
+        { id: 'claim-with-ingestion-credential', route: '/v1/emqx/device-claims', expectedHttpStatus: 401 },
+        { id: 'claim-with-member-credential', route: '/v1/emqx/device-claims', expectedHttpStatus: 401 },
+        { id: 'ingestion-with-claim-credential', route: '/v1/emqx/events', expectedHttpStatus: 401 },
+        { id: 'ingestion-with-ingestion-credential', route: '/v1/emqx/events', expectedHttpStatus: 422 },
+      ],
+    })
+    expect(output).toEqual([JSON.stringify(result)])
+    expect(output[0]).not.toMatch(
+      /00000000|device_id|pair_code|payload|member-uid|firebase-token|webhookAuthorization|versions\/|approved-legacy-device/,
+    )
+  })
+
+  it('verifies credential isolation, publisher metadata, 202 acknowledgement, and 401 failures', async () => {
+    const adapter = claimVerificationAdapter()
+    const output: string[] = []
+
+    const result = await runEmqxClaimForwardingVerification({
+      mode: 'verify',
+      environment: claimEnvironment(),
+      adapter,
+      now: () => 1_786_989_800_000,
+      write: (line) => output.push(line),
+    })
+
+    expect(adapter.inspectCredentialIsolation).toHaveBeenCalledWith({
+      claimSecretReference:
+        'projects/petcare-c7483/secrets/peecare-claim-webhook-current/versions/3',
+      ingestionSecretReference: currentReference,
+    })
+    expect(adapter.executeProbe).toHaveBeenCalledTimes(5)
+    const probes = adapter.executeProbe.mock.calls.map(([probe]) => probe)
+    expect(probes.map(({ id, route, credentialSource }) => ({
+      id,
+      route,
+      credentialSource,
+    }))).toEqual([
+      { id: 'claim-with-claim-credential', route: '/v1/emqx/device-claims', credentialSource: 'claim' },
+      { id: 'claim-with-ingestion-credential', route: '/v1/emqx/device-claims', credentialSource: 'ingestion' },
+      { id: 'claim-with-member-credential', route: '/v1/emqx/device-claims', credentialSource: 'firebase' },
+      { id: 'ingestion-with-claim-credential', route: '/v1/emqx/events', credentialSource: 'claim' },
+      { id: 'ingestion-with-ingestion-credential', route: '/v1/emqx/events', credentialSource: 'ingestion' },
+    ])
+    expect(probes.every(({ event }) => event.topic === 'peecare/device/1/bind')).toBe(true)
+    expect(probes.every(({ event }) => event.qos === 0 && event.retained === false)).toBe(true)
+    expect(probes.every(({ event }) => event.payload.device_id === '000000000000')).toBe(true)
+    expect(probes.every(({ event }) => event.payload.pair_code === '00000000')).toBe(true)
+
+    expect(result).toMatchObject({
+      status: 'healthy',
+      mode: 'claim_forwarding_verification',
+      connector: 'claim',
+      rule: 'peecare_development_device_claim',
+      trustBoundary: 'shared_credential_only',
+      productionReadiness: 'blocked_pending_per_device_credential_or_factory_secret',
+      publisherMetadata: 'preserved',
+      checks: [
+        { route: '/v1/emqx/device-claims', httpStatus: 202, requestId: '11111111-1111-4111-8111-111111111111', outcome: 'accepted' },
+        { route: '/v1/emqx/device-claims', httpStatus: 401, requestId: '22222222-2222-4222-8222-222222222222', outcome: 'unauthorized' },
+        { route: '/v1/emqx/device-claims', httpStatus: 401, requestId: '33333333-3333-4333-8333-333333333333', outcome: 'unauthorized' },
+        { route: '/v1/emqx/events', httpStatus: 401, requestId: '44444444-4444-4444-8444-444444444444', outcome: 'unauthorized' },
+        { route: '/v1/emqx/events', httpStatus: 422, requestId: '55555555-5555-4555-8555-555555555555', outcome: 'authenticated_schema_rejected' },
+      ],
+    })
+    expect(output).toEqual([JSON.stringify(result)])
+    expect(output[0]).not.toMatch(
+      /00000000|device_id|pair_code|payload|member-uid|firebase-token|webhookAuthorization|versions\/|approved-legacy-device/,
+    )
+  })
+
+  it.each([
+    ['same secret reference', { PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF: currentReference }, 'claim_credential_not_independent'],
+    ['same origin', { PEECARE_DEVELOPMENT_MEMBER_ORIGIN: 'https://peecare-ingestion-development-example.a.run.app' }, 'claim_target_not_independent'],
+    ['direct Claim secret', { PEECARE_CLAIM_WEBHOOK_SECRET: 'sentinel-secret' }, 'direct_credential_input_forbidden'],
+    ['direct Claim authorization', { PEECARE_CLAIM_WEBHOOK_AUTHORIZATION: 'Bearer sentinel-secret' }, 'direct_credential_input_forbidden'],
+    ['direct Claim credential', { PEECARE_CLAIM_WEBHOOK_CREDENTIAL: 'sentinel-secret' }, 'direct_credential_input_forbidden'],
+    ['direct access token', { PEECARE_CLAIM_ACCESS_TOKEN: 'sentinel-token' }, 'direct_credential_input_forbidden'],
+    ['compact API key', { PEECARE_CLAIM_APIKEY: 'sentinel-key' }, 'direct_credential_input_forbidden'],
+    ['compact access key', { PEECARE_CLAIM_ACCESSKEY: 'sentinel-key' }, 'direct_credential_input_forbidden'],
+    ['compact Firebase ID token', { PEECARE_FIREBASE_IDTOKEN: 'sentinel-token' }, 'direct_credential_input_forbidden'],
+    ['compact signing key', { PEECARE_CLAIM_SIGNINGKEY: 'sentinel-key' }, 'direct_credential_input_forbidden'],
+    ['direct session credential', { PEECARE_CLAIM_SESSION: 'sentinel-session' }, 'direct_credential_input_forbidden'],
+    ['compact session token', { PEECARE_CLAIM_SESSIONTOKEN: 'sentinel-session' }, 'direct_credential_input_forbidden'],
+    ['compact session key', { PEECARE_CLAIM_SESSIONKEY: 'sentinel-session' }, 'direct_credential_input_forbidden'],
+    ['compact session cookie', { PEECARE_CLAIM_SESSIONCOOKIE: 'sentinel-session' }, 'direct_credential_input_forbidden'],
+    ['compact client secret', { PEECARE_CLAIM_CLIENTSECRET: 'sentinel-secret' }, 'direct_credential_input_forbidden'],
+    ['compact webhook password', { PEECARE_CLAIM_WEBHOOKPASSWORD: 'sentinel-password' }, 'direct_credential_input_forbidden'],
+    ['compact auth token', { PEECARE_CLAIM_AUTHTOKEN: 'sentinel-token' }, 'direct_credential_input_forbidden'],
+    ['compact device password', { PEECARE_DEVICEPASSWORD: 'sentinel-password' }, 'direct_credential_input_forbidden'],
+    ['compact MQTT password', { PEECARE_MQTTPASSWORD: 'sentinel-password' }, 'direct_credential_input_forbidden'],
+    ['compact member token', { PEECARE_MEMBERTOKEN: 'sentinel-token' }, 'direct_credential_input_forbidden'],
+    ['compact Firebase token without separators', { PEECARE_FIREBASEIDTOKEN: 'sentinel-token' }, 'direct_credential_input_forbidden'],
+    ['compact Claim client secret', { PEECARE_CLAIMCLIENTSECRET: 'sentinel-secret' }, 'direct_credential_input_forbidden'],
+    ['compact secret value', { PEECARE_SECRETVALUE: 'sentinel-secret' }, 'direct_credential_input_forbidden'],
+    ['direct MQTT password', { PEECARE_CLAIM_SHARED_MQTT_PASSWORD: 'sentinel-password' }, 'direct_credential_input_forbidden'],
+    ['direct current secret', { PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT: 'sentinel-secret' }, 'direct_credential_input_forbidden'],
+    ['Firebase token', { PEECARE_FIREBASE_ID_TOKEN: 'sentinel-firebase-token' }, 'direct_credential_input_forbidden'],
+  ])('fails closed for %s before adapter calls', async (_case, overrides, code) => {
+    const adapter = claimVerificationAdapter()
+
+    await expect(runEmqxClaimForwardingVerification({
+      mode: 'verify',
+      environment: claimEnvironment(overrides),
+      adapter,
+      now: () => 1_786_989_800_000,
+      write: vi.fn(),
+    })).rejects.toMatchObject({ code })
+    expect(adapter.inspectCredentialIsolation).not.toHaveBeenCalled()
+    expect(adapter.executeProbe).not.toHaveBeenCalled()
+  })
+
+  it('rejects unsupported non-sensitive PEECARE settings under the exact verifier input allowlist', async () => {
+    const adapter = claimVerificationAdapter()
+
+    await expect(runEmqxClaimForwardingVerification({
+      mode: 'dry-run',
+      environment: claimEnvironment({ PEECARE_CLAIM_SESSION_TIMEOUT: '300000' }),
+      adapter,
+      now: () => 1_786_989_800_000,
+      write: vi.fn(),
+    })).rejects.toMatchObject({ code: 'direct_credential_input_forbidden' })
+    expect(adapter.inspectCredentialIsolation).not.toHaveBeenCalled()
+    expect(adapter.executeProbe).not.toHaveBeenCalled()
+  })
+
+  it('rejects a device password before the Claim CLI dry-run branch', async () => {
+    const createAdapter = vi.fn()
+    const readPassword = vi.fn()
+    const stderr = { write: vi.fn() }
+
+    await expect(runEmqxWebhookVerificationCli({
+      argv: ['--claim-dry-run'],
+      environment: claimEnvironment({
+        PEECARE_DEVICE_PASSWORD: 'sentinel-device-password',
+      }),
+      stdout: { write: vi.fn() },
+      stderr,
+      createAdapter,
+      readPassword,
+      now: () => 1_786_989_800_000,
+    })).resolves.toBe(1)
+
+    expect(createAdapter).not.toHaveBeenCalled()
+    expect(readPassword).not.toHaveBeenCalled()
+    expect(stderr.write).toHaveBeenCalledWith(
+      '{"status":"error","code":"direct_credential_input_forbidden"}\n',
+    )
+  })
+
+  it('fails closed when resolved Claim and ingestion credentials are equal', async () => {
+    const adapter = claimVerificationAdapter({
+      inspectCredentialIsolation: vi.fn(async () => ({ distinct: false })),
+    })
+
+    await expect(runEmqxClaimForwardingVerification({
+      mode: 'verify',
+      environment: claimEnvironment(),
+      adapter,
+      now: () => 1_786_989_800_000,
+      write: vi.fn(),
+    })).rejects.toMatchObject({ code: 'claim_credential_not_independent' })
+    expect(adapter.executeProbe).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    '00000000',
+    'member-uid',
+    'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJtZW1iZXIifQ.signature',
+    'request-claim-accepted sentinel-secret',
+  ])('rejects malformed or unsanitized adapter requestId %s instead of emitting it', async (requestId) => {
+    const adapter = claimVerificationAdapter({
+      executeProbe: vi.fn(async ({ id }) => id === 'claim-with-claim-credential'
+        ? {
+            httpStatus: 202,
+            requestId,
+            outcome: 'accepted',
+            publisherMetadata: {
+              topic: 'peecare/device/1/bind',
+              clientId: 'claim-verifier',
+              username: 'approved-legacy-device',
+              qos: 0,
+              retained: false,
+              brokerReceivedAtMs: 1_786_989_800_000,
+            },
+          }
+        : undefined),
+    })
+    const write = vi.fn()
+
+    await expect(runEmqxClaimForwardingVerification({
+      mode: 'verify',
+      environment: claimEnvironment(),
+      adapter,
+      now: () => 1_786_989_800_000,
+      write,
+    })).rejects.toMatchObject({ code: 'invalid_claim_verification_evidence' })
+    expect(write).not.toHaveBeenCalled()
+  })
+})
 
 describe('development EMQX webhook verification', () => {
   it('verifies two canonical deliveries and legacy non-delivery through injected adapters only', async () => {
@@ -1098,6 +1406,9 @@ describe('development EMQX webhook verification', () => {
     expect(packageJson.scripts['emqx:development:verify:compatibility']).toBe(
       'node deploy/development/verify-emqx-webhook.mjs --compatibility',
     )
+    expect(packageJson.scripts['emqx:development:verify:claim:dry-run']).toBe(
+      'node deploy/development/verify-emqx-webhook.mjs --claim-dry-run',
+    )
     expect(packageJson.scripts['emqx:development:dry-run']).toBeUndefined()
     expect(packageJson.scripts['emqx:development:apply']).toBeUndefined()
 
@@ -1134,6 +1445,28 @@ describe('development EMQX webhook verification', () => {
     expect(integration).not.toContain('verify_peer')
     expect(integration).not.toContain('headers.authorization')
     expect(integration).not.toContain('npm run emqx:development:apply')
+  })
+
+  it('documents the Claim dry-run, shared-credential boundary, and rollback order', () => {
+    const runbook = readFileSync('deploy/development/EMQX_RUNBOOK.md', 'utf8')
+
+    for (const required of [
+      'emqx:development:verify:claim:dry-run',
+      'PEECARE_EMQX_CLAIM_CONNECTOR_NAME',
+      'PEECARE_EMQX_CLAIM_ACTION_NAME',
+      'PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF',
+      '/v1/emqx/device-claims',
+      'expected probe plan',
+      '不構成 runtime acceptance evidence',
+      '會員 session 與 broker message correlation',
+      '無法提供 per-device hardware attestation',
+      'per-device MQTT credential',
+      'inventory-verified factory setup secret',
+      '先停用 Claim bind rule',
+      '不自動移除已成功設定的 `ownerUid`',
+    ]) {
+      expect(runbook).toContain(required)
+    }
   })
 
   it('documents the reversible development-only compatibility lifecycle and SQL test matrix', () => {

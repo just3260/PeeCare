@@ -5,12 +5,15 @@ import { nextTick } from 'vue'
 import WifiConnectionGuideDialog from './WifiConnectionGuideDialog.vue'
 
 const expectedStepCopy = [
+  ['掃描', '裝置 ID'],
+  ['登入', '確認', '裝置 ID'],
+  ['配對碼'],
   ['設定模式'],
   ['PeeCare', '臨時 Wi-Fi'],
-  ['設定頁'],
-  ['選擇', 'Wi-Fi', '密碼'],
+  ['設定頁', 'Wi-Fi', '密碼', '配對碼'],
   ['斷開', '臨時網路', '切換'],
   ['恢復', '網路', 'Web App'],
+  ['PeeCare', '完成'],
 ]
 
 afterEach(() => {
@@ -53,7 +56,7 @@ function expectCloseWithoutPayload(wrapper: VueWrapper) {
 }
 
 describe('WifiConnectionGuideDialog single-page illustrated guide', () => {
-  it('shows all six text-described steps in the agreed order inside one scrolling region', () => {
+  it('shows all nine text-described steps in the agreed order inside one scrolling region', () => {
     mountDialog()
 
     const dialog = element('[data-test="wifi-guide-dialog"]')
@@ -62,12 +65,12 @@ describe('WifiConnectionGuideDialog single-page illustrated guide', () => {
 
     expect(dialog.contains(scrollRegion)).toBe(true)
     expect(dialog.querySelectorAll('[data-test="wifi-guide-scroll-region"]')).toHaveLength(1)
-    expect(steps).toHaveLength(6)
+    expect(steps).toHaveLength(9)
     expectedStepCopy.forEach((fragments, index) => {
       fragments.forEach((fragment) => expect(steps[index].textContent).toContain(fragment))
     })
     expect(steps.map((step) => step.textContent).join('\n')).not.toMatch(
-      /2\.4\s*GHz|5\s*GHz|SSID|https?:\/\/|LED|\d+\s*(秒|分鐘)/i,
+      /2\.4\s*GHz|5\s*GHz|SSID|https?:\/\/|LED|\d+\s*(秒|分鐘)|實體持有|身分證明|attestation/i,
     )
   })
 
@@ -77,7 +80,7 @@ describe('WifiConnectionGuideDialog single-page illustrated guide', () => {
     const steps = [...document.querySelectorAll<HTMLElement>('[data-test="wifi-guide-step"]')]
     const markers = [...document.querySelectorAll<HTMLElement>('[data-test="wifi-guide-step-marker"]')]
 
-    expect(markers).toHaveLength(6)
+    expect(markers).toHaveLength(9)
     markers.forEach((marker) => expect(marker.getAttribute('aria-hidden')).toBe('true'))
     steps.forEach((step) => expect(step.textContent?.trim().length).toBeGreaterThan(0))
   })
@@ -125,6 +128,16 @@ describe('WifiConnectionGuideDialog accessible modal interaction', () => {
     click(element('[data-test="wifi-guide-acknowledge"]'))
     await nextTick()
     expectCloseWithoutPayload(acknowledgeWrapper)
+  })
+
+  it('offers a payload-free setting action without storing credentials in the guide', async () => {
+    const wrapper = mountDialog()
+
+    click(element('[data-test="wifi-guide-start"]'))
+    await nextTick()
+
+    expect(wrapper.emitted('start')).toEqual([[]])
+    expect(wrapper.html()).not.toMatch(/name="(?:password|pairCode)"|sessionStorage|localStorage/i)
   })
 
   it('emits close for Escape', async () => {

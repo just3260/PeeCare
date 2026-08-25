@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref, watch } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 
 import AppHeader from '@/components/AppHeader.vue'
 import DeviceSelector from '@/components/DeviceSelector.vue'
@@ -17,6 +17,7 @@ import { useDeviceSelection } from '@/features/devices/use-device-selection'
 // fakes and no Firebase dependency.
 const authStore = inject(AUTH_STORE_KEY, null)
 const deviceStore = inject(DEVICE_OVERVIEW_STORE_KEY, null)
+const router = useRouter()
 
 // The device switcher is shared with History and Stats via this composable.
 const { devices, selectedDeviceId, hasMultipleDevices, selectDevice } = useDeviceSelection()
@@ -72,6 +73,11 @@ function closeWifiGuide(): void {
   wifiGuideOpen.value = false
 }
 
+function startDeviceOnboarding(): void {
+  wifiGuideOpen.value = false
+  void router.push('/connect')
+}
+
 /** Keep the device store in step with the member session. */
 function syncSession(): void {
   if (!deviceStore) return
@@ -123,11 +129,11 @@ watch(
       <div v-else-if="state.status === 'empty'" class="overview__notice" data-test="overview-empty">
         <p>尚無裝置</p>
         <RouterLink
-          to="/settings"
+          to="/connect"
           class="overview__guidance"
           data-test="overview-settings-guidance"
         >
-          前往設定綁定裝置
+          設定新裝置
         </RouterLink>
       </div>
 
@@ -160,7 +166,11 @@ watch(
     </section>
   </main>
 
-  <WifiConnectionGuideDialog :open="wifiGuideOpen" @close="closeWifiGuide" />
+  <WifiConnectionGuideDialog
+    :open="wifiGuideOpen"
+    @close="closeWifiGuide"
+    @start="startDeviceOnboarding"
+  />
 </template>
 
 <style scoped>

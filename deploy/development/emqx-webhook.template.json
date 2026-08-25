@@ -29,12 +29,37 @@
       "http:{{PEECARE_EMQX_BATTERY_COMPATIBILITY_ACTION_NAME}}"
     ]
   },
+  "claimRule": {
+    "id": "peecare_development_device_claim",
+    "name": "peecare_development_device_claim",
+    "description": "Forward exact development bind deliveries to the Member API Claim webhook.",
+    "enable": true,
+    "sql": "SELECT\n  topic,\n  clientid AS clientId,\n  username,\n  qos,\n  flags.retain AS retained,\n  publish_received_at AS brokerReceivedAtMs,\n  json_decode(payload) AS payload\nFROM \"peecare/device/1/bind\"\nWHERE qos = 0\n  AND flags.retain = false",
+    "actions": [
+      "http:{{PEECARE_EMQX_CLAIM_ACTION_NAME}}"
+    ]
+  },
   "connector": {
     "type": "http",
     "name": "{{PEECARE_EMQX_CONNECTOR_NAME}}",
     "description": "Connect to the approved development Cloud Run ingestion origin.",
     "enable": true,
     "url": "{{PEECARE_DEVELOPMENT_INGESTION_ORIGIN}}",
+    "connect_timeout": "10s",
+    "pool_size": 2,
+    "enable_pipelining": 1,
+    "health_check_interval": "15s",
+    "ssl": {
+      "enable": true,
+      "verify": "disabled"
+    }
+  },
+  "claimConnector": {
+    "type": "http",
+    "name": "{{PEECARE_EMQX_CLAIM_CONNECTOR_NAME}}",
+    "description": "Connect to the approved development Member API origin for device Claim forwarding.",
+    "enable": true,
+    "url": "{{PEECARE_DEVELOPMENT_MEMBER_ORIGIN}}",
     "connect_timeout": "10s",
     "pool_size": 2,
     "enable_pipelining": 1,
@@ -57,6 +82,21 @@
         "content-type": "application/json"
       },
       "body": "{\"webhookAuthorization\":\"Bearer {{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}\",\"event\":${.}}"
+    }
+  },
+  "claimAction": {
+    "type": "http",
+    "name": "{{PEECARE_EMQX_CLAIM_ACTION_NAME}}",
+    "connector": "{{PEECARE_EMQX_CLAIM_CONNECTOR_NAME}}",
+    "description": "POST one exact bind envelope to the development Member API Claim route.",
+    "enable": true,
+    "parameters": {
+      "method": "post",
+      "path": "/v1/emqx/device-claims",
+      "headers": {
+        "content-type": "application/json"
+      },
+      "body": "{\"webhookAuthorization\":\"Bearer {{PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT}}\",\"event\":${.}}"
     }
   },
   "compatibilityAction": {

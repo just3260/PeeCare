@@ -50,6 +50,177 @@ tests:
 -->
 
 ---
+### Requirement: Trusted first-owner Claim mutation
+
+Only the trusted Claim backend SHALL set a missing `devices/{deviceId}.ownerUid` during a valid first-owner transaction. The Web client MUST remain unable to create, update, or delete ownership. The Claim transaction MUST treat the same UID as idempotent success and MUST reject a different non-empty ownerUid without changing it.
+
+#### Scenario: Assign the first Owner
+
+- **WHEN** a valid unexpired Claim Session for member-001 completes against an enabled ownerless device
+- **THEN** the trusted backend sets ownerUid to member-001
+- **AND** the Web client can subsequently discover the device through its constrained Owner query
+
+#### Scenario: Refuse ownership replacement
+
+- **WHEN** a valid Claim Session for member-002 completes against a device already owned by member-001
+- **THEN** the Claim becomes conflict
+- **AND** ownerUid remains member-001
+
+
+<!-- @trace
+source: add-device-claim-onboarding
+updated: 2026-08-26
+code:
+  - deploy/development/emqx-webhook.template.json
+  - src/features/device-claim/device-claim-store.ts
+  - deploy/development/verify-member.mjs
+  - deploy/development/MEMBER_API_RUNBOOK.md
+  - src/features/device-claim/device-claim-api.ts
+  - deploy/development/emqx-serverless-console-checklist.md
+  - deploy/development/deploy-member.d.mts
+  - src/views/HomeView.vue
+  - src/views/DeviceConnectView.vue
+  - deploy/development/verify-emqx-webhook.mjs
+  - services/member-api/src/config.ts
+  - services/member-api/src/http/errors.ts
+  - devices/development/fixtures/legacy-bind-retry.json
+  - devices/development/legacy-bind-policy.mjs
+  - deploy/development/verify-member.d.mts
+  - deploy/development/member-service.yaml
+  - scripts/test-firebase.mjs
+  - src/features/device-claim/device-claim-store-key.ts
+  - deploy/development/deploy-member.mjs
+  - deploy/development/EMQX_RUNBOOK.md
+  - services/member-api/src/security/emqx-claim-auth.ts
+  - firestore.rules
+  - firebase/local/fixtures/device-claims.ts
+  - services/member-api/src/app.ts
+  - services/member-api/src/claims/claim-service.ts
+  - package.json
+  - src/components/WifiConnectionGuideDialog.vue
+  - src/features/device-claim/device-id-input.ts
+  - src/router/index.ts
+  - services/member-api/src/claims/emqx-device-claim-route.ts
+  - devices/development/legacy-bind-policy.json
+  - deploy/development/configure-emqx-webhook.mjs
+  - services/member-api/src/server.ts
+  - services/member-api/src/firestore/device-claim-repository.ts
+  - src/main.ts
+  - src/features/device-claim/device-claim-session-storage.ts
+  - services/member-api/src/claims/pair-code.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.ts
+tests:
+  - src/router/index.spec.ts
+  - deploy/development/verify-emqx-webhook.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/device-claim/device-id-input.spec.ts
+  - services/member-api/test/member-claim-routes.test.ts
+  - services/member-api/test/device-claim-firestore.integration.test.ts
+  - src/features/device-claim/device-claim-store.spec.ts
+  - services/member-api/test/server.test.ts
+  - scripts/test-firebase.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/emqx-device-claim-route.test.ts
+  - src/components/WifiConnectionGuideDialog.spec.ts
+  - src/views/DeviceConnectView.spec.ts
+  - services/member-api/test/pair-code.test.ts
+  - src/router/auth-guard.spec.ts
+  - deploy/development/verify-member.spec.ts
+  - devices/development/legacy-bind-policy.spec.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.spec.ts
+  - services/member-api/test/config.test.ts
+  - deploy/development/deploy-member.spec.ts
+  - deploy/development/configure-emqx-webhook.spec.ts
+  - services/member-api/test/emqx-claim-auth.test.ts
+  - services/member-api/test/claim-service.test.ts
+  - src/features/device-claim/device-claim-api.spec.ts
+  - src/features/device-claim/device-claim-session-storage.spec.ts
+-->
+
+---
+### Requirement: Claim storage remains Admin-only
+
+Firestore Rules SHALL deny every Web client read and write under `deviceClaimSessions` and `activeDeviceClaims`. Claim Session authorization SHALL be enforced only by the authenticated Member API status route.
+
+#### Scenario: Owner attempts direct Claim Session access
+
+- **WHEN** an authenticated device Owner reads or writes either Claim collection through the Web SDK
+- **THEN** Firestore returns permission-denied
+
+
+<!-- @trace
+source: add-device-claim-onboarding
+updated: 2026-08-26
+code:
+  - deploy/development/emqx-webhook.template.json
+  - src/features/device-claim/device-claim-store.ts
+  - deploy/development/verify-member.mjs
+  - deploy/development/MEMBER_API_RUNBOOK.md
+  - src/features/device-claim/device-claim-api.ts
+  - deploy/development/emqx-serverless-console-checklist.md
+  - deploy/development/deploy-member.d.mts
+  - src/views/HomeView.vue
+  - src/views/DeviceConnectView.vue
+  - deploy/development/verify-emqx-webhook.mjs
+  - services/member-api/src/config.ts
+  - services/member-api/src/http/errors.ts
+  - devices/development/fixtures/legacy-bind-retry.json
+  - devices/development/legacy-bind-policy.mjs
+  - deploy/development/verify-member.d.mts
+  - deploy/development/member-service.yaml
+  - scripts/test-firebase.mjs
+  - src/features/device-claim/device-claim-store-key.ts
+  - deploy/development/deploy-member.mjs
+  - deploy/development/EMQX_RUNBOOK.md
+  - services/member-api/src/security/emqx-claim-auth.ts
+  - firestore.rules
+  - firebase/local/fixtures/device-claims.ts
+  - services/member-api/src/app.ts
+  - services/member-api/src/claims/claim-service.ts
+  - package.json
+  - src/components/WifiConnectionGuideDialog.vue
+  - src/features/device-claim/device-id-input.ts
+  - src/router/index.ts
+  - services/member-api/src/claims/emqx-device-claim-route.ts
+  - devices/development/legacy-bind-policy.json
+  - deploy/development/configure-emqx-webhook.mjs
+  - services/member-api/src/server.ts
+  - services/member-api/src/firestore/device-claim-repository.ts
+  - src/main.ts
+  - src/features/device-claim/device-claim-session-storage.ts
+  - services/member-api/src/claims/pair-code.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.ts
+tests:
+  - src/router/index.spec.ts
+  - deploy/development/verify-emqx-webhook.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/device-claim/device-id-input.spec.ts
+  - services/member-api/test/member-claim-routes.test.ts
+  - services/member-api/test/device-claim-firestore.integration.test.ts
+  - src/features/device-claim/device-claim-store.spec.ts
+  - services/member-api/test/server.test.ts
+  - scripts/test-firebase.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/emqx-device-claim-route.test.ts
+  - src/components/WifiConnectionGuideDialog.spec.ts
+  - src/views/DeviceConnectView.spec.ts
+  - services/member-api/test/pair-code.test.ts
+  - src/router/auth-guard.spec.ts
+  - deploy/development/verify-member.spec.ts
+  - devices/development/legacy-bind-policy.spec.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.spec.ts
+  - services/member-api/test/config.test.ts
+  - deploy/development/deploy-member.spec.ts
+  - deploy/development/configure-emqx-webhook.spec.ts
+  - services/member-api/test/emqx-claim-auth.test.ts
+  - services/member-api/test/claim-service.test.ts
+  - src/features/device-claim/device-claim-api.spec.ts
+  - src/features/device-claim/device-claim-session-storage.spec.ts
+-->
+
+---
 ### Requirement: Owner-only device reads
 
 Firestore Rules SHALL allow an authenticated member to read a device only when its ownerUid equals `request.auth.uid`.

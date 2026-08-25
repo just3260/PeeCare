@@ -7,6 +7,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
+  start: []
 }>()
 
 const closeButton = ref<HTMLButtonElement | null>(null)
@@ -79,6 +80,10 @@ function requestClose(): void {
   emit('close')
 }
 
+function requestStart(): void {
+  emit('start')
+}
+
 function handleDocumentKeydown(event: KeyboardEvent): void {
   if (!props.open) return
 
@@ -131,6 +136,21 @@ onBeforeUnmount(() => {
 
 const steps = [
   {
+    icon: '▦',
+    title: '掃描或輸入裝置 ID',
+    description: '掃描機身上的 QR，或在 PeeCare 手動輸入裝置 ID。',
+  },
+  {
+    icon: '👤',
+    title: '登入並確認裝置 ID',
+    description: '完成會員登入後，確認畫面顯示的是你要設定的裝置 ID。',
+  },
+  {
+    icon: '🔢',
+    title: '建立一次性配對碼',
+    description: '確認裝置後，PeeCare 會顯示一次性的八位數配對碼。',
+  },
+  {
     icon: '⚙️',
     title: '進入設定模式',
     description: '依照 PeeCare 裝置上的操作提示，讓裝置進入設定模式。',
@@ -141,14 +161,9 @@ const steps = [
     description: '開啟手機的 Wi-Fi 設定，連上 PeeCare 提供的臨時 Wi-Fi。',
   },
   {
-    icon: '📱',
-    title: '等待設定頁',
-    description: '保持手機連線，等待硬體設定頁開啟。',
-  },
-  {
     icon: '🔐',
-    title: '選擇家中網路',
-    description: '在設定頁選擇目標 Wi-Fi，並輸入該網路的密碼。',
+    title: '填寫設定頁',
+    description: '在硬體設定頁選擇目標 Wi-Fi、輸入密碼，以及 PeeCare 顯示的配對碼。',
   },
   {
     icon: '🔄',
@@ -159,6 +174,11 @@ const steps = [
     icon: '✓',
     title: '返回 PeeCare',
     description: '讓手機恢復一般網路連線，接著返回 Web App。',
+  },
+  {
+    icon: '⏳',
+    title: '等待 PeeCare 顯示完成',
+    description: '回到 PeeCare 後等待伺服器確認；只有畫面顯示完成才代表裝置已加入帳號。',
   },
 ] as const
 </script>
@@ -230,6 +250,14 @@ const steps = [
           </div>
 
           <footer class="wifi-guide-dialog__footer" data-test="wifi-guide-footer">
+            <button
+              type="button"
+              class="wifi-guide-dialog__start"
+              data-test="wifi-guide-start"
+              @click="requestStart"
+            >
+              設定新裝置
+            </button>
             <button
               type="button"
               class="wifi-guide-dialog__acknowledge"
@@ -326,6 +354,7 @@ const steps = [
 }
 
 .wifi-guide-dialog__close:focus-visible,
+.wifi-guide-dialog__start:focus-visible,
 .wifi-guide-dialog__acknowledge:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--color-brand-strong) 38%, transparent);
   outline-offset: 3px;
@@ -411,10 +440,14 @@ const steps = [
 }
 
 .wifi-guide-dialog__footer {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
   padding: 16px 22px max(16px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--color-border, #ece8e2);
 }
 
+.wifi-guide-dialog__start,
 .wifi-guide-dialog__acknowledge {
   width: 100%;
   min-height: 48px;
@@ -426,6 +459,12 @@ const steps = [
   font-size: 15px;
   font-weight: 700;
   cursor: pointer;
+}
+
+.wifi-guide-dialog__start {
+  border: 1px solid var(--color-brand-strong, #8a5a24);
+  background: var(--color-surface, #fff);
+  color: var(--color-brand-strong, #8a5a24);
 }
 
 @media (max-width: 520px) {

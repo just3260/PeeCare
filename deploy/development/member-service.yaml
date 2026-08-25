@@ -15,7 +15,17 @@
     "displayName": "PeeCare development Member API runtime"
   },
   "iam": {
-    "projectRoles": ["roles/datastore.user", "roles/firebaseauth.viewer"]
+    "projectRoles": ["roles/datastore.user", "roles/firebaseauth.viewer"],
+    "secretAccess": [
+      {
+        "secret": "peecare-claim-webhook-current",
+        "role": "roles/secretmanager.secretAccessor"
+      },
+      {
+        "secret": "peecare-pair-code-hmac-key",
+        "role": "roles/secretmanager.secretAccessor"
+      }
+    ]
   },
   "resources": {
     "billing": "request-based",
@@ -31,6 +41,11 @@
     "allowUnauthenticated": true,
     "publicHealthPath": "/health",
     "protectedMutationPath": "/v1/devices/:deviceId/display-name",
+    "memberClaimPaths": [
+      "/v1/device-claim-sessions",
+      "/v1/device-claim-sessions/:sessionId"
+    ],
+    "emqxClaimPath": "/v1/emqx/device-claims",
     "applicationAuth": "firebase-id-token-revoked-aware-owner",
     "allowedOrigin": "https://petcare-c7483.web.app"
   },
@@ -40,6 +55,39 @@
       "GOOGLE_CLOUD_PROJECT": "petcare-c7483",
       "PEECARE_WEB_ORIGIN": "https://petcare-c7483.web.app"
     },
-    "platformProvided": ["PORT"]
+    "platformProvided": ["PORT"],
+    "requiredValues": [
+      "PEECARE_PAIR_CODE_HMAC_KEY_VERSION",
+      "PEECARE_CLAIM_SHARED_MQTT_USERNAME"
+    ],
+    "secretBindings": {
+      "PEECARE_CLAIM_WEBHOOK_SECRET": {
+        "secret": "peecare-claim-webhook-current",
+        "referenceEnvironment": "PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF"
+      },
+      "PEECARE_PAIR_CODE_HMAC_KEY": {
+        "secret": "peecare-pair-code-hmac-key",
+        "referenceEnvironment": "PEECARE_PAIR_CODE_HMAC_KEY_REF"
+      }
+    }
+  },
+  "persistenceAccess": {
+    "enforcement": {
+      "iam": "database-wide-datastore-role-with-direct-binding-audit",
+      "logicalScope": "application-repository-and-release-probe"
+    },
+    "deviceRegistry": {
+      "reads": "enabled-registry-fields-only",
+      "ownerUidMutation": "first-set-only"
+    },
+    "claimCollections": {
+      "deviceClaimSessions": ["create", "read", "update"],
+      "activeDeviceClaims": ["create", "read", "update"]
+    },
+    "deniedMutations": [
+      "owner-transfer",
+      "device-delete",
+      "device-child-write"
+    ]
   }
 }

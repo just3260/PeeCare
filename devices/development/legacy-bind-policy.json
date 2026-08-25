@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "identity": {
+    "username": "approved-legacy-device",
+    "clientId": "68E274BD2A58"
+  },
+  "rules": [
+    {
+      "permission": "allow",
+      "action": "publish",
+      "topic": "peecare/device/1/bind",
+      "qos": [0],
+      "retain": false
+    },
+    {
+      "permission": "deny",
+      "action": "all",
+      "topic": "#"
+    }
+  ]
+}

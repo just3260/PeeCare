@@ -21,6 +21,12 @@ function validEnvironment(): NodeJS.ProcessEnv {
     PEECARE_DEVELOPMENT_FIRESTORE_REGION: 'asia-east1',
     PEECARE_DEVELOPMENT_BUDGET_RECORD: approvedBudgetRecord,
     PEECARE_DEVELOPMENT_WEB_ORIGIN: 'https://petcare-c7483.web.app',
+    PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF:
+      'projects/petcare-c7483/secrets/peecare-claim-webhook-current/versions/3',
+    PEECARE_PAIR_CODE_HMAC_KEY_REF:
+      'projects/petcare-c7483/secrets/peecare-pair-code-hmac-key/versions/5',
+    PEECARE_PAIR_CODE_HMAC_KEY_VERSION: '5',
+    PEECARE_CLAIM_SHARED_MQTT_USERNAME: 'approved-legacy-device',
   }
 }
 
@@ -98,7 +104,15 @@ describe('development Member API deployment', () => {
   })
 
   it('deploys the exact immutable revision in apply mode', () => {
-    const execute = vi.fn(() => ({ status: 0 }))
+    const execute = vi.fn((_command: string, args: readonly string[]) => ({
+      status: 0,
+      stdout:
+        args[0] === 'projects' && args[1] === 'get-iam-policy'
+          ? '{"bindings":[]}'
+          : args[0] === 'secrets' && args[1] === 'list'
+            ? '[]'
+            : '',
+    }))
 
     const result = runMemberDeploy({
       environment: validEnvironment(),
@@ -208,6 +222,16 @@ describe('development Member API deployment', () => {
         'peecare-member-runtime@petcare-c7483.iam.gserviceaccount.com',
       iam: {
         projectRoles: ['roles/datastore.user', 'roles/firebaseauth.viewer'],
+        secretAccess: [
+          {
+            secret: 'peecare-claim-webhook-current',
+            role: 'roles/secretmanager.secretAccessor',
+          },
+          {
+            secret: 'peecare-pair-code-hmac-key',
+            role: 'roles/secretmanager.secretAccessor',
+          },
+        ],
       },
       runtimeEnvironment: {
         values: {
@@ -216,11 +240,66 @@ describe('development Member API deployment', () => {
           PEECARE_WEB_ORIGIN: 'https://petcare-c7483.web.app',
         },
         platformProvided: ['PORT'],
+        requiredValues: [
+          'PEECARE_PAIR_CODE_HMAC_KEY_VERSION',
+          'PEECARE_CLAIM_SHARED_MQTT_USERNAME',
+        ],
+        secretBindings: {
+          PEECARE_CLAIM_WEBHOOK_SECRET: {
+            secret: 'peecare-claim-webhook-current',
+            version: '3',
+          },
+          PEECARE_PAIR_CODE_HMAC_KEY: {
+            secret: 'peecare-pair-code-hmac-key',
+            version: '5',
+          },
+        },
+      },
+      persistenceAccess: {
+        enforcement: {
+          iam: 'database-wide-datastore-role-with-direct-binding-audit',
+          logicalScope: 'application-repository-and-release-probe',
+        },
+        deviceRegistry: {
+          reads: 'enabled-registry-fields-only',
+          ownerUidMutation: 'first-set-only',
+        },
+        claimCollections: {
+          deviceClaimSessions: ['create', 'read', 'update'],
+          activeDeviceClaims: ['create', 'read', 'update'],
+        },
+        deniedMutations: [
+          'owner-transfer',
+          'device-delete',
+          'device-child-write',
+        ],
       },
     })
     expect(JSON.stringify(result)).not.toMatch(
-      /GOOGLE_APPLICATION_CREDENTIALS|private_key|EMQX_WEBHOOK_SECRET|FIRESTORE_EMULATOR_HOST/,
+      /GOOGLE_APPLICATION_CREDENTIALS|private_key|EMQX_WEBHOOK_SECRET|FIRESTORE_EMULATOR_HOST|approved-legacy-device/,
     )
+  })
+
+  it.each([
+    ['missing Claim secret', { PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF: undefined }, 'invalid_claim_secret_reference'],
+    ['unapproved Claim secret', { PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF: 'projects/petcare-c7483/secrets/other/versions/3' }, 'invalid_claim_secret_reference'],
+    ['missing HMAC key', { PEECARE_PAIR_CODE_HMAC_KEY_REF: undefined }, 'invalid_hmac_secret_reference'],
+    ['non-numeric HMAC key', { PEECARE_PAIR_CODE_HMAC_KEY_REF: 'projects/petcare-c7483/secrets/peecare-pair-code-hmac-key/versions/latest' }, 'invalid_hmac_secret_reference'],
+    ['equal references', { PEECARE_PAIR_CODE_HMAC_KEY_REF: 'projects/petcare-c7483/secrets/peecare-claim-webhook-current/versions/3' }, 'claim_credentials_not_independent'],
+    ['HMAC version mismatch', { PEECARE_PAIR_CODE_HMAC_KEY_VERSION: '4' }, 'invalid_hmac_key_version'],
+    ['missing shared username', { PEECARE_CLAIM_SHARED_MQTT_USERNAME: undefined }, 'invalid_shared_publisher'],
+    ['different bounded shared username', { PEECARE_CLAIM_SHARED_MQTT_USERNAME: 'not-the-fixed-policy-publisher' }, 'invalid_shared_publisher'],
+  ])('rejects %s before IAM or Cloud Run mutation', (_case, overrides, code) => {
+    const execute = vi.fn()
+
+    expect(() => runMemberDeploy({
+      environment: { ...validEnvironment(), ...overrides },
+      args: ['--apply', '--image', immutableImage, '--revision-suffix', revisionSuffix],
+      manifest: loadMemberManifest(),
+      execute,
+      write: vi.fn(),
+    })).toThrowError(expect.objectContaining({ code }))
+    expect(execute).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -228,6 +307,14 @@ describe('development Member API deployment', () => {
     ['Firestore Emulator', 'FIRESTORE_EMULATOR_HOST', '127.0.0.1:8085'],
     ['Auth Emulator', 'FIREBASE_AUTH_EMULATOR_HOST', '127.0.0.1:9099'],
     ['Ingestion secret', 'EMQX_WEBHOOK_SECRET_CURRENT', 'secret'],
+    ['unsupported Claim secret alias', 'PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT', 'secret'],
+    ['unsupported HMAC key alias', 'PEECARE_PAIR_CODE_HMAC_KEY_CURRENT', 'secret'],
+    ['unsupported Claim password alias', 'PEECARE_CLAIM_WEBHOOKPASSWORD', 'secret'],
+    ['unsupported HMAC compact alias', 'PEECARE_PAIR_CODE_HMACKEY', 'secret'],
+    ['unsupported Pair Code key alias', 'PEECARE_PAIR_CODE_KEY', 'secret'],
+    ['unsupported Claim credential alias', 'PEECARE_CLAIM_CREDENTIAL', 'secret'],
+    ['unsupported Claim authorization alias', 'PEECARE_CLAIM_AUTHORIZATION', 'secret'],
+    ['unsupported Claim API key alias', 'PEECARE_CLAIM_APIKEY', 'secret'],
   ])('rejects operator %s before any cloud mutation', (_case, key, value) => {
     const execute = vi.fn()
 
@@ -249,10 +336,15 @@ describe('development Member API deployment', () => {
     expect(execute).not.toHaveBeenCalled()
   })
 
-  it('creates and grants only the approved Firestore and Auth viewer roles to the dedicated runtime identity', () => {
+  it('grants only the approved project roles and per-secret access to the dedicated runtime identity', () => {
     const execute = vi.fn((_command: string, args: readonly string[]) => ({
       status: 0,
-      stdout: args[1] === 'service-accounts' && args[2] === 'list' ? '' : undefined,
+      stdout:
+        args[0] === 'projects' && args[1] === 'get-iam-policy'
+          ? '{"bindings":[]}'
+          : args[0] === 'secrets' && args[1] === 'list'
+            ? '[]'
+            : '',
     }))
 
     runMemberDeploy({
@@ -309,13 +401,221 @@ describe('development Member API deployment', () => {
         'peecare-member-runtime@petcare-c7483.iam.gserviceaccount.com',
       ]),
     )
-    expect(JSON.stringify(execute.mock.calls)).not.toContain(
-      'roles/secretmanager.secretAccessor',
+    for (const secret of [
+      'peecare-claim-webhook-current',
+      'peecare-pair-code-hmac-key',
+    ]) {
+      expect(execute).toHaveBeenCalledWith('gcloud', [
+        'secrets',
+        'add-iam-policy-binding',
+        secret,
+        '--project',
+        'petcare-c7483',
+        '--member',
+        'serviceAccount:peecare-member-runtime@petcare-c7483.iam.gserviceaccount.com',
+        '--role',
+        'roles/secretmanager.secretAccessor',
+        '--condition=None',
+        '--quiet',
+      ])
+    }
+    expect(execute).toHaveBeenCalledWith(
+      'gcloud',
+      expect.arrayContaining([
+        '--set-secrets',
+        'PEECARE_CLAIM_WEBHOOK_SECRET=peecare-claim-webhook-current:3,PEECARE_PAIR_CODE_HMAC_KEY=peecare-pair-code-hmac-key:5',
+      ]),
     )
     expect(JSON.stringify(execute.mock.calls)).not.toMatch(
       /roles\/(?:owner|editor|firebase\.admin)/,
     )
   })
+
+  it('rejects a newly created runtime identity with a pre-provisioned unapproved direct project role', () => {
+    const serviceAccount =
+      'peecare-member-runtime@petcare-c7483.iam.gserviceaccount.com'
+    const member = `serviceAccount:${serviceAccount}`
+    const execute = vi.fn((_command: string, args: readonly string[]) => {
+      if (args[1] === 'service-accounts' && args[2] === 'list') {
+        return { status: 0, stdout: '' }
+      }
+      if (args[1] === 'get-iam-policy') {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            bindings: [{ role: 'roles/owner', members: [member] }],
+          }),
+        }
+      }
+      return { status: 0, stdout: '{"bindings":[]}' }
+    })
+
+    expect(() =>
+      runMemberDeploy({
+        environment: validEnvironment(),
+        args: [
+          '--apply',
+          '--image',
+          immutableImage,
+          '--revision-suffix',
+          revisionSuffix,
+        ],
+        manifest: loadMemberManifest(),
+        execute,
+        write: vi.fn(),
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'iam_drift_detected' }))
+    expect(execute).not.toHaveBeenCalledWith(
+      'gcloud',
+      expect.arrayContaining(['run', 'deploy']),
+    )
+  })
+
+  it('rejects direct runtime access to a non-allowlisted __proto__ project secret', () => {
+    const serviceAccount =
+      'peecare-member-runtime@petcare-c7483.iam.gserviceaccount.com'
+    const member = `serviceAccount:${serviceAccount}`
+    const execute = vi.fn((_command: string, args: readonly string[]) => {
+      if (args[1] === 'service-accounts' && args[2] === 'list') {
+        return { status: 0, stdout: `${serviceAccount}\n` }
+      }
+      if (args[0] === 'projects' && args[1] === 'get-iam-policy') {
+        return { status: 0, stdout: '{"bindings":[]}' }
+      }
+      if (args[0] === 'secrets' && args[1] === 'list') {
+        return {
+          status: 0,
+          stdout: JSON.stringify([{ name: '__proto__' }]),
+        }
+      }
+      if (args[0] === 'secrets' && args[1] === 'get-iam-policy') {
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            bindings: [
+              {
+                role: 'roles/secretmanager.secretAccessor',
+                members: [member],
+              },
+            ],
+          }),
+        }
+      }
+      return { status: 0, stdout: '' }
+    })
+
+    expect(() =>
+      runMemberDeploy({
+        environment: validEnvironment(),
+        args: [
+          '--apply',
+          '--image',
+          immutableImage,
+          '--revision-suffix',
+          revisionSuffix,
+        ],
+        manifest: loadMemberManifest(),
+        execute,
+        write: vi.fn(),
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'iam_drift_detected' }))
+    expect(execute).not.toHaveBeenCalledWith(
+      'gcloud',
+      expect.arrayContaining(['run', 'deploy']),
+    )
+  })
+
+  it.each([
+    ['non-array inventory', '{}'],
+    ['malformed inventory entry', '[{}]'],
+    ['empty inventory output', ''],
+  ])('rejects %s before IAM grants or Cloud Run deployment', (_case, inventory) => {
+    const serviceAccount =
+      'peecare-member-runtime@petcare-c7483.iam.gserviceaccount.com'
+    const execute = vi.fn((_command: string, args: readonly string[]) => {
+      if (args[1] === 'service-accounts' && args[2] === 'list') {
+        return { status: 0, stdout: `${serviceAccount}\n` }
+      }
+      if (args[0] === 'projects' && args[1] === 'get-iam-policy') {
+        return { status: 0, stdout: '{"bindings":[]}' }
+      }
+      if (args[0] === 'secrets' && args[1] === 'list') {
+        return { status: 0, stdout: inventory }
+      }
+      return { status: 0, stdout: '{"bindings":[]}' }
+    })
+
+    expect(() =>
+      runMemberDeploy({
+        environment: validEnvironment(),
+        args: [
+          '--apply',
+          '--image',
+          immutableImage,
+          '--revision-suffix',
+          revisionSuffix,
+        ],
+        manifest: loadMemberManifest(),
+        execute,
+        write: vi.fn(),
+      }),
+    ).toThrowError(expect.objectContaining({ code: 'iam_binding_failed' }))
+    expect(execute).not.toHaveBeenCalledWith(
+      'gcloud',
+      expect.arrayContaining(['run', 'deploy']),
+    )
+  })
+
+  it.each([
+    ['empty project policy', '', '[]', '{"bindings":[]}'],
+    [
+      'empty secret policy',
+      '{"bindings":[]}',
+      '[{"name":"peecare-claim-webhook-current"}]',
+      '',
+    ],
+  ])(
+    'rejects %s before IAM grants or Cloud Run deployment',
+    (_case, projectPolicy, inventory, secretPolicy) => {
+      const serviceAccount =
+        'peecare-member-runtime@petcare-c7483.iam.gserviceaccount.com'
+      const execute = vi.fn((_command: string, args: readonly string[]) => {
+        if (args[1] === 'service-accounts' && args[2] === 'list') {
+          return { status: 0, stdout: `${serviceAccount}\n` }
+        }
+        if (args[0] === 'projects' && args[1] === 'get-iam-policy') {
+          return { status: 0, stdout: projectPolicy }
+        }
+        if (args[0] === 'secrets' && args[1] === 'list') {
+          return { status: 0, stdout: inventory }
+        }
+        if (args[0] === 'secrets' && args[1] === 'get-iam-policy') {
+          return { status: 0, stdout: secretPolicy }
+        }
+        return { status: 0, stdout: '' }
+      })
+
+      expect(() =>
+        runMemberDeploy({
+          environment: validEnvironment(),
+          args: [
+            '--apply',
+            '--image',
+            immutableImage,
+            '--revision-suffix',
+            revisionSuffix,
+          ],
+          manifest: loadMemberManifest(),
+          execute,
+          write: vi.fn(),
+        }),
+      ).toThrowError(expect.objectContaining({ code: 'iam_binding_failed' }))
+      expect(execute).not.toHaveBeenCalledWith(
+        'gcloud',
+        expect.arrayContaining(['run', 'deploy']),
+      )
+    },
+  )
 
   it('contains no service-account private key material in deployment artifacts', () => {
     const deploymentArtifacts = [
@@ -445,7 +745,17 @@ describe('development Member API deployment', () => {
   it('passes the exact approved resource limits to Cloud Run', () => {
     const serviceAccount =
       'peecare-member-runtime@petcare-c7483.iam.gserviceaccount.com'
-    const execute = vi.fn(() => ({ status: 0, stdout: `${serviceAccount}\n` }))
+    const execute = vi.fn((_command: string, args: readonly string[]) => ({
+      status: 0,
+      stdout:
+        args[1] === 'service-accounts' && args[2] === 'list'
+          ? `${serviceAccount}\n`
+          : args[0] === 'secrets' && args[1] === 'list'
+            ? '[]'
+          : args[1] === 'get-iam-policy' || args[2] === 'get-iam-policy'
+            ? '{"bindings":[]}'
+            : '',
+    }))
 
     runMemberDeploy({
       environment: validEnvironment(),
@@ -511,7 +821,17 @@ describe('development Member API deployment', () => {
   it('configures public Cloud Run invocation without weakening application authorization', () => {
     const serviceAccount =
       'peecare-member-runtime@petcare-c7483.iam.gserviceaccount.com'
-    const execute = vi.fn(() => ({ status: 0, stdout: `${serviceAccount}\n` }))
+    const execute = vi.fn((_command: string, args: readonly string[]) => ({
+      status: 0,
+      stdout:
+        args[1] === 'service-accounts' && args[2] === 'list'
+          ? `${serviceAccount}\n`
+          : args[0] === 'secrets' && args[1] === 'list'
+            ? '[]'
+          : args[1] === 'get-iam-policy' || args[2] === 'get-iam-policy'
+            ? '{"bindings":[]}'
+            : '',
+    }))
 
     runMemberDeploy({
       environment: validEnvironment(),

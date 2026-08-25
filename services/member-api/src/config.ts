@@ -13,6 +13,14 @@ export interface MemberApiConfig {
   readonly allowedOrigin: string;
   readonly port: number;
   readonly firestore: FirestoreConfig;
+  readonly claim: MemberApiClaimConfig;
+}
+
+export interface MemberApiClaimConfig {
+  readonly webhookSecret: string;
+  readonly pairCodeHmacKey: string;
+  readonly pairCodeHmacKeyVersion: string;
+  readonly sharedMqttUsername: string;
 }
 
 function requireValue(value: string | undefined, name: string): string {
@@ -66,6 +74,55 @@ function parseEnvironment(value: string | undefined): 'production' | 'local' {
   throw new Error('NODE_ENV must be production, development, or test.');
 }
 
+function parseClaimConfig(env: NodeJS.ProcessEnv): MemberApiClaimConfig {
+  const webhookSecret = requireValue(
+    env.PEECARE_CLAIM_WEBHOOK_SECRET,
+    'PEECARE_CLAIM_WEBHOOK_SECRET',
+  );
+  if (!/^[^\s]+$/.test(webhookSecret)) {
+    throw new Error('PEECARE_CLAIM_WEBHOOK_SECRET must be a non-empty token.');
+  }
+
+  const pairCodeHmacKey = requireValue(
+    env.PEECARE_PAIR_CODE_HMAC_KEY,
+    'PEECARE_PAIR_CODE_HMAC_KEY',
+  );
+  if (Buffer.byteLength(pairCodeHmacKey, 'utf8') < 32) {
+    throw new Error('PEECARE_PAIR_CODE_HMAC_KEY must contain at least 32 bytes.');
+  }
+
+  const pairCodeHmacKeyVersion = requireValue(
+    env.PEECARE_PAIR_CODE_HMAC_KEY_VERSION,
+    'PEECARE_PAIR_CODE_HMAC_KEY_VERSION',
+  );
+  if (!/^[1-9][0-9]*$/.test(pairCodeHmacKeyVersion)) {
+    throw new Error(
+      'PEECARE_PAIR_CODE_HMAC_KEY_VERSION must be a positive numeric secret version.',
+    );
+  }
+
+  const sharedMqttUsername = requireValue(
+    env.PEECARE_CLAIM_SHARED_MQTT_USERNAME,
+    'PEECARE_CLAIM_SHARED_MQTT_USERNAME',
+  );
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(sharedMqttUsername)) {
+    throw new Error(
+      'PEECARE_CLAIM_SHARED_MQTT_USERNAME must be a bounded legacy identity.',
+    );
+  }
+
+  if (webhookSecret === pairCodeHmacKey) {
+    throw new Error('Claim webhook and Pair Code HMAC credentials must be independent.');
+  }
+
+  return {
+    webhookSecret,
+    pairCodeHmacKey,
+    pairCodeHmacKeyVersion,
+    sharedMqttUsername,
+  };
+}
+
 function validateEmulatorHost(value: string | undefined, name: string): string | undefined {
   if (value === undefined) return undefined;
   const match = value.match(/^127\.0\.0\.1:([1-9]\d{0,4})$/);
@@ -91,6 +148,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): MemberApiConfi
   const allowedOrigin = parseAllowedWebOrigin(
     requireValue(env.PEECARE_WEB_ORIGIN, 'PEECARE_WEB_ORIGIN'),
   );
+  const claim = parseClaimConfig(env);
   const firestoreEmulatorHost = validateEmulatorHost(
     env.FIRESTORE_EMULATOR_HOST,
     'FIRESTORE_EMULATOR_HOST',
@@ -113,6 +171,7 @@ export function readConfig(env: NodeJS.ProcessEnv = process.env): MemberApiConfi
       projectId,
       ...(firestoreEmulatorHost ? { emulatorHost: firestoreEmulatorHost } : {}),
     },
+    claim,
   };
 }
 

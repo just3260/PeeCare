@@ -25,6 +25,14 @@ type ApprovedLegacyPublisher = {
   username: string
 }
 
+type MutableClaimTemplate = {
+  claimRule: { sql: string; actions: string[] }
+  claimAction: { connector: string; parameters: { body: string } }
+  connector: { name: string }
+  action: { parameters: { body: string } }
+  [key: string]: unknown
+}
+
 const compatibilityApi = webhookConfiguration as typeof webhookConfiguration & {
   matchesLegacyCompatibilityDelivery: (
     delivery: LegacyCompatibilityDelivery,
@@ -56,6 +64,8 @@ const compatibilityApi = webhookConfiguration as typeof webhookConfiguration & {
 
 const currentSecretReference =
   'projects/petcare-c7483/secrets/peecare-emqx-webhook-current/versions/7'
+const claimSecretReference =
+  'projects/petcare-c7483/secrets/peecare-claim-webhook-current/versions/3'
 
 const approvedLegacyPublisher = {
   clientId: 'approved-legacy-client',
@@ -126,6 +136,11 @@ function configurationEnvironment(): NodeJS.ProcessEnv {
     PEECARE_INGESTION_SECRET_CURRENT_REF: currentSecretReference,
     PEECARE_EMQX_CONNECTOR_NAME: 'c-d1f775fd-ae8109',
     PEECARE_EMQX_ACTION_NAME: 'a-d1f775fd-1a0b6a',
+    PEECARE_DEVELOPMENT_MEMBER_ORIGIN:
+      'https://peecare-member-development-example.a.run.app',
+    PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF: claimSecretReference,
+    PEECARE_EMQX_CLAIM_CONNECTOR_NAME: 'c-d1f775fd-claim',
+    PEECARE_EMQX_CLAIM_ACTION_NAME: 'a-d1f775fd-claim',
   }
 }
 
@@ -171,6 +186,222 @@ describe('development EMQX webhook configuration', () => {
       '"products/+/devices/+/events/urination"',
       '"products/+/devices/+/status/battery"',
     ])
+  })
+
+  it('defines one exact bind rule/action on an independent Member API connector', () => {
+    const template = loadWebhookTemplate() as ReturnType<typeof loadWebhookTemplate> & {
+      claimRule: { id: string; enable: boolean; sql: string; actions: string[] }
+      claimConnector: {
+        type: string
+        name: string
+        url: string
+        ssl: { enable: boolean; verify: string }
+      }
+      claimAction: {
+        type: string
+        name: string
+        connector: string
+        parameters: {
+          method: string
+          path: string
+          headers: Record<string, string>
+          body: string
+        }
+      }
+    }
+
+    expect(() => validateWebhookTemplate(template)).not.toThrow()
+    expect(template.claimRule).toEqual({
+      id: 'peecare_development_device_claim',
+      name: 'peecare_development_device_claim',
+      description: 'Forward exact development bind deliveries to the Member API Claim webhook.',
+      enable: true,
+      sql: 'SELECT\n  topic,\n  clientid AS clientId,\n  username,\n  qos,\n  flags.retain AS retained,\n  publish_received_at AS brokerReceivedAtMs,\n  json_decode(payload) AS payload\nFROM "peecare/device/1/bind"\nWHERE qos = 0\n  AND flags.retain = false',
+      actions: ['http:{{PEECARE_EMQX_CLAIM_ACTION_NAME}}'],
+    })
+    expect(template.claimConnector).toMatchObject({
+      type: 'http',
+      name: '{{PEECARE_EMQX_CLAIM_CONNECTOR_NAME}}',
+      url: '{{PEECARE_DEVELOPMENT_MEMBER_ORIGIN}}',
+      ssl: { enable: true, verify: 'disabled' },
+    })
+    expect(template.claimConnector.name).not.toBe(template.connector.name)
+    expect(template.claimAction).toMatchObject({
+      type: 'http',
+      name: '{{PEECARE_EMQX_CLAIM_ACTION_NAME}}',
+      connector: '{{PEECARE_EMQX_CLAIM_CONNECTOR_NAME}}',
+      enable: true,
+      parameters: {
+        method: 'post',
+        path: '/v1/emqx/device-claims',
+        headers: { 'content-type': 'application/json' },
+        body: '{"webhookAuthorization":"Bearer {{PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT}}","event":${.}}',
+      },
+    })
+    expect(template.claimAction.parameters.body).not.toContain(
+      '{{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}',
+    )
+  })
+
+  it('emits the exact two-connector bounded Claim dry-run golden checklist without sensitive values', async () => {
+    const output: string[] = []
+    const result = await runEmqxWebhookConfiguration({
+      mode: 'dry-run',
+      environment: configurationEnvironment(),
+      template: loadWebhookTemplate(),
+      adapter: forbiddenAdapter(),
+      write: (line) => output.push(line),
+    })
+
+    expect(result).toMatchObject({
+      topologyLimits: {
+        connectorCount: 2,
+        maximumConnectorCount: 2,
+        ruleCount: 4,
+        maximumRuleCount: 4,
+      },
+      claimSecretReference,
+      claimSecretToken: '{{PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT}}',
+      checklist: {
+        claimConnector: {
+          name: 'c-d1f775fd-claim',
+          origin: 'https://peecare-member-development-example.a.run.app',
+          type: 'HTTP Server',
+          https: true,
+          tlsEnabled: true,
+          tlsVerify: 'disabled',
+        },
+        claimRule: {
+          id: 'peecare_development_device_claim',
+          enabled: true,
+          topicFilter: 'peecare/device/1/bind',
+          qos: 0,
+          retained: false,
+          actionCount: 1,
+        },
+        claimAction: {
+          name: 'a-d1f775fd-claim',
+          connectorName: 'c-d1f775fd-claim',
+          method: 'POST',
+          path: '/v1/emqx/device-claims',
+          contentType: 'application/json',
+          customHeaders: 'unsupported',
+          body: '{"webhookAuthorization":"Bearer {{PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT}}","event":${.}}',
+        },
+      },
+    })
+    expect(result.checklist.rule).toMatchObject({
+      id: 'peecare_development_telemetry',
+      topicFilters: [
+        'products/+/devices/+/events/urination',
+        'products/+/devices/+/status/battery',
+      ],
+    })
+    expect(result.checklist.action).toMatchObject({
+      path: '/v1/emqx/events',
+      body: '{"webhookAuthorization":"Bearer {{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}","event":${.}}',
+    })
+    expect(output).toEqual([JSON.stringify(result)])
+    expect(output[0]).not.toContain('12345678')
+    expect(output[0]).not.toContain('sentinel-claim-secret')
+    expect(output[0]).not.toContain('sentinel-current-secret')
+    expect(output[0]).not.toContain('firebase-token')
+    expect(output[0]).not.toContain('member-uid')
+    expect(output[0]).not.toContain('device_id')
+    expect(output[0]).not.toContain('pair_code')
+  })
+
+  it('fails closed when Claim and ingestion Secret Manager references are equal', async () => {
+    const adapter = forbiddenAdapter()
+
+    await expect(runEmqxWebhookConfiguration({
+      mode: 'dry-run',
+      environment: {
+        ...configurationEnvironment(),
+        PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF: currentSecretReference,
+      },
+      template: loadWebhookTemplate(),
+      adapter,
+      write: vi.fn(),
+    })).rejects.toMatchObject({ code: 'claim_credential_not_independent' })
+    expect(adapter.readApiSpec).not.toHaveBeenCalled()
+    expect(adapter.planConfiguration).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['missing Member API origin', { PEECARE_DEVELOPMENT_MEMBER_ORIGIN: undefined }, 'invalid_claim_target'],
+    ['non-HTTPS Member API origin', { PEECARE_DEVELOPMENT_MEMBER_ORIGIN: 'http://member.example.test' }, 'invalid_claim_target'],
+    ['ingestion origin reuse', { PEECARE_DEVELOPMENT_MEMBER_ORIGIN: 'https://peecare-ingestion-development-example.a.run.app' }, 'invalid_claim_target'],
+    ['missing Claim secret reference', { PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF: undefined }, 'invalid_claim_secret_reference'],
+    ['wrong Claim secret name', { PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF: 'projects/petcare-c7483/secrets/other/versions/3' }, 'invalid_claim_secret_reference'],
+    ['same connector identity', { PEECARE_EMQX_CLAIM_CONNECTOR_NAME: 'c-d1f775fd-ae8109' }, 'claim_integration_not_independent'],
+    ['same action identity', { PEECARE_EMQX_CLAIM_ACTION_NAME: 'a-d1f775fd-1a0b6a' }, 'claim_integration_not_independent'],
+  ])('fails closed for %s before any request', async (_case, overrides, code) => {
+    const adapter = forbiddenAdapter()
+
+    await expect(runEmqxWebhookConfiguration({
+      mode: 'dry-run',
+      environment: { ...configurationEnvironment(), ...overrides },
+      template: loadWebhookTemplate(),
+      adapter,
+      write: vi.fn(),
+    })).rejects.toMatchObject({ code })
+    expect(adapter.readApiSpec).not.toHaveBeenCalled()
+    expect(adapter.planConfiguration).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    {
+      case: 'wildcard bind topic',
+      mutate: (template: MutableClaimTemplate) => {
+        template.claimRule.sql = template.claimRule.sql.replace(
+          'peecare/device/1/bind',
+          'peecare/device/+/bind',
+        )
+      },
+      expectedCode: 'invalid_claim_template',
+    },
+    {
+      case: 'missing QoS predicate',
+      mutate: (template: MutableClaimTemplate) => {
+        template.claimRule.sql = template.claimRule.sql.replace('\nWHERE qos = 0', '')
+      },
+      expectedCode: 'invalid_claim_template',
+    },
+    {
+      case: 'ingestion connector reuse',
+      mutate: (template: MutableClaimTemplate) => {
+        template.claimAction.connector = template.connector.name
+      },
+      expectedCode: 'invalid_claim_template',
+    },
+    {
+      case: 'ingestion credential reuse',
+      mutate: (template: MutableClaimTemplate) => {
+        template.claimAction.parameters.body = template.action.parameters.body
+      },
+      expectedCode: 'invalid_secret_reference',
+    },
+    {
+      case: 'extra bind action',
+      mutate: (template: MutableClaimTemplate) => {
+        template.claimRule.actions.push('http:another-action')
+      },
+      expectedCode: 'invalid_claim_template',
+    },
+    {
+      case: 'fifth rule-shaped shadow topology',
+      mutate: (template: MutableClaimTemplate) => {
+        template.shadowTopology = structuredClone(template.claimRule)
+      },
+      expectedCode: 'invalid_template_schema',
+    },
+  ])('rejects a Claim template with $case', ({ mutate, expectedCode }) => {
+    const template = structuredClone(loadWebhookTemplate()) as MutableClaimTemplate
+    mutate(template)
+    expect(() => validateWebhookTemplate(template)).toThrowError(
+      expect.objectContaining({ code: expectedCode }),
+    )
   })
 
   it('defines a disabled independent compatibility rule and action without changing the canonical route', () => {
@@ -781,12 +1012,24 @@ describe('development EMQX webhook configuration', () => {
     expect(result).toMatchObject({
       compatibilityMode: 'disabled',
       checklist: {
+        rule: { enabled: true },
+        action: { enabled: true },
+        claimRule: { enabled: true },
+        claimAction: { enabled: true },
+        selectedTopology: {
+          mode: 'canonical_only',
+          ruleCount: 2,
+          actionCount: 2,
+        },
         compatibility: {
           rule: {
             id: 'peecare_development_legacy_status_compatibility',
             enabled: false,
             topicFilter: 'peecare/device/1/status',
           },
+          action: { enabled: false },
+          batteryRule: { enabled: false },
+          batteryAction: { enabled: false },
         },
       },
     })
@@ -807,10 +1050,13 @@ describe('development EMQX webhook configuration', () => {
       compatibilityMode: 'enabled',
       checklist: {
         rule: { enabled: false },
+        action: { enabled: false },
+        claimRule: { enabled: true },
+        claimAction: { enabled: true },
         selectedTopology: {
           mode: 'paired_compatibility',
-          ruleCount: 2,
-          actionCount: 2,
+          ruleCount: 3,
+          actionCount: 3,
         },
         compatibility: {
           rule: {
@@ -821,7 +1067,10 @@ describe('development EMQX webhook configuration', () => {
           action: {
             name: 'a-d1f775fd-compatibility',
             connectorName: 'c-d1f775fd-ae8109',
+            enabled: true,
           },
+          batteryRule: { enabled: true },
+          batteryAction: { enabled: true },
           fixedTarget: {
             productModel: 'pc-mini',
             deviceId: '68E274BD2A58',
@@ -1014,12 +1263,40 @@ describe('development EMQX webhook configuration', () => {
 
   it('provides a standalone Dashboard checklist with no secret value or custom-header instruction', () => {
     const checklist = readFileSync('deploy/development/emqx-serverless-console-checklist.md', 'utf8')
+    const ingestionRuleSection = checklist.match(
+      /## Ingestion rule\n([\s\S]*?)\n## Ingestion action/,
+    )?.[1]
+    const ingestionActionSection = checklist.match(
+      /## Ingestion action\n([\s\S]*?)\nThe Dashboard does not expose/,
+    )?.[1]
     expect(checklist).toContain('| Connection Pool Size | `2` |')
     expect(checklist).toContain('| HTTP Pipelining | `1` |')
     expect(checklist).toContain('| Connect Timeout | `10s` |')
     expect(checklist).toContain('| Health Check Interval | `15s` |')
     expect(checklist).toContain('`TLS Verify` | `disabled`')
     expect(checklist).toContain('{{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}')
+    expect(checklist).toContain('exactly **2 HTTPS connectors** and **4 rule')
+    expect(checklist).toContain(
+      '| `canonical_only` (`PEECARE_EMQX_LEGACY_COMPATIBILITY_MODE=disabled`) | Enabled / Enabled | Disabled / Disabled | Disabled / Disabled | **Enabled / Enabled** | 2 rules / 2 actions |',
+    )
+    expect(checklist).toContain(
+      '| `paired_compatibility` (`PEECARE_EMQX_LEGACY_COMPATIBILITY_MODE=enabled`) | Disabled / Disabled | Enabled / Enabled | Enabled / Enabled | **Enabled / Enabled** | 3 rules / 3 actions |',
+    )
+    expect(checklist).toContain('never enable the canonical ingestion pair together')
+    expect(ingestionRuleSection).toContain(
+      '| Enable | Mode-dependent | Follow the mutually exclusive topology matrix above. |',
+    )
+    expect(ingestionRuleSection).not.toContain('| Enable | `true` |')
+    expect(ingestionActionSection).toContain(
+      '| Enable | Mode-dependent | Follow the mutually exclusive topology matrix above. |',
+    )
+    expect(checklist).toContain('Exact `peecare/device/1/bind`')
+    expect(checklist).toContain('Exact `qos = 0` and `flags.retain = false`')
+    expect(checklist).toContain('/v1/emqx/device-claims')
+    expect(checklist).toContain('{{PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT}}')
+    expect(checklist).toContain('is not `$PEECARE_INGESTION_SECRET_CURRENT_REF`')
+    expect(checklist).toContain('shared MQTT')
+    expect(checklist).not.toContain('12345678')
     expect(checklist).toContain('custom headers are not persisted')
     expect(checklist).not.toContain('sentinel-current-secret')
     expect(checklist).not.toContain('credential in the URL')

@@ -11,9 +11,13 @@ const APPROVED_TOPIC_FILTERS = Object.freeze([
   'products/+/devices/+/status/battery',
 ])
 const CURRENT_SECRET_TOKEN = '{{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}'
+const CLAIM_SECRET_TOKEN = '{{PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT}}'
 const INGESTION_ORIGIN_TOKEN = '{{PEECARE_DEVELOPMENT_INGESTION_ORIGIN}}'
+const MEMBER_ORIGIN_TOKEN = '{{PEECARE_DEVELOPMENT_MEMBER_ORIGIN}}'
 const CONNECTOR_NAME_TOKEN = '{{PEECARE_EMQX_CONNECTOR_NAME}}'
+const CLAIM_CONNECTOR_NAME_TOKEN = '{{PEECARE_EMQX_CLAIM_CONNECTOR_NAME}}'
 const ACTION_NAME_TOKEN = '{{PEECARE_EMQX_ACTION_NAME}}'
+const CLAIM_ACTION_NAME_TOKEN = '{{PEECARE_EMQX_CLAIM_ACTION_NAME}}'
 const COMPATIBILITY_ACTION_NAME_TOKEN =
   '{{PEECARE_EMQX_COMPATIBILITY_ACTION_NAME}}'
 const BATTERY_COMPATIBILITY_ACTION_NAME_TOKEN =
@@ -31,6 +35,10 @@ const LEGACY_COMPATIBILITY_RULE_ID =
   'peecare_development_legacy_status_compatibility'
 const LEGACY_BATTERY_COMPATIBILITY_RULE_ID =
   'peecare_development_legacy_status_battery_compatibility'
+const CLAIM_RULE_ID = 'peecare_development_device_claim'
+const CLAIM_TOPIC = 'peecare/device/1/bind'
+const CLAIM_RULE_SQL =
+  'SELECT\n  topic,\n  clientid AS clientId,\n  username,\n  qos,\n  flags.retain AS retained,\n  publish_received_at AS brokerReceivedAtMs,\n  json_decode(payload) AS payload\nFROM "peecare/device/1/bind"\nWHERE qos = 0\n  AND flags.retain = false'
 const LEGACY_COMPATIBILITY_SQL =
   'SELECT\n  json_decode(payload) AS legacyPayload,\n  username,\n  qos,\n  publish_received_at,\n  CASE\n    WHEN is_num(legacyPayload.pumpSecondsToday)\n    THEN round(legacyPayload.pumpSecondsToday * 1000)\n    ELSE 0\n  END AS pumpDurationMs,\n  uuid_v4_no_hyphen() AS compatibilityUuid\nFROM "peecare/device/1/status"\nWHERE clientid = \'{{PEECARE_APPROVED_LEGACY_MQTT_CLIENT_ID}}\'\n  AND username = \'{{PEECARE_APPROVED_LEGACY_MQTT_USERNAME}}\'\n  AND flags.retain = false\n  AND is_map(legacyPayload)\n  AND is_bool(legacyPayload.online)\n  AND legacyPayload.online = true\n  AND is_num(legacyPayload.pumpSecondsToday)\n  AND legacyPayload.pumpSecondsToday >= 0\n  AND legacyPayload.pumpSecondsToday <= 4294967.295'
 const LEGACY_COMPATIBILITY_ACTION_BODY =
@@ -41,6 +49,8 @@ const LEGACY_BATTERY_COMPATIBILITY_ACTION_BODY =
   '{"webhookAuthorization":"Bearer {{PEECARE_EMQX_WEBHOOK_SECRET_CURRENT}}","event":{"topic":"products/pc-mini/devices/68E274BD2A58/status/battery","clientId":"68E274BD2A58","username":"Peecare","qos":${qos},"retained":false,"brokerReceivedAtMs":${publish_received_at},"payload":{"schemaVersion":1,"eventId":"compatbattery:68E274BD2A58:${compatibilityUuid}","eventType":"battery","deviceId":"68E274BD2A58","sequence":1,"recordedAtMs":${publish_received_at},"firmwareVersion":"1.0.0","batteryLevelPercent":${batteryLevelPercent},"batteryVoltageMv":${batteryVoltageMv}}}}'
 const SERVERLESS_ACTION_BODY =
   `{"webhookAuthorization":"Bearer ${CURRENT_SECRET_TOKEN}","event":\${.}}`
+const CLAIM_ACTION_BODY =
+  `{"webhookAuthorization":"Bearer ${CLAIM_SECRET_TOKEN}","event":\${.}}`
 const APPROVED_DELIVERY_POLICY = Object.freeze({
   pool_size: 2,
   enable_pipelining: 1,
@@ -53,6 +63,19 @@ const UNCONSTRAINED_ACTION_FIELDS = Object.freeze([
   'inflight_window',
   'max_buffer_bytes',
   'request_ttl',
+])
+const APPROVED_TEMPLATE_KEYS = Object.freeze([
+  'action',
+  'batteryCompatibilityAction',
+  'batteryCompatibilityRule',
+  'claimAction',
+  'claimConnector',
+  'claimRule',
+  'compatibilityAction',
+  'compatibilityRule',
+  'connector',
+  'rule',
+  'unconstrainedActionFields',
 ])
 
 export class EmqxWebhookConfigurationError extends Error {
@@ -304,11 +327,13 @@ function isDeepEqual(left, right) {
 }
 
 function validateDeliveryPolicy(template) {
-  const actual = Object.fromEntries(
-    Object.keys(APPROVED_DELIVERY_POLICY).map((key) => [key, template?.connector?.[key]]),
+  const actual = [template?.connector, template?.claimConnector].map((connector) =>
+    Object.fromEntries(
+      Object.keys(APPROVED_DELIVERY_POLICY).map((key) => [key, connector?.[key]]),
+    ),
   )
   if (
-    !isDeepEqual(actual, APPROVED_DELIVERY_POLICY) ||
+    actual.some((policy) => !isDeepEqual(policy, APPROVED_DELIVERY_POLICY)) ||
     JSON.stringify(template).includes('retry_interval')
   ) {
     fail(
@@ -321,7 +346,11 @@ function validateDeliveryPolicy(template) {
 function validateSecretToken(template) {
   if (
     template?.action?.parameters?.body !== SERVERLESS_ACTION_BODY ||
+    template?.claimAction?.parameters?.body !== CLAIM_ACTION_BODY ||
     !isDeepEqual(template?.action?.parameters?.headers, {
+      'content-type': 'application/json',
+    }) ||
+    !isDeepEqual(template?.claimAction?.parameters?.headers, {
       'content-type': 'application/json',
     })
   ) {
@@ -371,10 +400,55 @@ function validateEnvironment(environment) {
       'A numeric current Secret Manager version reference in the development project is required.',
     )
   }
+  const claimOrigin = validateHttpsOrigin(
+    environment?.PEECARE_DEVELOPMENT_MEMBER_ORIGIN,
+    'invalid_claim_target',
+    'Development Member API Claim target must be an HTTPS origin.',
+  )
+  if (claimOrigin === origin) {
+    fail(
+      'invalid_claim_target',
+      'Development Member API Claim target must be independent from ingestion.',
+    )
+  }
+  const claimSecretReference =
+    environment.PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF
+  if (claimSecretReference === secretReference) {
+    fail(
+      'claim_credential_not_independent',
+      'Claim and ingestion webhook credentials must use independent Secret Manager references.',
+    )
+  }
+  if (
+    typeof claimSecretReference !== 'string' ||
+    !/^projects\/(?:petcare-c7483|348528459946)\/secrets\/peecare-claim-webhook-current\/versions\/[1-9][0-9]*$/.test(
+      claimSecretReference,
+    )
+  ) {
+    fail(
+      'invalid_claim_secret_reference',
+      'A numeric Claim webhook Secret Manager version reference in the development project is required.',
+    )
+  }
   const connectorName = validateIntegrationIdentity(
     environment.PEECARE_EMQX_CONNECTOR_NAME,
   )
   const actionName = validateIntegrationIdentity(environment.PEECARE_EMQX_ACTION_NAME)
+  const claimConnectorName = validateIntegrationIdentity(
+    environment.PEECARE_EMQX_CLAIM_CONNECTOR_NAME,
+  )
+  const claimActionName = validateIntegrationIdentity(
+    environment.PEECARE_EMQX_CLAIM_ACTION_NAME,
+  )
+  if (
+    claimConnectorName === connectorName ||
+    claimActionName === actionName
+  ) {
+    fail(
+      'claim_integration_not_independent',
+      'Claim forwarding must use an independent connector and action identity.',
+    )
+  }
   const compatibilityMode =
     environment.PEECARE_EMQX_LEGACY_COMPATIBILITY_MODE ?? 'disabled'
   if (!['disabled', 'enabled'].includes(compatibilityMode)) {
@@ -389,6 +463,12 @@ function validateEnvironment(environment) {
       secretReference,
       connectorName,
       actionName,
+      claim: Object.freeze({
+        origin: claimOrigin,
+        secretReference: claimSecretReference,
+        connectorName: claimConnectorName,
+        actionName: claimActionName,
+      }),
       compatibility: Object.freeze({ mode: 'disabled' }),
     })
   }
@@ -410,7 +490,8 @@ function validateEnvironment(environment) {
       actionName,
       compatibilityActionName,
       batteryCompatibilityActionName,
-    ]).size !== 3
+      claimActionName,
+    ]).size !== 4
   ) {
     fail(
       'compatibility_precondition_unmet',
@@ -422,6 +503,12 @@ function validateEnvironment(environment) {
     secretReference,
     connectorName,
     actionName,
+    claim: Object.freeze({
+      origin: claimOrigin,
+      secretReference: claimSecretReference,
+      connectorName: claimConnectorName,
+      actionName: claimActionName,
+    }),
     compatibility: Object.freeze({
       mode: 'enabled',
       actionName: compatibilityActionName,
@@ -451,6 +538,7 @@ function configurationSummary(
   secretReference,
   connectorName,
   actionName,
+  claim,
   compatibility,
 ) {
   const compatibilityChecklist = Object.freeze({
@@ -469,6 +557,7 @@ function configurationSummary(
       method: 'POST',
       path: '/v1/emqx/events',
       body: LEGACY_COMPATIBILITY_ACTION_BODY,
+      enabled: compatibility.mode === 'enabled',
     }),
     batteryRule: Object.freeze({
       id: LEGACY_BATTERY_COMPATIBILITY_RULE_ID,
@@ -485,6 +574,7 @@ function configurationSummary(
       method: 'POST',
       path: '/v1/emqx/events',
       body: LEGACY_BATTERY_COMPATIBILITY_ACTION_BODY,
+      enabled: compatibility.mode === 'enabled',
     }),
     fixedTarget: Object.freeze({
       productModel: 'pc-mini',
@@ -514,12 +604,32 @@ function configurationSummary(
     secretToken: CURRENT_SECRET_TOKEN,
     connectorName,
     actionName,
+    claimSecretReference: claim.secretReference,
+    claimSecretToken: CLAIM_SECRET_TOKEN,
+    claimConnectorName: claim.connectorName,
+    claimActionName: claim.actionName,
+    topologyLimits: Object.freeze({
+      connectorCount: 2,
+      maximumConnectorCount: 2,
+      ruleCount: 4,
+      maximumRuleCount: 4,
+    }),
     deliveryPolicy: APPROVED_DELIVERY_POLICY,
     unconstrainedActionFields: UNCONSTRAINED_ACTION_FIELDS,
     checklist: Object.freeze({
       connector: Object.freeze({
         name: connectorName,
         origin,
+        type: 'HTTP Server',
+        https: true,
+        tlsEnabled: true,
+        tlsVerify: 'disabled',
+        tlsVerifyException: 'serverless_console_has_no_ca_bundle_field',
+        ...APPROVED_DELIVERY_POLICY,
+      }),
+      claimConnector: Object.freeze({
+        name: claim.connectorName,
+        origin: claim.origin,
         type: 'HTTP Server',
         https: true,
         tlsEnabled: true,
@@ -543,17 +653,36 @@ function configurationSummary(
         customHeaders: 'unsupported',
         body: SERVERLESS_ACTION_BODY,
       }),
+      claimRule: Object.freeze({
+        id: CLAIM_RULE_ID,
+        enabled: true,
+        sql: template.claimRule.sql,
+        topicFilter: CLAIM_TOPIC,
+        qos: 0,
+        retained: false,
+        actionCount: 1,
+      }),
+      claimAction: Object.freeze({
+        name: claim.actionName,
+        enabled: true,
+        connectorName: claim.connectorName,
+        method: 'POST',
+        path: '/v1/emqx/device-claims',
+        contentType: 'application/json',
+        customHeaders: 'unsupported',
+        body: CLAIM_ACTION_BODY,
+      }),
       selectedTopology: Object.freeze(
         compatibility.mode === 'enabled'
           ? {
               mode: 'paired_compatibility',
-              ruleCount: 2,
-              actionCount: 2,
+              ruleCount: 3,
+              actionCount: 3,
             }
           : {
               mode: 'canonical_only',
-              ruleCount: 1,
-              actionCount: 1,
+              ruleCount: 2,
+              actionCount: 2,
             },
       ),
       compatibility: compatibilityChecklist,
@@ -582,6 +711,7 @@ export async function runEmqxWebhookConfiguration({
     secretReference,
     connectorName,
     actionName,
+    claim,
     compatibility,
   } =
     validateEnvironment(environment)
@@ -591,6 +721,7 @@ export async function runEmqxWebhookConfiguration({
     secretReference,
     connectorName,
     actionName,
+    claim,
     compatibility,
   )
   write(JSON.stringify(summary))
@@ -598,6 +729,13 @@ export async function runEmqxWebhookConfiguration({
 }
 
 export function validateWebhookTemplate(template) {
+  const templateKeys = isPlainObject(template) ? Object.keys(template).sort() : []
+  if (!isDeepEqual(templateKeys, APPROVED_TEMPLATE_KEYS)) {
+    fail(
+      'invalid_template_schema',
+      'Serverless template must contain only the exact approved topology fields.',
+    )
+  }
   const filters =
     typeof template?.rule?.sql === 'string'
       ? [...template.rule.sql.matchAll(/"([^"]+)"/g)].map((match) => match[1])
@@ -659,6 +797,30 @@ export function validateWebhookTemplate(template) {
     )
   }
   if (
+    template?.claimRule?.id !== CLAIM_RULE_ID ||
+    template?.claimRule?.name !== CLAIM_RULE_ID ||
+    template?.claimRule?.enable !== true ||
+    template?.claimRule?.sql !== CLAIM_RULE_SQL ||
+    !isDeepEqual(template?.claimRule?.actions, [
+      `http:${CLAIM_ACTION_NAME_TOKEN}`,
+    ]) ||
+    template?.claimConnector?.type !== 'http' ||
+    template?.claimConnector?.name !== CLAIM_CONNECTOR_NAME_TOKEN ||
+    template?.claimConnector?.url !== MEMBER_ORIGIN_TOKEN ||
+    template?.claimConnector?.enable !== true ||
+    template?.claimAction?.type !== 'http' ||
+    template?.claimAction?.name !== CLAIM_ACTION_NAME_TOKEN ||
+    template?.claimAction?.connector !== CLAIM_CONNECTOR_NAME_TOKEN ||
+    template?.claimAction?.enable !== true ||
+    template?.claimAction?.parameters?.method !== 'post' ||
+    template?.claimAction?.parameters?.path !== '/v1/emqx/device-claims'
+  ) {
+    fail(
+      'invalid_claim_template',
+      'Claim connector, exact bind rule, and action must match the fixed development contract.',
+    )
+  }
+  if (
     template?.connector?.name !== CONNECTOR_NAME_TOKEN ||
     template?.connector?.url !== INGESTION_ORIGIN_TOKEN ||
     template?.action?.name !== ACTION_NAME_TOKEN ||
@@ -672,7 +834,9 @@ export function validateWebhookTemplate(template) {
   }
   if (
     template?.connector?.ssl?.enable !== true ||
-    template?.connector?.ssl?.verify !== 'disabled'
+    template?.connector?.ssl?.verify !== 'disabled' ||
+    template?.claimConnector?.ssl?.enable !== true ||
+    template?.claimConnector?.ssl?.verify !== 'disabled'
   ) {
     fail(
       'invalid_tls_exception',

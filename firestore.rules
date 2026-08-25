@@ -50,6 +50,17 @@ service cloud.firestore {
       }
     }
 
+    // Claim state is an Admin SDK-only trust boundary. Member authorization is
+    // enforced by the Member API status route, never by direct Web SDK access.
+    // Recursive matches keep any future nested Claim data fail closed too.
+    match /deviceClaimSessions/{document=**} {
+      allow read, write: if false;
+    }
+
+    match /activeDeviceClaims/{document=**} {
+      allow read, write: if false;
+    }
+
     // Deny-by-default baseline. Any path without an explicit allow above — and
     // every client write — is denied for authenticated and anonymous clients
     // alike. Future domain changes MUST add an explicit, tested delta rather than

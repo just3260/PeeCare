@@ -29,6 +29,7 @@
     "emqx:development:checklist": "node deploy/development/configure-emqx-webhook.mjs --dry-run",
     "emqx:development:verify:canonical": "node deploy/development/verify-emqx-webhook.mjs --canonical-only",
     "emqx:development:verify:compatibility": "node deploy/development/verify-emqx-webhook.mjs --compatibility",
+    "emqx:development:verify:claim:dry-run": "node deploy/development/verify-emqx-webhook.mjs --claim-dry-run",
     "emqx:development:verify:paired-compatibility": "node deploy/development/verify-emqx-webhook.mjs --compatibility",
     "device:development:dry-run": "node devices/development/provision-device.mjs --dry-run",
     "device:development:apply": "node devices/development/provision-device.mjs --apply --secret-output-tty",

@@ -11,6 +11,10 @@ function productionEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
     NODE_ENV: 'production',
     GOOGLE_CLOUD_PROJECT: 'peecare-development',
     PEECARE_WEB_ORIGIN: 'https://app.peecare.test',
+    PEECARE_CLAIM_WEBHOOK_SECRET: 'claim-webhook-secret-not-for-production',
+    PEECARE_PAIR_CODE_HMAC_KEY: 'pair-code-hmac-key-with-32-bytes-minimum',
+    PEECARE_PAIR_CODE_HMAC_KEY_VERSION: '7',
+    PEECARE_CLAIM_SHARED_MQTT_USERNAME: 'approved-legacy-device',
     PORT: '8080',
     ...overrides,
   };
@@ -39,15 +43,83 @@ describe('Member API runtime configuration', () => {
       allowedOrigin: 'https://app.peecare.test',
       port: 8080,
       firestore: { projectId: 'peecare-development' },
+      claim: {
+        webhookSecret: 'claim-webhook-secret-not-for-production',
+        pairCodeHmacKey: 'pair-code-hmac-key-with-32-bytes-minimum',
+        pairCodeHmacKeyVersion: '7',
+        sharedMqttUsername: 'approved-legacy-device',
+      },
     });
   });
 
   it.each([
     ['project', { GOOGLE_CLOUD_PROJECT: undefined }],
     ['origin', { PEECARE_WEB_ORIGIN: undefined }],
+    ['Claim webhook secret', { PEECARE_CLAIM_WEBHOOK_SECRET: undefined }],
+    ['Pair Code HMAC key', { PEECARE_PAIR_CODE_HMAC_KEY: undefined }],
+    ['Pair Code HMAC key version', { PEECARE_PAIR_CODE_HMAC_KEY_VERSION: undefined }],
+    ['Claim shared MQTT username', { PEECARE_CLAIM_SHARED_MQTT_USERNAME: undefined }],
   ])('rejects missing %s before constructing runtime clients', (_field, override) => {
     expect(() => readConfig(productionEnv(override))).toThrow('required');
   });
+
+  it.each([
+    ['Claim webhook secret', { PEECARE_CLAIM_WEBHOOK_SECRET: '' }],
+    ['Pair Code HMAC key', { PEECARE_PAIR_CODE_HMAC_KEY: '' }],
+    ['Pair Code HMAC key version', { PEECARE_PAIR_CODE_HMAC_KEY_VERSION: '' }],
+    ['Claim shared MQTT username', { PEECARE_CLAIM_SHARED_MQTT_USERNAME: '' }],
+  ])('rejects empty %s before constructing runtime clients', (_field, override) => {
+    expect(() => readConfig(productionEnv(override))).toThrow('required');
+  });
+
+  it.each(['0', '-1', '1.0', 'latest', '01', ' 7']) (
+    'rejects invalid Pair Code HMAC key version %j',
+    (pairCodeHmacKeyVersion) => {
+      expect(() =>
+        readConfig(
+          productionEnv({ PEECARE_PAIR_CODE_HMAC_KEY_VERSION: pairCodeHmacKeyVersion }),
+        ),
+      ).toThrow('positive numeric');
+    },
+  );
+
+  it('rejects equal Claim webhook and Pair Code HMAC credentials', () => {
+    const reusedCredential = 'reused-claim-credential-with-32-bytes';
+    expect(() =>
+      readConfig(
+        productionEnv({
+          PEECARE_CLAIM_WEBHOOK_SECRET: reusedCredential,
+          PEECARE_PAIR_CODE_HMAC_KEY: reusedCredential,
+        }),
+      ),
+    ).toThrow('must be independent');
+  });
+
+  it('rejects a Pair Code HMAC key shorter than 32 UTF-8 bytes', () => {
+    expect(() =>
+      readConfig(productionEnv({ PEECARE_PAIR_CODE_HMAC_KEY: 'too-short' })),
+    ).toThrow('32 bytes');
+  });
+
+  it.each(['has whitespace', ' leading', 'trailing ', 'line\nbreak']) (
+    'rejects invalid Claim webhook secret %j',
+    (webhookSecret) => {
+      expect(() =>
+        readConfig(productionEnv({ PEECARE_CLAIM_WEBHOOK_SECRET: webhookSecret })),
+      ).toThrow('token');
+    },
+  );
+
+  it.each(['contains space', '-leading-dash', 'a'.repeat(129)]) (
+    'rejects invalid Claim shared MQTT username %j',
+    (sharedMqttUsername) => {
+      expect(() =>
+        readConfig(
+          productionEnv({ PEECARE_CLAIM_SHARED_MQTT_USERNAME: sharedMqttUsername }),
+        ),
+      ).toThrow('legacy identity');
+    },
+  );
 
   it.each([
     ['invalid project', { GOOGLE_CLOUD_PROJECT: 'INVALID_PROJECT' }],
@@ -122,6 +194,12 @@ describe('Member API runtime configuration', () => {
       allowedOrigin: 'https://app.peecare.test',
       port: 8080,
       firestore: { projectId: 'peecare-development' },
+      claim: {
+        webhookSecret: 'claim-webhook-secret-not-for-production',
+        pairCodeHmacKey: 'pair-code-hmac-key-with-32-bytes-minimum',
+        pairCodeHmacKeyVersion: '7',
+        sharedMqttUsername: 'approved-legacy-device',
+      },
     });
   });
 
@@ -142,6 +220,12 @@ describe('Member API runtime configuration', () => {
       allowedOrigin: 'http://127.0.0.1:5173',
       port: 8080,
       firestore: { projectId: 'demo-peecare', emulatorHost: '127.0.0.1:8085' },
+      claim: {
+        webhookSecret: 'claim-webhook-secret-not-for-production',
+        pairCodeHmacKey: 'pair-code-hmac-key-with-32-bytes-minimum',
+        pairCodeHmacKeyVersion: '7',
+        sharedMqttUsername: 'approved-legacy-device',
+      },
     });
   });
 

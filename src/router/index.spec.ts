@@ -68,4 +68,15 @@ describe('router', () => {
     expect(callback).toMatchObject({ path: '/auth/email-link' })
     expect(callback?.meta?.requiresAuth).not.toBe(true)
   })
+
+  it('registers connect as a protected full-screen member route', () => {
+    const connect = createApplicationRoutes({ testToolEnabled: false }).find(
+      (route) => route.name === 'device-connect',
+    )
+
+    expect(connect).toMatchObject({
+      path: '/connect',
+      meta: { requiresAuth: true, hideBottomNavigation: true },
+    })
+  })
 })

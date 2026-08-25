@@ -134,6 +134,185 @@ tests:
 -->
 
 ---
+### Requirement: Dedicated device-bind Claim forwarding
+
+The development EMQX Serverless topology SHALL add one rule that matches exactly `peecare/device/1/bind` and invokes exactly one action through a second HTTPS connector targeting the verified Member API `/v1/emqx/device-claims` route. The action SHALL use QoS 0 source messages, SHALL preserve retained, clientId, username, broker timestamp, and decoded payload, and SHALL send an exact outer wrapper containing `webhookAuthorization` and `event`.
+
+The Claim connector SHALL use an independent Claim webhook credential and MUST NOT reuse the ingestion webhook credential. The combined development topology SHALL remain within the platform limits of two connectors and four rules.
+
+#### Scenario: Forward one bind delivery
+
+- **WHEN** the approved shared publisher sends a canonical bind message
+- **THEN** the Claim action sends one exact wrapper to the Member API Claim route
+- **AND** the telemetry ingestion connector and rules remain unchanged
+
+##### Example: Exact Claim event
+
+- **GIVEN** topic `peecare/device/1/bind`, QoS 0, retained false, device_id `68E274BD2A58`, and pair_code `12345678`
+- **WHEN** the Claim action renders the request body
+- **THEN** event preserves those values together with clientId, username, and brokerReceivedAtMs
+
+
+<!-- @trace
+source: add-device-claim-onboarding
+updated: 2026-08-26
+code:
+  - deploy/development/emqx-webhook.template.json
+  - src/features/device-claim/device-claim-store.ts
+  - deploy/development/verify-member.mjs
+  - deploy/development/MEMBER_API_RUNBOOK.md
+  - src/features/device-claim/device-claim-api.ts
+  - deploy/development/emqx-serverless-console-checklist.md
+  - deploy/development/deploy-member.d.mts
+  - src/views/HomeView.vue
+  - src/views/DeviceConnectView.vue
+  - deploy/development/verify-emqx-webhook.mjs
+  - services/member-api/src/config.ts
+  - services/member-api/src/http/errors.ts
+  - devices/development/fixtures/legacy-bind-retry.json
+  - devices/development/legacy-bind-policy.mjs
+  - deploy/development/verify-member.d.mts
+  - deploy/development/member-service.yaml
+  - scripts/test-firebase.mjs
+  - src/features/device-claim/device-claim-store-key.ts
+  - deploy/development/deploy-member.mjs
+  - deploy/development/EMQX_RUNBOOK.md
+  - services/member-api/src/security/emqx-claim-auth.ts
+  - firestore.rules
+  - firebase/local/fixtures/device-claims.ts
+  - services/member-api/src/app.ts
+  - services/member-api/src/claims/claim-service.ts
+  - package.json
+  - src/components/WifiConnectionGuideDialog.vue
+  - src/features/device-claim/device-id-input.ts
+  - src/router/index.ts
+  - services/member-api/src/claims/emqx-device-claim-route.ts
+  - devices/development/legacy-bind-policy.json
+  - deploy/development/configure-emqx-webhook.mjs
+  - services/member-api/src/server.ts
+  - services/member-api/src/firestore/device-claim-repository.ts
+  - src/main.ts
+  - src/features/device-claim/device-claim-session-storage.ts
+  - services/member-api/src/claims/pair-code.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.ts
+tests:
+  - src/router/index.spec.ts
+  - deploy/development/verify-emqx-webhook.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/device-claim/device-id-input.spec.ts
+  - services/member-api/test/member-claim-routes.test.ts
+  - services/member-api/test/device-claim-firestore.integration.test.ts
+  - src/features/device-claim/device-claim-store.spec.ts
+  - services/member-api/test/server.test.ts
+  - scripts/test-firebase.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/emqx-device-claim-route.test.ts
+  - src/components/WifiConnectionGuideDialog.spec.ts
+  - src/views/DeviceConnectView.spec.ts
+  - services/member-api/test/pair-code.test.ts
+  - src/router/auth-guard.spec.ts
+  - deploy/development/verify-member.spec.ts
+  - devices/development/legacy-bind-policy.spec.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.spec.ts
+  - services/member-api/test/config.test.ts
+  - deploy/development/deploy-member.spec.ts
+  - deploy/development/configure-emqx-webhook.spec.ts
+  - services/member-api/test/emqx-claim-auth.test.ts
+  - services/member-api/test/claim-service.test.ts
+  - src/features/device-claim/device-claim-api.spec.ts
+  - src/features/device-claim/device-claim-session-storage.spec.ts
+-->
+
+---
+### Requirement: Claim forwarding credential isolation
+
+Development verification SHALL prove that the Claim credential is accepted only by the Member API Claim route, the ingestion credential is accepted only by the ingestion route, and Firebase bearer tokens authenticate only member routes. Verification output MUST contain no credential, Pair Code, UID, complete payload, or Authorization value.
+
+#### Scenario: Reject an ingestion credential at Claim ingress
+
+- **WHEN** the Claim route receives a wrapper signed with the ingestion credential
+- **THEN** it returns HTTP 401 and performs zero Claim persistence
+
+#### Scenario: Produce sanitized bind evidence
+
+- **WHEN** the bind verifier completes
+- **THEN** its evidence contains only allowlisted connector, rule, route, HTTP status, requestId, and outcome metadata
+- **AND** it does not describe the shared publisher as physical-device attestation
+
+
+<!-- @trace
+source: add-device-claim-onboarding
+updated: 2026-08-26
+code:
+  - deploy/development/emqx-webhook.template.json
+  - src/features/device-claim/device-claim-store.ts
+  - deploy/development/verify-member.mjs
+  - deploy/development/MEMBER_API_RUNBOOK.md
+  - src/features/device-claim/device-claim-api.ts
+  - deploy/development/emqx-serverless-console-checklist.md
+  - deploy/development/deploy-member.d.mts
+  - src/views/HomeView.vue
+  - src/views/DeviceConnectView.vue
+  - deploy/development/verify-emqx-webhook.mjs
+  - services/member-api/src/config.ts
+  - services/member-api/src/http/errors.ts
+  - devices/development/fixtures/legacy-bind-retry.json
+  - devices/development/legacy-bind-policy.mjs
+  - deploy/development/verify-member.d.mts
+  - deploy/development/member-service.yaml
+  - scripts/test-firebase.mjs
+  - src/features/device-claim/device-claim-store-key.ts
+  - deploy/development/deploy-member.mjs
+  - deploy/development/EMQX_RUNBOOK.md
+  - services/member-api/src/security/emqx-claim-auth.ts
+  - firestore.rules
+  - firebase/local/fixtures/device-claims.ts
+  - services/member-api/src/app.ts
+  - services/member-api/src/claims/claim-service.ts
+  - package.json
+  - src/components/WifiConnectionGuideDialog.vue
+  - src/features/device-claim/device-id-input.ts
+  - src/router/index.ts
+  - services/member-api/src/claims/emqx-device-claim-route.ts
+  - devices/development/legacy-bind-policy.json
+  - deploy/development/configure-emqx-webhook.mjs
+  - services/member-api/src/server.ts
+  - services/member-api/src/firestore/device-claim-repository.ts
+  - src/main.ts
+  - src/features/device-claim/device-claim-session-storage.ts
+  - services/member-api/src/claims/pair-code.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.ts
+tests:
+  - src/router/index.spec.ts
+  - deploy/development/verify-emqx-webhook.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/device-claim/device-id-input.spec.ts
+  - services/member-api/test/member-claim-routes.test.ts
+  - services/member-api/test/device-claim-firestore.integration.test.ts
+  - src/features/device-claim/device-claim-store.spec.ts
+  - services/member-api/test/server.test.ts
+  - scripts/test-firebase.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/emqx-device-claim-route.test.ts
+  - src/components/WifiConnectionGuideDialog.spec.ts
+  - src/views/DeviceConnectView.spec.ts
+  - services/member-api/test/pair-code.test.ts
+  - src/router/auth-guard.spec.ts
+  - deploy/development/verify-member.spec.ts
+  - devices/development/legacy-bind-policy.spec.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.spec.ts
+  - services/member-api/test/config.test.ts
+  - deploy/development/deploy-member.spec.ts
+  - deploy/development/configure-emqx-webhook.spec.ts
+  - services/member-api/test/emqx-claim-auth.test.ts
+  - services/member-api/test/claim-service.test.ts
+  - src/features/device-claim/device-claim-api.spec.ts
+  - src/features/device-claim/device-claim-session-storage.spec.ts
+-->
+
+---
 ### Requirement: Referenced Bearer secret
 
 The Serverless action SHALL send the current Bearer secret through the fixed `webhookAuthorization` field in the outer JSON body because the deployed console does not persist custom action headers. The ingestion endpoint SHALL continue accepting the existing custom Authorization header with a raw envelope for compatible non-Serverless callers. Header and body credential transports SHALL be mutually exclusive, SHALL use the same constant-time current-or-previous secret comparison, and SHALL NOT persist or log their value in repository artifacts, URLs, Firestore, structured logs, or verification output.

@@ -4,6 +4,8 @@ export type MemberApiErrorCode =
   | 'invalid_custom_name'
   | 'unauthorized'
   | 'device_not_found'
+  | 'claim_in_progress'
+  | 'already_owned'
   | 'body_too_large'
   | 'unsupported_media_type'
   | 'malformed_json'

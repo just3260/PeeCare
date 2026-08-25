@@ -194,3 +194,174 @@ tests:
   - devices/development/credential-lifecycle.spec.ts
   - deploy/development/deploy-ingestion.spec.ts
 -->
+
+---
+### Requirement: Shared-credential legacy bind publisher
+
+The development environment SHALL permit the approved shared legacy MQTT identity to publish only QoS 0 non-retained device-bind messages to `peecare/device/1/bind` with an exact payload containing `device_id` and `pair_code`. This policy SHALL remain separate from the per-device canonical telemetry ACL and MUST NOT add bind permission to a per-device principal whose existing deny-all fallback excludes it.
+
+The shared username, clientId, and payload device_id MUST NOT be treated as per-device cryptographic proof. The payload device_id SHALL use exactly twelve uppercase hexadecimal characters and pair_code SHALL use exactly eight ASCII digits.
+
+#### Scenario: Publish the approved bind shape
+
+- **WHEN** the shared development publisher sends QoS 0 retained false payload `{"device_id":"68E274BD2A58","pair_code":"12345678"}` to `peecare/device/1/bind`
+- **THEN** the Broker accepts it for the dedicated Claim rule
+
+#### Scenario: Preserve the canonical telemetry ACL
+
+- **WHEN** principal `device-68E274BD2A58` is verified after Claim support is configured
+- **THEN** it retains its existing QoS 1 urination and battery permissions and deny-all fallback
+- **AND** receives no implicit wildcard or legacy bind permission
+
+
+<!-- @trace
+source: add-device-claim-onboarding
+updated: 2026-08-26
+code:
+  - deploy/development/emqx-webhook.template.json
+  - src/features/device-claim/device-claim-store.ts
+  - deploy/development/verify-member.mjs
+  - deploy/development/MEMBER_API_RUNBOOK.md
+  - src/features/device-claim/device-claim-api.ts
+  - deploy/development/emqx-serverless-console-checklist.md
+  - deploy/development/deploy-member.d.mts
+  - src/views/HomeView.vue
+  - src/views/DeviceConnectView.vue
+  - deploy/development/verify-emqx-webhook.mjs
+  - services/member-api/src/config.ts
+  - services/member-api/src/http/errors.ts
+  - devices/development/fixtures/legacy-bind-retry.json
+  - devices/development/legacy-bind-policy.mjs
+  - deploy/development/verify-member.d.mts
+  - deploy/development/member-service.yaml
+  - scripts/test-firebase.mjs
+  - src/features/device-claim/device-claim-store-key.ts
+  - deploy/development/deploy-member.mjs
+  - deploy/development/EMQX_RUNBOOK.md
+  - services/member-api/src/security/emqx-claim-auth.ts
+  - firestore.rules
+  - firebase/local/fixtures/device-claims.ts
+  - services/member-api/src/app.ts
+  - services/member-api/src/claims/claim-service.ts
+  - package.json
+  - src/components/WifiConnectionGuideDialog.vue
+  - src/features/device-claim/device-id-input.ts
+  - src/router/index.ts
+  - services/member-api/src/claims/emqx-device-claim-route.ts
+  - devices/development/legacy-bind-policy.json
+  - deploy/development/configure-emqx-webhook.mjs
+  - services/member-api/src/server.ts
+  - services/member-api/src/firestore/device-claim-repository.ts
+  - src/main.ts
+  - src/features/device-claim/device-claim-session-storage.ts
+  - services/member-api/src/claims/pair-code.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.ts
+tests:
+  - src/router/index.spec.ts
+  - deploy/development/verify-emqx-webhook.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/device-claim/device-id-input.spec.ts
+  - services/member-api/test/member-claim-routes.test.ts
+  - services/member-api/test/device-claim-firestore.integration.test.ts
+  - src/features/device-claim/device-claim-store.spec.ts
+  - services/member-api/test/server.test.ts
+  - scripts/test-firebase.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/emqx-device-claim-route.test.ts
+  - src/components/WifiConnectionGuideDialog.spec.ts
+  - src/views/DeviceConnectView.spec.ts
+  - services/member-api/test/pair-code.test.ts
+  - src/router/auth-guard.spec.ts
+  - deploy/development/verify-member.spec.ts
+  - devices/development/legacy-bind-policy.spec.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.spec.ts
+  - services/member-api/test/config.test.ts
+  - deploy/development/deploy-member.spec.ts
+  - deploy/development/configure-emqx-webhook.spec.ts
+  - services/member-api/test/emqx-claim-auth.test.ts
+  - services/member-api/test/claim-service.test.ts
+  - src/features/device-claim/device-claim-api.spec.ts
+  - src/features/device-claim/device-claim-session-storage.spec.ts
+-->
+
+---
+### Requirement: Bounded QoS 0 bind retry
+
+The device integration contract SHALL publish the same bind topic and exact payload at 0, 5, and 10 seconds. It MUST NOT rotate Pair Code, device_id, QoS, or retained state between retries and SHALL NOT claim that any QoS 0 publish confirms ownership.
+
+#### Scenario: Retry after no acknowledgement
+
+- **WHEN** the device cannot observe Claim completion after its initial QoS 0 bind publish
+- **THEN** its next two publishes preserve device_id `68E274BD2A58` and Pair Code `12345678`
+
+<!-- @trace
+source: add-device-claim-onboarding
+updated: 2026-08-26
+code:
+  - deploy/development/emqx-webhook.template.json
+  - src/features/device-claim/device-claim-store.ts
+  - deploy/development/verify-member.mjs
+  - deploy/development/MEMBER_API_RUNBOOK.md
+  - src/features/device-claim/device-claim-api.ts
+  - deploy/development/emqx-serverless-console-checklist.md
+  - deploy/development/deploy-member.d.mts
+  - src/views/HomeView.vue
+  - src/views/DeviceConnectView.vue
+  - deploy/development/verify-emqx-webhook.mjs
+  - services/member-api/src/config.ts
+  - services/member-api/src/http/errors.ts
+  - devices/development/fixtures/legacy-bind-retry.json
+  - devices/development/legacy-bind-policy.mjs
+  - deploy/development/verify-member.d.mts
+  - deploy/development/member-service.yaml
+  - scripts/test-firebase.mjs
+  - src/features/device-claim/device-claim-store-key.ts
+  - deploy/development/deploy-member.mjs
+  - deploy/development/EMQX_RUNBOOK.md
+  - services/member-api/src/security/emqx-claim-auth.ts
+  - firestore.rules
+  - firebase/local/fixtures/device-claims.ts
+  - services/member-api/src/app.ts
+  - services/member-api/src/claims/claim-service.ts
+  - package.json
+  - src/components/WifiConnectionGuideDialog.vue
+  - src/features/device-claim/device-id-input.ts
+  - src/router/index.ts
+  - services/member-api/src/claims/emqx-device-claim-route.ts
+  - devices/development/legacy-bind-policy.json
+  - deploy/development/configure-emqx-webhook.mjs
+  - services/member-api/src/server.ts
+  - services/member-api/src/firestore/device-claim-repository.ts
+  - src/main.ts
+  - src/features/device-claim/device-claim-session-storage.ts
+  - services/member-api/src/claims/pair-code.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.ts
+tests:
+  - src/router/index.spec.ts
+  - deploy/development/verify-emqx-webhook.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/device-claim/device-id-input.spec.ts
+  - services/member-api/test/member-claim-routes.test.ts
+  - services/member-api/test/device-claim-firestore.integration.test.ts
+  - src/features/device-claim/device-claim-store.spec.ts
+  - services/member-api/test/server.test.ts
+  - scripts/test-firebase.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/emqx-device-claim-route.test.ts
+  - src/components/WifiConnectionGuideDialog.spec.ts
+  - src/views/DeviceConnectView.spec.ts
+  - services/member-api/test/pair-code.test.ts
+  - src/router/auth-guard.spec.ts
+  - deploy/development/verify-member.spec.ts
+  - devices/development/legacy-bind-policy.spec.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.spec.ts
+  - services/member-api/test/config.test.ts
+  - deploy/development/deploy-member.spec.ts
+  - deploy/development/configure-emqx-webhook.spec.ts
+  - services/member-api/test/emqx-claim-auth.test.ts
+  - services/member-api/test/claim-service.test.ts
+  - src/features/device-claim/device-claim-api.spec.ts
+  - src/features/device-claim/device-claim-session-storage.spec.ts
+-->

@@ -419,11 +419,13 @@ describe('Member API application boundary', () => {
 
     expect(successLogs).toContainEqual({
       requestId: successResponse.headers['x-request-id'],
+      routeClass: 'device_name',
       statusCode: 200,
       outcome: 'request_complete',
     });
     expect(failureLogs).toContainEqual({
       requestId: failureResponse.headers['x-request-id'],
+      routeClass: 'device_name',
       statusCode: 500,
       outcome: 'request_complete',
     });

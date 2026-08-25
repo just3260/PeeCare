@@ -11,6 +11,10 @@ import {
 } from '@/features/devices/device-overview-store'
 import { DEVICE_OVERVIEW_STORE_KEY } from '@/features/devices/device-overview-store-key'
 import { createMemberDeviceApi } from '@/features/devices/member-device-api'
+import { createDeviceClaimApi } from '@/features/device-claim/device-claim-api'
+import { registerDeviceClaimAuthLifecycle } from '@/features/device-claim/device-claim-auth-lifecycle'
+import { createDeviceClaimStore } from '@/features/device-claim/device-claim-store'
+import { DEVICE_CLAIM_STORE_KEY } from '@/features/device-claim/device-claim-store-key'
 import { getFirebaseServices } from '@/platform/firebase/client'
 import { parseMemberApiConfig } from '@/platform/firebase/config'
 import { createTestToolApi } from '@/features/test-tool/test-tool-api'
@@ -32,6 +36,9 @@ const memberApiConfig = parseMemberApiConfig(import.meta.env)
 const authStore = createAuthStore()
 const authProvider = createFirebaseAuthProvider()
 const memberDeviceApi = createMemberDeviceApi({ baseUrl: memberApiConfig.baseUrl })
+const deviceClaimStore = createDeviceClaimStore({
+  api: createDeviceClaimApi({ baseUrl: memberApiConfig.baseUrl }),
+})
 const testToolApi = import.meta.env.VITE_FIREBASE_ENVIRONMENT === 'development'
   ? createTestToolApi({ baseUrl: parseTestToolApiConfig(import.meta.env).baseUrl })
   : null
@@ -43,6 +50,7 @@ const deviceOverviewStore = createDeviceOverviewStore({
   memberApi: memberDeviceApi,
   registry: authStore.registry,
 })
+registerDeviceClaimAuthLifecycle(authStore, deviceClaimStore)
 const deviceEventHistoryStore = createDeviceEventHistoryStore({
   source: {
     loadPage(deviceId, cursor) {
@@ -65,6 +73,7 @@ app.use(router)
 app.provide(AUTH_STORE_KEY, authStore)
 app.provide(AUTH_PROVIDER_KEY, authProvider)
 app.provide(DEVICE_OVERVIEW_STORE_KEY, deviceOverviewStore)
+app.provide(DEVICE_CLAIM_STORE_KEY, deviceClaimStore)
 app.provide(DEVICE_EVENT_HISTORY_STORE_KEY, deviceEventHistoryStore)
 app.provide(DAILY_STATS_STORE_KEY, dailyStatsStore)
 if (testToolApi !== null) app.provide(TEST_TOOL_API_KEY, testToolApi)

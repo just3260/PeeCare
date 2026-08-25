@@ -13,6 +13,8 @@ import SettingsView from '@/views/SettingsView.vue'
 import SignInView from '@/views/SignInView.vue'
 import EmailLinkSignInView from '@/views/EmailLinkSignInView.vue'
 import TestToolView from '@/views/TestToolView.vue'
+import DeviceConnectView from '@/views/DeviceConnectView.vue'
+import { parseDeviceConnectQuery } from '@/features/device-claim/device-id-input'
 import type { AuthState } from '@/features/auth/session'
 
 // Route-level auth requirement. Protected routes wait for the initial session
@@ -54,6 +56,12 @@ const MEMBER_ROUTES: RouteRecordRaw[] = [
     name: 'settings',
     component: SettingsView,
     meta: { requiresAuth: true },
+  },
+  {
+    path: '/connect',
+    name: 'device-connect',
+    component: DeviceConnectView,
+    meta: { requiresAuth: true, hideBottomNavigation: true },
   },
   {
     // Device management moved into the settings page; the legacy path now
@@ -110,6 +118,21 @@ export interface AuthGuardStore {
   whenResolved(): Promise<void>
 }
 
+function authReturnPath(to: {
+  readonly path: string
+  readonly fullPath: string
+  readonly hash: string
+  readonly query: Readonly<Record<string, string | null | readonly (string | null)[] | undefined>>
+}): string {
+  if (to.path !== '/connect') return to.fullPath
+  if (to.hash.length > 0) return '/connect'
+
+  const selection = parseDeviceConnectQuery(to.query)
+  return selection.status === 'selected'
+    ? `/connect?deviceId=${selection.deviceId}`
+    : '/connect'
+}
+
 /**
  * Attach the member-session guard: every navigation waits for the first
  * authentication result, protected routes redirect signed-out visitors to
@@ -123,7 +146,7 @@ export function registerAuthGuard(router: Router, store: AuthGuardStore): void {
 
     const requiresAuth = to.matched.some((record) => record.meta.requiresAuth)
     if (requiresAuth && state.status !== 'signed-in') {
-      return { path: '/sign-in', query: { returnTo: to.fullPath } }
+      return { path: '/sign-in', query: { returnTo: authReturnPath(to) } }
     }
 
     if (to.name === 'sign-in' && state.status === 'signed-in') {

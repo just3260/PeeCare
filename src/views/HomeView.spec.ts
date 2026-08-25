@@ -39,11 +39,14 @@ const WifiConnectionGuideDialogStub = defineComponent({
   props: {
     open: { type: Boolean, required: true },
   },
-  emits: ['close'],
+  emits: ['close', 'start'],
   template: `
     <div v-if="open" role="dialog" data-test="wifi-guide-dialog">
       <button type="button" data-test="wifi-guide-dialog-close" @click="$emit('close')">
         關閉 Wi-Fi 連線說明
+      </button>
+      <button type="button" data-test="wifi-guide-dialog-start" @click="$emit('start')">
+        設定新裝置
       </button>
     </div>
   `,
@@ -319,7 +322,19 @@ describe('HomeView overview states', () => {
   it('guides the empty state to the settings device management', () => {
     const wrapper = mountHomeView(makeDeviceStore({ state: { status: 'empty' } }))
     const guidance = wrapper.get('[data-test="overview-settings-guidance"]')
-    expect(guidance.attributes('href')).toBe('/settings')
+    expect(guidance.attributes('href')).toBe('/connect')
+    expect(guidance.text()).toContain('設定新裝置')
+  })
+
+  it('opens the protected connect route from the guide action', async () => {
+    const wrapper = mountHomeView(makeDeviceStore({ state: { status: 'empty' } }))
+    await flushPromises()
+
+    await wrapper.get('[data-test="wifi-guide-dialog-start"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.vm.$router.currentRoute.value.path).toBe('/connect')
+    expect(wrapper.find('[data-test="wifi-guide-dialog"]').exists()).toBe(false)
   })
 
   it('renders the ready state with status cards and no fabricated measurements', () => {

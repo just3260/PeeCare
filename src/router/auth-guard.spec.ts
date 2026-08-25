@@ -176,6 +176,38 @@ describe('protected member navigation', () => {
     expect(router.currentRoute.value.query.returnTo).toBe('/')
   })
 
+  it('preserves the complete safe connect deep link through sign-in', async () => {
+    const { store } = createGuardStore({ status: 'signed-out' })
+    const router = createGuardedRouter(store)
+
+    router.push('/connect?deviceId=68E274BD2A58')
+    await router.isReady()
+
+    expect(router.currentRoute.value.path).toBe('/sign-in')
+    expect(router.currentRoute.value.query).toEqual({
+      returnTo: '/connect?deviceId=68E274BD2A58',
+    })
+  })
+
+  it.each([
+    ['/connect?deviceId=68E274BD2A58&token=sensitive-token', 'sensitive-token'],
+    ['/connect?deviceId=68E274BD2A58&code=00123456', '00123456'],
+    ['/connect?deviceId=68E274BD2A58&uid=member-private', 'member-private'],
+    ['/connect?deviceId=68E274BD2A58&deviceId=001122334455', '001122334455'],
+    ['/connect?deviceId=68E274BD2A5G', '68E274BD2A5G'],
+    ['/connect?deviceId=68E274BD2A58#sensitive-fragment', 'sensitive-fragment'],
+  ])('canonicalizes an unsafe connect return path before sign-in: %s', async (path, sensitive) => {
+    const { store } = createGuardStore({ status: 'signed-out' })
+    const router = createGuardedRouter(store)
+
+    router.push(path)
+    await router.isReady()
+
+    expect(router.currentRoute.value.path).toBe('/sign-in')
+    expect(router.currentRoute.value.query.returnTo).toBe('/connect')
+    expect(JSON.stringify(router.currentRoute.value.query)).not.toContain(sensitive)
+  })
+
   it('supports a signed-in direct reload of the protected development tester route', async () => {
     const { store } = createGuardStore({
       status: 'signed-in',

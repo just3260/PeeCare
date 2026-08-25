@@ -18,6 +18,7 @@ export const FIREBASE_SUITES = [
       '--',
       '--run',
       'test/device-name-firestore.integration.test.ts',
+      'test/device-claim-firestore.integration.test.ts',
       'test/authenticated-member-flow.integration.test.ts',
     ],
   ],

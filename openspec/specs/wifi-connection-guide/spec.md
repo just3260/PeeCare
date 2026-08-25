@@ -8,30 +8,171 @@ TBD
 
 ### Requirement: Single-page illustrated Wi-Fi guide
 
-The Web app SHALL present a Wi-Fi connection guide as one vertically scrollable dialog containing six ordered, text-described steps with decorative visual markers. The guide SHALL NOT divide the steps into carousel pages and SHALL NOT rely on a visual marker as the only source of instruction.
+The Web app SHALL present a Wi-Fi connection and device-claim guide as one vertically scrollable dialog containing nine ordered, text-described steps with decorative visual markers. The guide SHALL NOT divide the steps into carousel pages and SHALL NOT rely on a visual marker as the only source of instruction.
 
-#### Scenario: Review the complete connection sequence
+#### Scenario: Review the complete onboarding sequence
 
 - **WHEN** a member opens the Wi-Fi connection guide
-- **THEN** the dialog shows, in order, instructions to enter device setup mode, connect the phone to the PeeCare temporary Wi-Fi, wait for the hardware setup page, select and authenticate to the target Wi-Fi, wait for the hardware to leave the temporary network, and restore the phone network before returning to the Web app
-- **AND** all six steps are available in the same scrollable dialog
+- **THEN** the dialog shows, in order, instructions to scan the device QR or enter its identifier, sign in and confirm the identifier, create the Pair Code, enter device setup mode, connect the phone to the PeeCare temporary Wi-Fi, enter target Wi-Fi credentials and the Pair Code on the hardware setup page, wait for the hardware to leave the temporary network, restore the phone network and return to the Web app, and wait for server-authoritative Claim completion
+- **AND** all nine steps are available in the same scrollable dialog
 
-#### Scenario: Avoid unsupported hardware details
+#### Scenario: Avoid unsupported hardware details and trust claims
 
-- **WHEN** the first-version guide renders
-- **THEN** it does not claim a specific Wi-Fi frequency, temporary-network naming pattern, fallback setup URL, LED pattern, or connection duration
+- **WHEN** the first Claim-capable guide renders
+- **THEN** it does not claim a specific Wi-Fi frequency, temporary-network naming pattern, fallback setup URL, LED pattern, connection duration, per-device MQTT identity, or cryptographically verified physical possession
 
 
 <!-- @trace
-source: add-wifi-connection-guide
-updated: 2026-08-21
+source: add-device-claim-onboarding
+updated: 2026-08-26
 code:
-  - src/components/WifiConnectionGuideDialog.vue
+  - deploy/development/emqx-webhook.template.json
+  - src/features/device-claim/device-claim-store.ts
+  - deploy/development/verify-member.mjs
+  - deploy/development/MEMBER_API_RUNBOOK.md
+  - src/features/device-claim/device-claim-api.ts
+  - deploy/development/emqx-serverless-console-checklist.md
+  - deploy/development/deploy-member.d.mts
   - src/views/HomeView.vue
-  - src/components/AppHeader.vue
+  - src/views/DeviceConnectView.vue
+  - deploy/development/verify-emqx-webhook.mjs
+  - services/member-api/src/config.ts
+  - services/member-api/src/http/errors.ts
+  - devices/development/fixtures/legacy-bind-retry.json
+  - devices/development/legacy-bind-policy.mjs
+  - deploy/development/verify-member.d.mts
+  - deploy/development/member-service.yaml
+  - scripts/test-firebase.mjs
+  - src/features/device-claim/device-claim-store-key.ts
+  - deploy/development/deploy-member.mjs
+  - deploy/development/EMQX_RUNBOOK.md
+  - services/member-api/src/security/emqx-claim-auth.ts
+  - firestore.rules
+  - firebase/local/fixtures/device-claims.ts
+  - services/member-api/src/app.ts
+  - services/member-api/src/claims/claim-service.ts
+  - package.json
+  - src/components/WifiConnectionGuideDialog.vue
+  - src/features/device-claim/device-id-input.ts
+  - src/router/index.ts
+  - services/member-api/src/claims/emqx-device-claim-route.ts
+  - devices/development/legacy-bind-policy.json
+  - deploy/development/configure-emqx-webhook.mjs
+  - services/member-api/src/server.ts
+  - services/member-api/src/firestore/device-claim-repository.ts
+  - src/main.ts
+  - src/features/device-claim/device-claim-session-storage.ts
+  - services/member-api/src/claims/pair-code.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.ts
 tests:
-  - src/components/WifiConnectionGuideDialog.spec.ts
+  - src/router/index.spec.ts
+  - deploy/development/verify-emqx-webhook.spec.ts
   - src/views/HomeView.spec.ts
+  - src/features/device-claim/device-id-input.spec.ts
+  - services/member-api/test/member-claim-routes.test.ts
+  - services/member-api/test/device-claim-firestore.integration.test.ts
+  - src/features/device-claim/device-claim-store.spec.ts
+  - services/member-api/test/server.test.ts
+  - scripts/test-firebase.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/emqx-device-claim-route.test.ts
+  - src/components/WifiConnectionGuideDialog.spec.ts
+  - src/views/DeviceConnectView.spec.ts
+  - services/member-api/test/pair-code.test.ts
+  - src/router/auth-guard.spec.ts
+  - deploy/development/verify-member.spec.ts
+  - devices/development/legacy-bind-policy.spec.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.spec.ts
+  - services/member-api/test/config.test.ts
+  - deploy/development/deploy-member.spec.ts
+  - deploy/development/configure-emqx-webhook.spec.ts
+  - services/member-api/test/emqx-claim-auth.test.ts
+  - services/member-api/test/claim-service.test.ts
+  - src/features/device-claim/device-claim-api.spec.ts
+  - src/features/device-claim/device-claim-session-storage.spec.ts
+-->
+
+---
+### Requirement: Start device onboarding from the guide
+
+The guide and the signed-in empty-device state SHALL provide a `設定新裝置` action that opens the protected `/connect` route. The route SHALL support both a QR-provided deviceId and manual entry without storing Wi-Fi credentials or Pair Code in the guide component.
+
+#### Scenario: Start with manual entry
+
+- **WHEN** a signed-in member activates `設定新裝置` without a scanned deviceId
+- **THEN** the connect view opens its manual device identifier form
+
+
+<!-- @trace
+source: add-device-claim-onboarding
+updated: 2026-08-26
+code:
+  - deploy/development/emqx-webhook.template.json
+  - src/features/device-claim/device-claim-store.ts
+  - deploy/development/verify-member.mjs
+  - deploy/development/MEMBER_API_RUNBOOK.md
+  - src/features/device-claim/device-claim-api.ts
+  - deploy/development/emqx-serverless-console-checklist.md
+  - deploy/development/deploy-member.d.mts
+  - src/views/HomeView.vue
+  - src/views/DeviceConnectView.vue
+  - deploy/development/verify-emqx-webhook.mjs
+  - services/member-api/src/config.ts
+  - services/member-api/src/http/errors.ts
+  - devices/development/fixtures/legacy-bind-retry.json
+  - devices/development/legacy-bind-policy.mjs
+  - deploy/development/verify-member.d.mts
+  - deploy/development/member-service.yaml
+  - scripts/test-firebase.mjs
+  - src/features/device-claim/device-claim-store-key.ts
+  - deploy/development/deploy-member.mjs
+  - deploy/development/EMQX_RUNBOOK.md
+  - services/member-api/src/security/emqx-claim-auth.ts
+  - firestore.rules
+  - firebase/local/fixtures/device-claims.ts
+  - services/member-api/src/app.ts
+  - services/member-api/src/claims/claim-service.ts
+  - package.json
+  - src/components/WifiConnectionGuideDialog.vue
+  - src/features/device-claim/device-id-input.ts
+  - src/router/index.ts
+  - services/member-api/src/claims/emqx-device-claim-route.ts
+  - devices/development/legacy-bind-policy.json
+  - deploy/development/configure-emqx-webhook.mjs
+  - services/member-api/src/server.ts
+  - services/member-api/src/firestore/device-claim-repository.ts
+  - src/main.ts
+  - src/features/device-claim/device-claim-session-storage.ts
+  - services/member-api/src/claims/pair-code.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.ts
+tests:
+  - src/router/index.spec.ts
+  - deploy/development/verify-emqx-webhook.spec.ts
+  - src/views/HomeView.spec.ts
+  - src/features/device-claim/device-id-input.spec.ts
+  - services/member-api/test/member-claim-routes.test.ts
+  - services/member-api/test/device-claim-firestore.integration.test.ts
+  - src/features/device-claim/device-claim-store.spec.ts
+  - services/member-api/test/server.test.ts
+  - scripts/test-firebase.spec.ts
+  - firebase/local/firestore.rules.spec.ts
+  - services/member-api/test/app.test.ts
+  - services/member-api/test/emqx-device-claim-route.test.ts
+  - src/components/WifiConnectionGuideDialog.spec.ts
+  - src/views/DeviceConnectView.spec.ts
+  - services/member-api/test/pair-code.test.ts
+  - src/router/auth-guard.spec.ts
+  - deploy/development/verify-member.spec.ts
+  - devices/development/legacy-bind-policy.spec.ts
+  - src/features/device-claim/device-claim-auth-lifecycle.spec.ts
+  - services/member-api/test/config.test.ts
+  - deploy/development/deploy-member.spec.ts
+  - deploy/development/configure-emqx-webhook.spec.ts
+  - services/member-api/test/emqx-claim-auth.test.ts
+  - services/member-api/test/claim-service.test.ts
+  - src/features/device-claim/device-claim-api.spec.ts
+  - src/features/device-claim/device-claim-session-storage.spec.ts
 -->
 
 ---

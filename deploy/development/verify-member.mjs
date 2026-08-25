@@ -4,11 +4,26 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { loadMemberManifest } from './deploy-member.mjs'
+import {
+  loadMemberManifest,
+  resolveMemberClaimConfiguration,
+} from './deploy-member.mjs'
 
 const APPROVED_PROJECT = 'petcare-c7483'
 const APPROVED_REGION = 'asia-east1'
 const APPROVED_SERVICE = 'peecare-member-development'
+const APPROVED_PROJECT_ROLES = Object.freeze([
+  'roles/datastore.user',
+  'roles/firebaseauth.viewer',
+])
+const APPROVED_SECRET_ACCESS = Object.freeze({
+  'peecare-claim-webhook-current': Object.freeze([
+    'roles/secretmanager.secretAccessor',
+  ]),
+  'peecare-pair-code-hmac-key': Object.freeze([
+    'roles/secretmanager.secretAccessor',
+  ]),
+})
 const REVISION_PATTERN = /^peecare-member-development-[0-9]{5}-[a-z0-9]{3}$/
 const SMOKE_CHECKS = Object.freeze([
   ['publicHealth', 'checkPublicHealth'],
@@ -19,7 +34,154 @@ const SMOKE_CHECKS = Object.freeze([
   ['ownerRename', 'checkOwnerRename'],
   ['nonOwnerDenial', 'checkNonOwnerDenial'],
   ['projectIsolation', 'checkProjectIsolation'],
+  ['memberClaimRoutes', 'checkMemberClaimRoutes'],
+  ['claimCredentialIsolation', 'checkClaimCredentialIsolation'],
+  ['claimPersistenceBoundary', 'checkClaimPersistenceBoundary'],
 ])
+
+const ALLOWED_OPERATOR_KEYS = new Set([
+  'PEECARE_DEVELOPMENT_PROJECT_ID',
+  'PEECARE_DEVELOPMENT_FIRESTORE_REGION',
+  'PEECARE_DEVELOPMENT_WEB_ORIGIN',
+  'PEECARE_DEVELOPMENT_WEB_API_KEY',
+  'PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF',
+  'PEECARE_PAIR_CODE_HMAC_KEY_REF',
+  'PEECARE_PAIR_CODE_HMAC_KEY_VERSION',
+  'PEECARE_CLAIM_SHARED_MQTT_USERNAME',
+  'PEECARE_MEMBER_SMOKE_DEVICE_ID',
+  'PEECARE_MEMBER_CLAIM_SMOKE_DEVICE_ID',
+  'PEECARE_MEMBER_CLAIM_SMOKE_CLIENT_ID',
+  'PEECARE_MEMBER_RELEASE_RECORD',
+  'PEECARE_MEMBER_PRIOR_RELEASE_RECORD',
+])
+const ALLOWED_REVISION_KEYS = new Set([
+  'PEECARE_WEB_ORIGIN',
+  'PEECARE_CLAIM_SHARED_MQTT_USERNAME',
+  'PEECARE_CLAIM_WEBHOOK_SECRET',
+  'PEECARE_PAIR_CODE_HMAC_KEY',
+  'PEECARE_PAIR_CODE_HMAC_KEY_VERSION',
+])
+
+function isSensitiveConfigurationKey(key) {
+  return (
+    key === 'GOOGLE_APPLICATION_CREDENTIALS' ||
+    key === 'FIRESTORE_EMULATOR_HOST' ||
+    key === 'FIREBASE_AUTH_EMULATOR_HOST' ||
+    (/^(?:PEECARE|EMQX)_/.test(key) &&
+      /(?:SECRET|PASSWORD|TOKEN|HMAC_KEY)/i.test(key))
+  )
+}
+
+function hasUnsupportedSensitiveOperatorEnvironment(environment) {
+  return Object.keys(environment).some((key) =>
+    /^(?:PEECARE|EMQX)_/.test(key)
+      ? !ALLOWED_OPERATOR_KEYS.has(key)
+      : isSensitiveConfigurationKey(key),
+  )
+}
+
+function inspectRuntimeEnvironment(revisionRecord) {
+  const environment = revisionRecord.spec?.containers?.[0]?.env
+  const values = {}
+  const secretBindings = {}
+  let unexpectedSensitiveKey = false
+  if (Array.isArray(environment)) {
+    for (const entry of environment) {
+      if (
+        typeof entry?.name === 'string' &&
+        ((/^(?:PEECARE|EMQX)_/.test(entry.name) &&
+          !ALLOWED_REVISION_KEYS.has(entry.name)) ||
+          (isSensitiveConfigurationKey(entry.name) &&
+            !ALLOWED_REVISION_KEYS.has(entry.name)))
+      ) {
+        unexpectedSensitiveKey = true
+      }
+      if (
+        entry?.name === 'PEECARE_PAIR_CODE_HMAC_KEY_VERSION' ||
+        entry?.name === 'PEECARE_CLAIM_SHARED_MQTT_USERNAME'
+      ) {
+        values[entry.name] = entry.value
+      }
+      if (
+        entry?.name === 'PEECARE_CLAIM_WEBHOOK_SECRET' ||
+        entry?.name === 'PEECARE_PAIR_CODE_HMAC_KEY'
+      ) {
+        const reference =
+          entry.valueSource?.secretKeyRef ?? entry.valueFrom?.secretKeyRef
+        secretBindings[entry.name] = {
+          secret: reference?.secret ?? reference?.name,
+          version: reference?.version ?? reference?.key,
+        }
+      }
+    }
+  }
+  return Object.freeze({
+    values: Object.freeze(values),
+    secretBindings: Object.freeze(secretBindings),
+    unexpectedSensitiveKey,
+  })
+}
+
+function inspectDirectRoles(policyText, member) {
+  const policy = JSON.parse(policyText)
+  if (!Array.isArray(policy.bindings)) return []
+  return policy.bindings
+    .filter(
+      (binding) =>
+        typeof binding?.role === 'string' &&
+        Array.isArray(binding.members) &&
+        binding.members.includes(member),
+    )
+    .map((binding) => binding.role)
+    .sort()
+}
+
+function inspectProjectSecretNames(listText) {
+  let records
+  try {
+    records = JSON.parse(listText)
+  } catch {
+    throw new MemberVerificationError(
+      'cloud_inspection_failed',
+      'Secret Manager inventory is not valid JSON.',
+    )
+  }
+  if (!Array.isArray(records)) {
+    throw new MemberVerificationError(
+      'cloud_inspection_failed',
+      'Secret Manager inventory must be an exact JSON array.',
+    )
+  }
+  const names = records.map((record) => {
+    if (
+      typeof record !== 'object' ||
+      record === null ||
+      Array.isArray(record) ||
+      Object.keys(record).length !== 1 ||
+      typeof record.name !== 'string'
+    ) {
+      throw new MemberVerificationError(
+        'cloud_inspection_failed',
+        'Secret Manager inventory contains a malformed record.',
+      )
+    }
+    const name = record.name.slice(record.name.lastIndexOf('/') + 1)
+    if (!/^[A-Za-z0-9_-]{1,255}$/.test(name)) {
+      throw new MemberVerificationError(
+        'cloud_inspection_failed',
+        'Secret Manager inventory contains an invalid secret name.',
+      )
+    }
+    return name
+  })
+  if (new Set(names).size !== names.length) {
+    throw new MemberVerificationError(
+      'cloud_inspection_failed',
+      'Secret Manager inventory contains duplicate secret names.',
+    )
+  }
+  return names.sort()
+}
 
 export function createCliRevisionInspector(execute) {
   return async ({ projectId, region, service, revision }) => {
@@ -49,6 +211,42 @@ export function createCliRevisionInspector(execute) {
         '--format=json',
       ]),
     )
+    const annotations = revisionRecord.metadata?.annotations ?? {}
+    const runtimeIdentity = revisionRecord.spec?.serviceAccountName
+    const member = `serviceAccount:${runtimeIdentity}`
+    const projectRoles = inspectDirectRoles(
+      execute([
+        'projects',
+        'get-iam-policy',
+        projectId,
+        '--format=json',
+      ]),
+      member,
+    )
+    const secretAccess = Object.create(null)
+    const projectSecrets = inspectProjectSecretNames(
+      execute([
+        'secrets',
+        'list',
+        '--project',
+        projectId,
+        '--format=json(name)',
+      ]),
+    )
+    for (const secret of projectSecrets) {
+      const roles = inspectDirectRoles(
+        execute([
+          'secrets',
+          'get-iam-policy',
+          secret,
+          '--project',
+          projectId,
+          '--format=json',
+        ]),
+        member,
+      )
+      if (roles.length > 0) secretAccess[secret] = roles
+    }
     return {
       ready: Boolean(
         revisionRecord.status?.conditions?.some(
@@ -67,8 +265,22 @@ export function createCliRevisionInspector(execute) {
       service,
       revision: revisionRecord.metadata?.name,
       image: revisionRecord.spec?.containers?.[0]?.image,
-      runtimeIdentity: revisionRecord.spec?.serviceAccountName,
+      runtimeIdentity,
       serviceUrl: serviceRecord.status?.url,
+      resources: Object.freeze({
+        billing:
+          annotations['run.googleapis.com/cpu-throttling'] === 'false'
+            ? 'instance-based'
+            : 'request-based',
+        minInstances: Number(
+          annotations['autoscaling.knative.dev/minScale'] ?? 0,
+        ),
+      }),
+      runtimeEnvironment: inspectRuntimeEnvironment(revisionRecord),
+      directIam: Object.freeze({
+        projectRoles: Object.freeze(projectRoles),
+        secretAccess: Object.freeze({ ...secretAccess }),
+      }),
     }
   }
 }
@@ -96,6 +308,12 @@ function parseVerificationArguments(args) {
 }
 
 function validateVerificationTarget(environment, manifest, revision, image) {
+  if (hasUnsupportedSensitiveOperatorEnvironment(environment)) {
+    throw new MemberVerificationError(
+      'claim_configuration_invalid',
+      'Verification rejects unsupported direct credentials and local runtime overrides.',
+    )
+  }
   if (
     environment.PEECARE_DEVELOPMENT_PROJECT_ID !== APPROVED_PROJECT ||
     environment.PEECARE_DEVELOPMENT_FIRESTORE_REGION !== APPROVED_REGION ||
@@ -122,6 +340,34 @@ function validateVerificationTarget(environment, manifest, revision, image) {
       'Verification requires an approved immutable image digest.',
     )
   }
+  if (
+    environment.PEECARE_CLAIM_WEBHOOK_SECRET !== undefined ||
+    environment.PEECARE_PAIR_CODE_HMAC_KEY !== undefined
+  ) {
+    throw new MemberVerificationError(
+      'claim_configuration_invalid',
+      'Verification loads Claim secrets only from approved numeric Secret Manager versions.',
+    )
+  }
+  try {
+    return resolveMemberClaimConfiguration(environment)
+  } catch {
+    throw new MemberVerificationError(
+      'claim_configuration_invalid',
+      'Verification requires approved independent numeric Claim secret bindings.',
+    )
+  }
+}
+
+export function preflightMemberVerification({ environment, args, manifest }) {
+  const { revision, image } = parseVerificationArguments(args)
+  const claimConfiguration = validateVerificationTarget(
+    environment,
+    manifest,
+    revision,
+    image,
+  )
+  return Object.freeze({ revision, image, claimConfiguration })
 }
 
 function isLoopbackHostname(hostname) {
@@ -180,16 +426,46 @@ function assertInspectedRevision(
   revision,
   image,
   requireServing = true,
+  claimConfiguration,
 ) {
   if (
-    inspected.ready === false ||
-    (requireServing && inspected.serving === false) ||
+    inspected.ready !== true ||
+    (requireServing && inspected.serving !== true) ||
     inspected.projectId !== manifest.metadata.projectId ||
     inspected.region !== manifest.metadata.region ||
     inspected.service !== manifest.metadata.service ||
     inspected.revision !== revision ||
     inspected.image !== image ||
-    inspected.runtimeIdentity !== manifest.runtimeIdentity.serviceAccount
+    inspected.runtimeIdentity !== manifest.runtimeIdentity.serviceAccount ||
+    (claimConfiguration !== undefined &&
+      (inspected.resources?.billing !== manifest.resources.billing ||
+        inspected.resources?.minInstances !== manifest.resources.minInstances ||
+        inspected.runtimeEnvironment?.values
+          ?.PEECARE_PAIR_CODE_HMAC_KEY_VERSION !==
+          claimConfiguration.hmacKeyVersion ||
+        inspected.runtimeEnvironment?.values
+          ?.PEECARE_CLAIM_SHARED_MQTT_USERNAME !==
+          claimConfiguration.sharedUsername ||
+        inspected.runtimeEnvironment?.secretBindings
+          ?.PEECARE_CLAIM_WEBHOOK_SECRET?.secret !==
+          manifest.runtimeEnvironment.secretBindings.PEECARE_CLAIM_WEBHOOK_SECRET
+            .secret ||
+        inspected.runtimeEnvironment?.secretBindings
+          ?.PEECARE_CLAIM_WEBHOOK_SECRET?.version !==
+          claimConfiguration.claimSecretVersion ||
+        inspected.runtimeEnvironment?.secretBindings?.PEECARE_PAIR_CODE_HMAC_KEY
+          ?.secret !==
+          manifest.runtimeEnvironment.secretBindings.PEECARE_PAIR_CODE_HMAC_KEY
+            .secret ||
+        inspected.runtimeEnvironment?.secretBindings?.PEECARE_PAIR_CODE_HMAC_KEY
+          ?.version !== claimConfiguration.hmacSecretVersion ||
+        inspected.runtimeEnvironment?.unexpectedSensitiveKey !== false))
+    ||
+    (claimConfiguration !== undefined &&
+      (JSON.stringify(inspected.directIam?.projectRoles) !==
+        JSON.stringify(APPROVED_PROJECT_ROLES) ||
+        JSON.stringify(inspected.directIam?.secretAccess) !==
+          JSON.stringify(APPROVED_SECRET_ACCESS)))
   ) {
     throw new MemberVerificationError(
       'revision_mismatch',
@@ -213,11 +489,49 @@ function sameDeviceSnapshot(left, right) {
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
+function isPlainRecord(value) {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false
+  }
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+function hasExactObjectKeys(value, expectedKeys) {
+  if (!isPlainRecord(value)) return false
+  const actual = Object.keys(value).sort()
+  const expected = [...expectedKeys].sort()
+  return (
+    actual.length === expected.length &&
+    actual.every((key, index) => key === expected[index])
+  )
+}
+
+function hasExactTerminalDelta(before, after, status) {
+  if (
+    before === null ||
+    after === null ||
+    before.status !== 'pending' ||
+    after.status !== status ||
+    !Number.isSafeInteger(after.terminalAtMs)
+  ) {
+    return false
+  }
+  const beforeBase = { ...before }
+  const afterBase = { ...after }
+  delete beforeBase.status
+  delete afterBase.status
+  delete afterBase.terminalAtMs
+  return sameDeviceSnapshot(beforeBase, afterBase)
+}
+
 export function createMemberSmokeAdapter({
   environment,
   inspectRevision,
   request,
   readDevice,
+  claimWebhookSecret,
+  readClaimState,
 }) {
   const projectId = requireSmokeValue(
     environment,
@@ -243,12 +557,39 @@ export function createMemberSmokeAdapter({
     environment,
     'PEECARE_MEMBER_REVOKED_ID_TOKEN',
   )
+  const claimDeviceId = requireSmokeValue(
+    environment,
+    'PEECARE_MEMBER_CLAIM_SMOKE_DEVICE_ID',
+  )
+  const claimClientId = requireSmokeValue(
+    environment,
+    'PEECARE_MEMBER_CLAIM_SMOKE_CLIENT_ID',
+  )
+  const claimSharedUsername = requireSmokeValue(
+    environment,
+    'PEECARE_CLAIM_SHARED_MQTT_USERNAME',
+  )
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(deviceId)) {
     throw new MemberVerificationError(
       'smoke_config_invalid',
       'Member API smoke device ID is invalid.',
     )
   }
+  if (
+    !/^[0-9A-F]{12}$/.test(claimDeviceId) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(claimClientId) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(claimSharedUsername) ||
+    typeof claimWebhookSecret !== 'string' ||
+    claimWebhookSecret.length === 0 ||
+    claimWebhookSecret === ownerToken
+  ) {
+    throw new MemberVerificationError(
+      'smoke_config_invalid',
+      'Member API Claim smoke configuration is invalid.',
+    )
+  }
+
+  let claimProbe
 
   function mutationUrl(inspected) {
     return `${inspected.serviceUrl}/v1/devices/${encodeURIComponent(deviceId)}/display-name`
@@ -377,6 +718,237 @@ export function createMemberSmokeAdapter({
         snapshot.data.ownerUid.length > 0
       )
     },
+    async checkMemberClaimRoutes(inspected) {
+      const collectionUrl = `${inspected.serviceUrl}/v1/device-claim-sessions`
+      const [preflight, rejectedMethod] = await Promise.all([
+        request({
+          method: 'OPTIONS',
+          url: collectionUrl,
+          headers: {
+            origin: allowedOrigin,
+            'access-control-request-method': 'POST',
+            'access-control-request-headers': 'authorization, content-type',
+          },
+        }),
+        request({ method: 'GET', url: collectionUrl }),
+      ])
+      if (
+        preflight.status !== 204 ||
+        preflight.headers['access-control-allow-origin'] !== allowedOrigin ||
+        preflight.headers['access-control-allow-methods'] !== 'POST' ||
+        rejectedMethod.status !== 405
+      ) {
+        return false
+      }
+      const initialState = await readClaimState({
+        projectId,
+        deviceId: claimDeviceId,
+      })
+      if (
+        initialState.device.exists !== true ||
+        initialState.device.data === null ||
+        Object.prototype.hasOwnProperty.call(initialState.device.data, 'ownerUid') ||
+        initialState.activeClaim.exists !== false
+      ) {
+        return false
+      }
+      const response = await request({
+        method: 'POST',
+        url: collectionUrl,
+        headers: {
+          authorization: `Bearer ${ownerToken}`,
+          origin: allowedOrigin,
+          'content-type': 'application/json',
+        },
+        body: { deviceId: claimDeviceId },
+      })
+      const body = response.body
+      if (
+        response.status !== 201 ||
+        body === null ||
+        typeof body !== 'object' ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+          body.sessionId ?? '',
+        ) ||
+        body.deviceId !== claimDeviceId ||
+        !/^[0-9]{8}$/.test(body.pairCode ?? '') ||
+        body.status !== 'pending' ||
+        !Number.isSafeInteger(body.expiresAtMs) ||
+        Object.keys(body).sort().join(',') !==
+          'deviceId,expiresAtMs,pairCode,sessionId,status'
+      ) {
+        return false
+      }
+      const statusResponse = await request({
+        method: 'GET',
+        url: `${collectionUrl}/${encodeURIComponent(body.sessionId)}`,
+        headers: { authorization: `Bearer ${ownerToken}`, origin: allowedOrigin },
+      })
+      if (
+        statusResponse.status !== 200 ||
+        statusResponse.body?.sessionId !== body.sessionId ||
+        statusResponse.body?.deviceId !== claimDeviceId ||
+        statusResponse.body?.status !== 'pending' ||
+        statusResponse.body?.expiresAtMs !== body.expiresAtMs ||
+        Object.keys(statusResponse.body ?? {}).sort().join(',') !==
+          'deviceId,expiresAtMs,sessionId,status'
+      ) {
+        return false
+      }
+      const createdState = await readClaimState({
+        projectId,
+        deviceId: claimDeviceId,
+        requestedSessionId: body.sessionId,
+      })
+      if (
+        !sameDeviceSnapshot(initialState.device, createdState.device) ||
+        createdState.activeClaim.data?.status !== 'pending' ||
+        createdState.activeClaim.data?.sessionId !== body.sessionId ||
+        createdState.session.data?.status !== 'pending' ||
+        createdState.session.data?.expectedDeviceId !== claimDeviceId
+      ) {
+        return false
+      }
+      claimProbe = Object.freeze({
+        initialState,
+        sessionId: body.sessionId,
+        pairCode: body.pairCode,
+        expiresAtMs: body.expiresAtMs,
+      })
+      return true
+    },
+    async checkClaimCredentialIsolation(inspected) {
+      if (claimProbe === undefined) return false
+      const before = await readClaimState({
+        projectId,
+        deviceId: claimDeviceId,
+        requestedSessionId: claimProbe.sessionId,
+      })
+      const memberCrossUse = await request({
+        method: 'POST',
+        url: `${inspected.serviceUrl}/v1/device-claim-sessions`,
+        headers: {
+          authorization: `Bearer ${claimWebhookSecret}`,
+          origin: allowedOrigin,
+          'content-type': 'application/json',
+        },
+        body: { deviceId: claimDeviceId },
+      })
+      const afterMemberCrossUse = await readClaimState({
+        projectId,
+        deviceId: claimDeviceId,
+        requestedSessionId: claimProbe.sessionId,
+      })
+      const emqxCrossUse = await request({
+        method: 'POST',
+        url: `${inspected.serviceUrl}/v1/emqx/device-claims`,
+        headers: { 'content-type': 'application/json' },
+        body: {
+          webhookAuthorization: ownerToken,
+          event: {
+            brokerReceivedAtMs: Date.now(),
+            clientId: claimClientId,
+            payload: { device_id: claimDeviceId, pair_code: claimProbe.pairCode },
+            qos: 0,
+            retained: false,
+            topic: 'peecare/device/1/bind',
+            username: claimSharedUsername,
+          },
+        },
+      })
+      const after = await readClaimState({
+        projectId,
+        deviceId: claimDeviceId,
+        requestedSessionId: claimProbe.sessionId,
+      })
+      return (
+        memberCrossUse.status === 401 &&
+        emqxCrossUse.status === 401 &&
+        sameDeviceSnapshot(before, afterMemberCrossUse) &&
+        sameDeviceSnapshot(afterMemberCrossUse, after)
+      )
+    },
+    async checkClaimPersistenceBoundary(inspected) {
+      if (claimProbe === undefined) return false
+      const before = await readClaimState({
+        projectId,
+        deviceId: claimDeviceId,
+        requestedSessionId: claimProbe.sessionId,
+      })
+      if (
+        before.device.exists !== true ||
+        before.device.data === null ||
+        Object.prototype.hasOwnProperty.call(before.device.data, 'ownerUid') ||
+        before.activeClaim.data?.status !== 'pending' ||
+        before.activeClaim.data?.sessionId !== claimProbe.sessionId ||
+        before.session.data?.status !== 'pending' ||
+        before.session.data?.expectedDeviceId !== claimDeviceId ||
+        typeof before.session.data?.memberUid !== 'string' ||
+        before.session.data.memberUid.length === 0
+      ) {
+        return false
+      }
+      const event = {
+        brokerReceivedAtMs: Date.now(),
+        clientId: claimClientId,
+        payload: { device_id: claimDeviceId, pair_code: claimProbe.pairCode },
+        qos: 0,
+        retained: false,
+        topic: 'peecare/device/1/bind',
+        username: claimSharedUsername,
+      }
+      const bindUrl = `${inspected.serviceUrl}/v1/emqx/device-claims`
+      const first = await request({
+        method: 'POST',
+        url: bindUrl,
+        headers: { 'content-type': 'application/json' },
+        body: { webhookAuthorization: claimWebhookSecret, event },
+      })
+      const afterFirst = await readClaimState({
+        projectId,
+        deviceId: claimDeviceId,
+        requestedSessionId: claimProbe.sessionId,
+      })
+      const duplicate = await request({
+        method: 'POST',
+        url: bindUrl,
+        headers: { 'content-type': 'application/json' },
+        body: { webhookAuthorization: claimWebhookSecret, event },
+      })
+      const afterDuplicate = await readClaimState({
+        projectId,
+        deviceId: claimDeviceId,
+        requestedSessionId: claimProbe.sessionId,
+      })
+      const status = await request({
+        method: 'GET',
+        url: `${inspected.serviceUrl}/v1/device-claim-sessions/${encodeURIComponent(claimProbe.sessionId)}`,
+        headers: { authorization: `Bearer ${ownerToken}`, origin: allowedOrigin },
+      })
+      const preservedDevice = { ...afterFirst.device.data }
+      delete preservedDevice.ownerUid
+      delete preservedDevice.claimedAtMs
+      return (
+        first.status === 202 &&
+        duplicate.status === 202 &&
+        status.status === 200 &&
+        status.body?.status === 'claimed' &&
+        afterFirst.device.data?.ownerUid === before.session.data.memberUid &&
+        Number.isSafeInteger(afterFirst.device.data?.claimedAtMs) &&
+        sameDeviceSnapshot(preservedDevice, before.device.data) &&
+        hasExactTerminalDelta(
+          before.session.data,
+          afterFirst.session.data,
+          'claimed',
+        ) &&
+        hasExactTerminalDelta(
+          before.activeClaim.data,
+          afterFirst.activeClaim.data,
+          'claimed',
+        ) &&
+        sameDeviceSnapshot(afterFirst, afterDuplicate)
+      )
+    },
   })
 }
 
@@ -432,15 +1004,25 @@ export async function runMemberVerification({
   priorRelease,
   write,
 }) {
-  const { revision, image } = parseVerificationArguments(args)
-  validateVerificationTarget(environment, manifest, revision, image)
+  const { revision, image, claimConfiguration } = preflightMemberVerification({
+    environment,
+    args,
+    manifest,
+  })
   const inspected = await adapter.inspectRevision({
     projectId: manifest.metadata.projectId,
     region: manifest.metadata.region,
     service: manifest.metadata.service,
     revision,
   })
-  assertInspectedRevision(inspected, manifest, revision, image)
+  assertInspectedRevision(
+    inspected,
+    manifest,
+    revision,
+    image,
+    true,
+    claimConfiguration,
+  )
   const verifiedOrigin = validateServiceOrigin(
     inspected.serviceUrl,
     manifest.metadata.service,
@@ -473,6 +1055,29 @@ export async function runMemberVerification({
     image: inspected.image,
     imageDigest: inspected.image.slice(inspected.image.lastIndexOf('@') + 1),
     runtimeIdentity: inspected.runtimeIdentity,
+    claimRuntime: Object.freeze({
+      billing: inspected.resources.billing,
+      minInstances: inspected.resources.minInstances,
+      directIamBindings: 'verified',
+      secretBindings: Object.freeze({
+        PEECARE_CLAIM_WEBHOOK_SECRET: Object.freeze({
+          secret:
+            inspected.runtimeEnvironment.secretBindings
+              .PEECARE_CLAIM_WEBHOOK_SECRET.secret,
+          version:
+            inspected.runtimeEnvironment.secretBindings
+              .PEECARE_CLAIM_WEBHOOK_SECRET.version,
+        }),
+        PEECARE_PAIR_CODE_HMAC_KEY: Object.freeze({
+          secret:
+            inspected.runtimeEnvironment.secretBindings.PEECARE_PAIR_CODE_HMAC_KEY
+              .secret,
+          version:
+            inspected.runtimeEnvironment.secretBindings.PEECARE_PAIR_CODE_HMAC_KEY
+              .version,
+        }),
+      }),
+    }),
     verifiedOrigin,
     smoke: Object.freeze(smoke),
     ...(priorHealthyRevision ? { priorHealthyRevision } : {}),
@@ -564,7 +1169,59 @@ export async function runMemberRollback({
 }
 
 function validateHealthyRelease(environment, releaseRecord) {
+  let claimConfiguration
+  try {
+    claimConfiguration = resolveMemberClaimConfiguration(environment)
+  } catch {
+    claimConfiguration = undefined
+  }
+  const expectedTopLevelKeys = [
+    'status',
+    'projectId',
+    'region',
+    'service',
+    'revision',
+    'image',
+    'imageDigest',
+    'runtimeIdentity',
+    'claimRuntime',
+    'verifiedOrigin',
+    'smoke',
+    ...(releaseRecord?.priorHealthyRevision === undefined
+      ? []
+      : ['priorHealthyRevision']),
+  ]
+  const exactReleaseSchema =
+    hasExactObjectKeys(releaseRecord, expectedTopLevelKeys) &&
+    hasExactObjectKeys(releaseRecord.claimRuntime, [
+      'billing',
+      'minInstances',
+      'directIamBindings',
+      'secretBindings',
+    ]) &&
+    hasExactObjectKeys(releaseRecord.claimRuntime.secretBindings, [
+      'PEECARE_CLAIM_WEBHOOK_SECRET',
+      'PEECARE_PAIR_CODE_HMAC_KEY',
+    ]) &&
+    hasExactObjectKeys(
+      releaseRecord.claimRuntime.secretBindings.PEECARE_CLAIM_WEBHOOK_SECRET,
+      ['secret', 'version'],
+    ) &&
+    hasExactObjectKeys(
+      releaseRecord.claimRuntime.secretBindings.PEECARE_PAIR_CODE_HMAC_KEY,
+      ['secret', 'version'],
+    ) &&
+    hasExactObjectKeys(
+      releaseRecord.smoke,
+      SMOKE_CHECKS.map(([name]) => name),
+    ) &&
+    (releaseRecord.priorHealthyRevision === undefined ||
+      hasExactObjectKeys(releaseRecord.priorHealthyRevision, [
+        'revision',
+        'imageDigest',
+      ]))
   if (
+    !exactReleaseSchema ||
     releaseRecord === undefined ||
     releaseRecord === null ||
     releaseRecord.status !== 'healthy' ||
@@ -579,6 +1236,18 @@ function validateHealthyRelease(environment, releaseRecord) {
       releaseRecord.image.slice(releaseRecord.image.lastIndexOf('@') + 1) ||
     releaseRecord.runtimeIdentity !==
       'peecare-member-runtime@petcare-c7483.iam.gserviceaccount.com' ||
+    claimConfiguration === undefined ||
+    releaseRecord.claimRuntime?.billing !== 'request-based' ||
+    releaseRecord.claimRuntime?.minInstances !== 0 ||
+    releaseRecord.claimRuntime?.directIamBindings !== 'verified' ||
+    releaseRecord.claimRuntime?.secretBindings?.PEECARE_CLAIM_WEBHOOK_SECRET
+      ?.secret !== 'peecare-claim-webhook-current' ||
+    releaseRecord.claimRuntime?.secretBindings?.PEECARE_CLAIM_WEBHOOK_SECRET
+      ?.version !== claimConfiguration.claimSecretVersion ||
+    releaseRecord.claimRuntime?.secretBindings?.PEECARE_PAIR_CODE_HMAC_KEY
+      ?.secret !== 'peecare-pair-code-hmac-key' ||
+    releaseRecord.claimRuntime?.secretBindings?.PEECARE_PAIR_CODE_HMAC_KEY
+      ?.version !== claimConfiguration.hmacSecretVersion ||
     typeof releaseRecord.smoke !== 'object' ||
     releaseRecord.smoke === null ||
     SMOKE_CHECKS.some(([name]) => releaseRecord.smoke[name] !== 'passed')
@@ -598,6 +1267,12 @@ export function runVerifiedMemberWebBuildPreflight({
   execute,
   write,
 }) {
+  if (hasUnsupportedSensitiveOperatorEnvironment(environment)) {
+    throw new MemberVerificationError(
+      'unverified_release',
+      'Web build rejects unsupported PeeCare or EMQX runtime configuration.',
+    )
+  }
   const mode = args.length === 1 ? args[0] : undefined
   if (mode !== '--dry-run' && mode !== '--apply') {
     throw new MemberVerificationError(
@@ -741,6 +1416,33 @@ export async function createCliVerificationAdapter(environment = process.env) {
     environment,
     'PEECARE_DEVELOPMENT_WEB_API_KEY',
   )
+  let claimConfiguration
+  try {
+    claimConfiguration = resolveMemberClaimConfiguration(environment)
+  } catch {
+    throw new MemberVerificationError(
+      'claim_configuration_invalid',
+      'Verification requires approved independent numeric Claim secret bindings.',
+    )
+  }
+  const manifest = loadMemberManifest()
+  const claimWebhookSecret = executeGcloud([
+    'secrets',
+    'versions',
+    'access',
+    claimConfiguration.claimSecretVersion,
+    '--secret',
+    manifest.runtimeEnvironment.secretBindings.PEECARE_CLAIM_WEBHOOK_SECRET
+      .secret,
+    '--project',
+    projectId,
+  ])
+  if (claimWebhookSecret.length === 0) {
+    throw new MemberVerificationError(
+      'smoke_config_invalid',
+      'Claim webhook secret version could not be loaded for smoke verification.',
+    )
+  }
   const tokens = await createCliSmokeTokens(projectId, webApiKey)
   const { Firestore } = await import('@google-cloud/firestore')
   const firestore = new Firestore({ projectId })
@@ -756,6 +1458,7 @@ export async function createCliVerificationAdapter(environment = process.env) {
       PEECARE_MEMBER_REVOKED_ID_TOKEN: tokens.revokedToken,
     },
     inspectRevision,
+    claimWebhookSecret,
     async request({ url, method, headers, body }) {
       const response = await fetch(url, {
         method,
@@ -784,12 +1487,101 @@ export async function createCliVerificationAdapter(environment = process.env) {
         updateTime: snapshot.updateTime?.toDate().toISOString() ?? null,
       }
     },
+    async readClaimState({
+      projectId: requestedProject,
+      deviceId,
+      requestedSessionId,
+    }) {
+      if (requestedProject !== projectId) {
+        throw new MemberVerificationError(
+          'target_mismatch',
+          'Firestore Claim smoke read attempted a different project.',
+        )
+      }
+      const deviceReference = firestore.doc(`devices/${deviceId}`)
+      const activeReference = firestore.doc(`activeDeviceClaims/${deviceId}`)
+      const references = [deviceReference, activeReference]
+      if (requestedSessionId !== undefined) {
+        references.push(
+          firestore.doc(`deviceClaimSessions/${requestedSessionId}`),
+        )
+      }
+      const snapshots = await firestore.getAll(...references)
+      const snapshotRecord = (snapshot) => ({
+        exists: snapshot.exists,
+        data: snapshot.exists ? snapshot.data() : null,
+        updateTime: snapshot.updateTime?.toDate().toISOString() ?? null,
+      })
+      return {
+        projectId: requestedProject,
+        deviceId,
+        device: snapshotRecord(snapshots[0]),
+        activeClaim: snapshotRecord(snapshots[1]),
+        session:
+          requestedSessionId === undefined
+            ? { exists: false, data: null, updateTime: null }
+            : snapshotRecord(snapshots[2]),
+      }
+    },
+  })
+}
+
+function validateCliSmokeConfiguration(environment) {
+  requireSmokeValue(environment, 'PEECARE_DEVELOPMENT_PROJECT_ID')
+  requireSmokeValue(environment, 'PEECARE_DEVELOPMENT_WEB_ORIGIN')
+  requireSmokeValue(environment, 'PEECARE_DEVELOPMENT_WEB_API_KEY')
+  const memberDeviceId =
+    environment.PEECARE_MEMBER_SMOKE_DEVICE_ID ?? 'PC-DEV-0001'
+  const claimDeviceId = requireSmokeValue(
+    environment,
+    'PEECARE_MEMBER_CLAIM_SMOKE_DEVICE_ID',
+  )
+  const claimClientId = requireSmokeValue(
+    environment,
+    'PEECARE_MEMBER_CLAIM_SMOKE_CLIENT_ID',
+  )
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(memberDeviceId) ||
+    !/^[0-9A-F]{12}$/.test(claimDeviceId) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$/.test(claimClientId)
+  ) {
+    throw new MemberVerificationError(
+      'smoke_config_invalid',
+      'Member API smoke fixture configuration is invalid.',
+    )
+  }
+}
+
+export async function runMemberVerificationWithAdapterFactory({
+  environment,
+  args,
+  manifest,
+  adapterFactory,
+  priorRelease,
+  write,
+}) {
+  preflightMemberVerification({ environment, args, manifest })
+  validateCliSmokeConfiguration(environment)
+  const adapter = await adapterFactory()
+  return runMemberVerification({
+    environment,
+    args,
+    manifest,
+    adapter,
+    priorRelease,
+    write,
   })
 }
 
 async function runCli() {
   try {
     const manifest = loadMemberManifest()
+    if (hasUnsupportedSensitiveOperatorEnvironment(process.env)) {
+      throw new MemberVerificationError(
+        'claim_configuration_invalid',
+        'Member CLI rejects unsupported PeeCare or EMQX runtime configuration.',
+      )
+    }
     const inspectRevision = createCliRevisionInspector(executeGcloud)
     if (
       process.argv[2] === '--web-build-dry-run' ||
@@ -844,11 +1636,11 @@ async function runCli() {
       typeof priorRecordPath === 'string' && priorRecordPath.trim().length > 0
         ? JSON.parse(readFileSync(resolve(priorRecordPath), 'utf8'))
         : undefined
-    await runMemberVerification({
+    await runMemberVerificationWithAdapterFactory({
       environment: process.env,
       args: process.argv.slice(2),
       manifest,
-      adapter: await createCliVerificationAdapter(process.env),
+      adapterFactory: () => createCliVerificationAdapter(process.env),
       priorRelease,
       write: (line) => process.stdout.write(`${line}\n`),
     })

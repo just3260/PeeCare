@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "hardwareAttestation": false,
+  "publishConfirmsOwnership": false,
+  "attempts": [
+    {
+      "delayMs": 0,
+      "topic": "peecare/device/1/bind",
+      "qos": 0,
+      "retained": false,
+      "payload": {
+        "device_id": "68E274BD2A58",
+        "pair_code": "12345678"
+      }
+    },
+    {
+      "delayMs": 5000,
+      "topic": "peecare/device/1/bind",
+      "qos": 0,
+      "retained": false,
+      "payload": {
+        "device_id": "68E274BD2A58",
+        "pair_code": "12345678"
+      }
+    },
+    {
+      "delayMs": 10000,
+      "topic": "peecare/device/1/bind",
+      "qos": 0,
+      "retained": false,
+      "payload": {
+        "device_id": "68E274BD2A58",
+        "pair_code": "12345678"
+      }
+    }
+  ]
+}

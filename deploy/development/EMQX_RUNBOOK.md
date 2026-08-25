@@ -11,6 +11,9 @@ webhook secret、EMQX API secret、事件 payload 或 Firestore document data。
   mutation。
 - Cloud Run service 為 `peecare-ingestion-development`，project
   `petcare-c7483`，region `asia-east1`。
+- Claim action 使用同 project／region 的既有 Member API service
+  `peecare-member-development`，route 固定為 `/v1/emqx/device-claims`；不建立第三個
+  Cloud Run service。
 - Firestore 查詢使用 development project 的 Application Default Credentials。
 - Secret Manager 實際名稱為 `peecare-emqx-webhook-current`，只能引用 numeric
   version，不能使用 `latest`。
@@ -25,9 +28,13 @@ export PEECARE_DEVICE_MQTT_URL='mqtts://d1f775fd.ala.asia-southeast1.emqxsl.com:
 export PEECARE_DEVELOPMENT_PROJECT_ID='petcare-c7483'
 export PEECARE_DEVELOPMENT_FIRESTORE_REGION='asia-east1'
 export PEECARE_DEVELOPMENT_INGESTION_ORIGIN='https://<cloud-run-host>'
+export PEECARE_DEVELOPMENT_MEMBER_ORIGIN='https://<member-cloud-run-host>'
 export PEECARE_EMQX_CONNECTOR_NAME='c-d1f775fd-ae8109'
 export PEECARE_EMQX_ACTION_NAME='a-d1f775fd-1a0b6a'
+export PEECARE_EMQX_CLAIM_CONNECTOR_NAME='<dashboard-assigned-claim-connector-name>'
+export PEECARE_EMQX_CLAIM_ACTION_NAME='<dashboard-assigned-claim-action-name>'
 export PEECARE_INGESTION_SECRET_CURRENT_REF='projects/348528459946/secrets/peecare-emqx-webhook-current/versions/1'
+export PEECARE_CLAIM_WEBHOOK_SECRET_CURRENT_REF='projects/348528459946/secrets/peecare-claim-webhook-current/versions/<numeric-version>'
 ```
 
 `PEECARE_INGESTION_SECRET_PREVIOUS_REF` 只有在 Cloud Run 已實際掛載不同的
@@ -67,6 +74,34 @@ redaction token，EMQX 不會解析它。操作者必須在受控 shell 中臨�
 numeric secret version，只把 resolved 值代入 Dashboard Action Body 的 Bearer token
 位置。不要回顯 secret、不要把完整 resolved body 寫入檔案或 shell history；完成後只
 以重新開啟 editor 的 redacted view 核對 two-field shape。
+
+## Claim forwarding dry-run and MVP trust boundary
+
+完成第二個 HTTPS connector、exact `peecare/device/1/bind` rule 與單一 Claim
+action 的 checklist 後，使用獨立的 numeric secret references 執行 read-only dry-run：
+
+```sh
+export PEECARE_CLAIM_SHARED_MQTT_USERNAME='approved-legacy-device'
+npm run emqx:development:verify:claim:dry-run
+```
+
+Dry-run 只檢查獨立 target／numeric credential references／bounded shared username，並產生
+sanitized expected probe plan。Plan 列出 credential isolation、Firebase token rejection、
+publisher metadata preservation、202 domain acknowledgement 與 401 credential failure 的
+預期 probes；它不執行這些 probes，因此不構成 runtime acceptance evidence。Dry-run 不解析
+secret 值、不發送 HTTP request、不寫入 Firestore，也不修改 connector、rule 或 action。
+輸出不得包含 credential、Pair Code、UID、Authorization 或完整 payload。
+
+共用 MQTT credential 只提供會員 session 與 broker message correlation，無法提供 per-device hardware attestation；
+shared username、clientId 與 payload device_id 都不是實機
+密碼學證明。完成 per-device MQTT credential 或 inventory-verified factory setup secret
+之前，此 development/MVP Claim flow 不得描述為 production-ready，也不得宣稱已驗證實體
+持有。
+
+Claim rollback 的第一步必須是先停用 Claim bind rule，確認
+`peecare/device/1/bind` 不再觸發 action，再回滾 Web 與 Member API revision。Pending
+sessions 保留至自然到期；rollback 不自動移除已成功設定的 `ownerUid`，也不刪除 Claim
+或 device 資料。只可用另行核准、限定 marked fixture 的 Admin cleanup。
 
 ## Opt-in paired development-only compatibility routes
 

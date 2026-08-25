@@ -16,6 +16,7 @@ export type MemberVerificationErrorCode =
   | 'smoke_config_invalid'
   | 'smoke_auth_failed'
   | 'cloud_inspection_failed'
+  | 'claim_configuration_invalid'
 
 export class MemberVerificationError extends Error {
   readonly code: MemberVerificationErrorCode
@@ -31,6 +32,31 @@ export interface InspectedMemberRevision {
   readonly image: string
   readonly runtimeIdentity: string
   readonly serviceUrl: string
+  readonly resources?: {
+    readonly billing: 'request-based' | 'instance-based'
+    readonly minInstances: number
+  }
+  readonly runtimeEnvironment?: {
+    readonly values: {
+      readonly PEECARE_PAIR_CODE_HMAC_KEY_VERSION?: string
+      readonly PEECARE_CLAIM_SHARED_MQTT_USERNAME?: string
+    }
+    readonly secretBindings: {
+      readonly PEECARE_CLAIM_WEBHOOK_SECRET?: {
+        readonly secret?: string
+        readonly version?: string
+      }
+      readonly PEECARE_PAIR_CODE_HMAC_KEY?: {
+        readonly secret?: string
+        readonly version?: string
+      }
+    }
+    readonly unexpectedSensitiveKey: boolean
+  }
+  readonly directIam?: {
+    readonly projectRoles: readonly string[]
+    readonly secretAccess: Readonly<Record<string, readonly string[]>>
+  }
 }
 
 export function createCliRevisionInspector(
@@ -56,11 +82,14 @@ export interface MemberVerificationAdapter {
   checkOwnerRename(revision: InspectedMemberRevision): Promise<boolean>
   checkNonOwnerDenial(revision: InspectedMemberRevision): Promise<boolean>
   checkProjectIsolation(revision: InspectedMemberRevision): Promise<boolean>
+  checkMemberClaimRoutes(revision: InspectedMemberRevision): Promise<boolean>
+  checkClaimCredentialIsolation(revision: InspectedMemberRevision): Promise<boolean>
+  checkClaimPersistenceBoundary(revision: InspectedMemberRevision): Promise<boolean>
 }
 
 export interface MemberSmokeHttpResponse {
   readonly status: number
-  readonly body: any
+  readonly body: unknown
   readonly headers: Readonly<Record<string, string>>
 }
 
@@ -70,6 +99,20 @@ export interface MemberSmokeDeviceSnapshot {
   readonly exists: boolean
   readonly data: Readonly<Record<string, unknown>> | null
   readonly updateTime: string | null
+}
+
+export interface MemberClaimDocumentSnapshot {
+  readonly exists: boolean
+  readonly data: Readonly<Record<string, unknown>> | null
+  readonly updateTime: string | null
+}
+
+export interface MemberClaimPersistenceSnapshot {
+  readonly projectId: string
+  readonly deviceId: string
+  readonly device: MemberClaimDocumentSnapshot
+  readonly activeClaim: MemberClaimDocumentSnapshot
+  readonly session: MemberClaimDocumentSnapshot
 }
 
 export function createMemberSmokeAdapter(options: {
@@ -85,6 +128,12 @@ export function createMemberSmokeAdapter(options: {
     readonly projectId: string
     readonly deviceId: string
   }): Promise<MemberSmokeDeviceSnapshot>
+  claimWebhookSecret: string
+  readClaimState(input: {
+    readonly projectId: string
+    readonly deviceId: string
+    readonly requestedSessionId?: string
+  }): Promise<MemberClaimPersistenceSnapshot>
 }): MemberVerificationAdapter
 
 export interface MemberSmokeResult {
@@ -96,6 +145,9 @@ export interface MemberSmokeResult {
   readonly ownerRename: 'passed'
   readonly nonOwnerDenial: 'passed'
   readonly projectIsolation: 'passed'
+  readonly memberClaimRoutes: 'passed'
+  readonly claimCredentialIsolation: 'passed'
+  readonly claimPersistenceBoundary: 'passed'
 }
 
 export interface MemberReleaseRecord {
@@ -107,6 +159,21 @@ export interface MemberReleaseRecord {
   readonly image: string
   readonly imageDigest: string
   readonly runtimeIdentity: string
+  readonly claimRuntime: {
+    readonly billing: 'request-based'
+    readonly minInstances: 0
+    readonly directIamBindings: 'verified'
+    readonly secretBindings: {
+      readonly PEECARE_CLAIM_WEBHOOK_SECRET: {
+        readonly secret: 'peecare-claim-webhook-current'
+        readonly version: string
+      }
+      readonly PEECARE_PAIR_CODE_HMAC_KEY: {
+        readonly secret: 'peecare-pair-code-hmac-key'
+        readonly version: string
+      }
+    }
+  }
   readonly verifiedOrigin: string
   readonly smoke: MemberSmokeResult
   readonly priorHealthyRevision?: {
@@ -120,6 +187,30 @@ export function runMemberVerification(options: {
   args: readonly string[]
   manifest: MemberManifest
   adapter: MemberVerificationAdapter
+  priorRelease?: MemberReleaseRecord
+  write: (line: string) => void
+}): Promise<MemberReleaseRecord>
+
+export function preflightMemberVerification(options: {
+  environment: NodeJS.ProcessEnv
+  args: readonly string[]
+  manifest: MemberManifest
+}): {
+  readonly revision: string
+  readonly image: string
+  readonly claimConfiguration: {
+    readonly claimSecretVersion: string
+    readonly hmacSecretVersion: string
+    readonly hmacKeyVersion: string
+    readonly sharedUsername: string
+  }
+}
+
+export function runMemberVerificationWithAdapterFactory(options: {
+  environment: NodeJS.ProcessEnv
+  args: readonly string[]
+  manifest: MemberManifest
+  adapterFactory: () => Promise<MemberVerificationAdapter>
   priorRelease?: MemberReleaseRecord
   write: (line: string) => void
 }): Promise<MemberReleaseRecord>
